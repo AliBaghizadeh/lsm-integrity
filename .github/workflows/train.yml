@@ -1,0 +1,68 @@
+name: Train
+
+# The real, gated training run -- generate -> ingest -> features -> train,
+# evaluating the Stage 3 (detection) and Stage 4 (severity) promotion gates.
+# Manually triggered or on a `train-*` tag, NOT on every push (see ci.yml for
+# why the two are kept separate).
+#
+# `lsm train`'s own exit code IS the gate: it exits non-zero if the Stage 3
+# detection gate doesn't pass. That means this job is EXPECTED to go red
+# while the current candidate (IsolationForest) doesn't beat the MAD
+# baseline on the real corpus -- that is the literal Stage 7 deliverable
+# ("a deliberately degraded model is blocked by CI; demonstrating the block
+# is the deliverable, not the pass"), not a broken workflow. Green here means
+# "a candidate that actually beat baseline", which is the whole point.
+#
+# Deliberately NOT implemented (needs infrastructure this project doesn't
+# have yet, see PLAN.md Stage 7): pushing the bundle to S3 (no cloud account;
+# `storage.s3.enabled: false`), promoting `@champion` / deploying to Hugging
+# Face Spaces (Stage 4.5's app doesn't exist yet), the rollback drill (needs
+# >= 2 feature_version bumps to have something to roll back between), and
+# shadow scoring (needs a `@champion` release to shadow against, which
+# nothing has ever been promoted to).
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "train-*"
+
+jobs:
+  train:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install project
+        run: pip install -e ".[dev]"
+
+      - name: Generate -> ingest -> features (full demo dataset)
+        run: |
+          python -m lsm generate
+          python -m lsm ingest
+          python -m lsm features
+
+      - name: Train (evaluates the Stage 3/4 promotion gates)
+        run: python -m lsm train
+
+      - name: Post a summary
+        if: always()
+        run: |
+          echo "### Training run" >> "$GITHUB_STEP_SUMMARY"
+          echo "Full Stage 3/4 metrics report is in the 'Train' step log above." >> "$GITHUB_STEP_SUMMARY"
+          echo "This job's pass/fail IS the Stage 3 detection gate result -- a red job here means the candidate anomaly model did not beat the MAD baseline on the real corpus, not a broken workflow." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload model artifacts, MLflow store and model cards
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: models-and-mlruns
+          path: |
+            data/models/
+            data/reports/
+            mlruns.db
+          if-no-files-found: warn

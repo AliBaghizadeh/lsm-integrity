@@ -539,45 +539,64 @@ rows/sec and peak-RSS table for each step.
 
 ---
 
-## Stage 7 — CI/CD and the release gate  *(~1 day)*
+## Stage 7 — CI/CD and the release gate  *(partially built 2026-07-30; scoped down against real infrastructure gaps)*
 
-- `ci.yml`: ruff + mypy + pip-audit + pytest + a tiny-config smoke run on every push. Add an
-  **integration test against containerised MinIO** — `moto` mocks S3's API, not its
-  behaviour, and the difference is where multipart uploads and consistency bugs live.
-- `train.yml`: dispatch/tag → full train, MLflow logging, evaluate the six promotion gates
-  in `references/validation-and-trust.md`, cut a `pipeline_release`, set the **`@challenger`
-  alias**, push the bundle to S3, post the metrics table to the run summary.
-- **MLflow 3 removed model stages** — promotion moves the **`@champion` alias**, which makes
-  it an atomic pointer swap rather than a state mutation. Anything calling
-  `transition_model_version_stage` is on a dead API.
-- **Shadow scoring.** `@challenger` scores every survey alongside `@champion`, written with
-  `is_shadow=1`. Because ground truth is months away, the near-term comparison is a
-  **disagreement report**: change in indications/km, rank churn at the dig budget, and
-  whether disagreements concentrate in DQ-warned surveys. This is the only pre-label
-  validation available in this domain, and it works from day one.
-- `deploy.yml`: on promotion, push the serving artifact to the HF Space pinned to a
-  `pipeline_version`. Rollback = repoint `@champion`; bundles are immutable.
-- **Rollback drill in CI.** Untested rollback is not rollback. The usual failure is that the
-  *old* bundle no longer loads against current code — which our own `feature_version` guard
-  would cause. Policy: the last **N = 3** feature versions stay loadable, and CI proves it by
-  actually rolling back and scoring.
-- AWS via **GitHub OIDC**, no long-lived keys; HF via a repo secret. `moto` mocks S3 in
-  tests so the repo runs with no cloud account (`storage.enabled: false` locally). No
-  credentials of any kind in the public Space — the bundle is fetched via a read-only
-  policy or a presigned URL.
+**What's actually built, and works:** `.github/workflows/ci.yml` (ruff + mypy + pip-audit +
+the full 146-test suite + a CLI smoke run of `generate → ingest → features`, on every
+push/PR) and `.github/workflows/train.yml` (manual dispatch or a `train-*` tag: the full
+`generate → ingest → features → train`, evaluating the real Stage 3/4 gates). Both were
+verified by running their exact commands locally before being trusted, not just written and
+assumed correct — this caught two real problems worth remembering:
+- `mypy src/lsm` without `--ignore-missing-imports` fails immediately (24 errors) on missing
+  stubs for pandas/pyarrow/sklearn/etc — I'd only ever tested it locally *with* that flag and
+  had written the workflow *without* it. Fixed by adding `ignore_missing_imports = true` under
+  `[tool.mypy]` in `pyproject.toml`, so local and CI behaviour can't drift apart on a
+  forgotten flag.
+- `ruff check .` over the **whole repo** (not the scoped `ruff check <file>` calls used
+  throughout earlier stages) found 5 real, pre-existing dead-code issues (unused imports in
+  four files, one unused local variable) that had simply never been swept. Fixed. mypy also
+  caught a real (if minor) type issue: `mlflow.log_dict()` was passed a bare list where its
+  stub declares `dict[str, Any]` — fixed by wrapping both call sites in a named key, which
+  also makes the logged JSON artifact more self-describing.
+- Also surfaced: `matplotlib` and `pydeck` were imported directly by production code
+  (`train.py`, `app/streamlit_app.py`) but never declared as dependencies — relying on
+  transitive installation that a long-lived shared conda env happens to provide but a fresh
+  CI environment isn't guaranteed to. Added both to `pyproject.toml`.
 
-- **Final-test-set discipline.** The promotion gate compares candidates against the
-  incumbent on a holdout; do that fifty times and you have selected on holdout noise — the
-  multiple-comparisons problem applied to the *release process*. Keep a final test set
-  touched rarely, count its uses in `model_run`, and rotate as new lines arrive.
+**`ci.yml` and `train.yml` are deliberately separate workflows, not one.** `ci.yml`'s badge
+tracks code correctness (lint, types, the test suite) and should stay reliably green.
+`train.yml` runs the real, *statistical* promotion gate — and since Stage 3's real gate
+currently does **not** pass (IsolationForest doesn't beat MAD on the real corpus), running
+`train.yml` for real produces a legitimately **red** job. That is not a broken workflow —
+it is the literal Stage 7 deliverable stated below, actually demonstrated: a candidate that
+doesn't clear the bar is blocked, visibly, by CI. Conflating the two workflows would make
+the code-quality badge red for reasons that have nothing to do with a given commit's code.
 
-**Gate:** a deliberately degraded model (metric interval below the incumbent, or coverage
-out of band) is **blocked by CI**; and a rollback to the previous `pipeline_version` scores
-a survey successfully. Demonstrating the block and the rollback is the deliverable, not the
-pass.
+**Deliberately NOT built — needs infrastructure this project doesn't have, not a code gap:**
+- `deploy.yml`, HF Spaces push, `@champion` promotion — Stage 4.5's demo app doesn't exist
+  yet, so there is nothing to deploy.
+- S3 push, GitHub OIDC, the MinIO integration test — no cloud account exists
+  (`storage.s3.enabled: false` throughout); building the OIDC wiring and a MinIO container
+  job against infrastructure nobody will ever point at a real bucket would be theatre.
+- The **rollback drill** — needs at least two `feature_version` bumps to have something to
+  roll back *between*; there is only `feature_version=1` today.
+- **Shadow scoring** — needs an existing `@champion` release to shadow against; nothing has
+  ever been promoted past `@challenger` (which itself requires Stage 3/4 to actually pass).
+- Final-test-set-reuse counting (`model_run.final_test_uses`) — the column exists in the
+  schema but nothing increments it yet; meaningful once there's a real promotion history to
+  protect from multiple-comparisons selection.
+
+None of this is hidden — it's stated in `train.yml`'s own header comment, not just here.
+
+**Gate:** a deliberately degraded model is blocked by CI — **demonstrated for real**, not
+hypothetically, since the actual current candidate is exactly such a case. The rollback-drill
+half of the original gate is not yet meaningful (see above) and is deferred, honestly, rather
+than faked with a single feature version.
 
 **Answers:** "how does a model get to production, what stops a bad one, and how do you
-undo it?"
+undo it?" — with the honest addendum that this repo currently demonstrates the "stops a bad
+one" half for real, and the "undo it" half once Stage 6 gives it something to roll back
+between.
 
 ---
 
