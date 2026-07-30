@@ -1,0 +1,20 @@
+# Environment config: infra only. Never hashed into config_sha256.
+# Placeholder — this project never runs against real prod infra. Kept to prove
+# the environment layer exists and to document the intended production shape.
+storage:
+  sqlite_path: data/lsm.db
+  raw_dir: data/raw
+  quarantine_dir: data/quarantine
+  feature_dir: data/features
+  model_dir: data/models
+  reports_dir: data/reports
+  s3:
+    bucket: ${LSM_BUCKET}
+    prefix: lsm-demo
+    enabled: true
+
+mlflow:
+  tracking_uri: ${MLFLOW_TRACKING_URI}
+
+dagster:
+  concurrency: 16

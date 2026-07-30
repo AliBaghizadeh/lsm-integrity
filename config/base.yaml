@@ -1,0 +1,137 @@
+# Code config: hyperparameters, feature specs, gate thresholds.
+# This file (and only this file) is hashed into config_sha256 for every run.
+# Environment config (bucket, DB URI, concurrency) lives in dev.yaml / prod.yaml.
+seed: 42
+
+data:
+  n_lines: 1
+  length_m: 2000.0
+  step_m: 0.5
+  depth_m: 1.5
+  background_nT: [19000.0, 1000.0, 45000.0]
+  noise_nT: 5.0
+  n_defects: 12
+  n_interference: 4
+  # Interference sources are large steel objects, not defects. Their moment is
+  # scaled so that at a typical 3-8 m lateral offset they arrive at roughly
+  # defect-comparable amplitude -- (5.5/1.5)^3 ~ 50 for the 1/r^3 falloff. Set
+  # this to 1.0 and every interference source drops below the noise floor, which
+  # makes the false-positive trap invisible and its precision metric vacuous.
+  interference_moment_scale: 50.0
+  # Stage 2.5 item 2: half-width = label_window_scale * r_eff, where
+  # r_eff = sqrt(depth_m^2 + y_off_m^2) is the dipole source-to-sensor distance --
+  # the same physics that sets field amplitude (1/r^3) also sets the anomaly's
+  # along-track footprint. A tighter scale (0.733) matches the measured on-pipe
+  # FWHM exactly but only captures the anomaly out to half-max -- the 1/r^3 tail
+  # stays well above the background floor far past that point, so it left dozens
+  # of clearly-anomalous rows per survey labelled as neither class (worse than
+  # the old flat 2.0 m constant, not better). 2.0 was chosen by sweeping k against
+  # the actual generated data until unlabelled clearly-anomalous background rows
+  # (|r - median| > 4*MAD, the same robust threshold features.py's own peak
+  # detector uses) dropped to the handful attributable to pure sensor noise, not
+  # window width (scripts/plot_features.py / PLAN.md Stage 2.5 gate).
+  label_window_scale: 2.0
+  n_runs: 3
+  growth: 1.15
+  gradiometer:
+    # Stage 2: a second sensor head at baseline_m above the first. Until this was
+    # switched on there was NO gradiometry in this project -- one 3-axis
+    # magnetometer gives three axes, not three sensors, and the only derivative
+    # available was the along-track dB/ds. With it on, the vertical difference
+    # cancels the common-mode background, and the claim is literally true.
+    enabled: true
+    baseline_m: 0.5
+    # Stage 2.5 item 1: until these were nonzero, B2 was built from the exact
+    # same drift/wave arrays as B, so the background's vertical gradient was
+    # exactly zero and common-mode rejection was perfect by construction (the
+    # measured head difference was pure sensor noise, sigma*sqrt(2)). The main
+    # field's real vertical gradient is ~0.02 nT/m; geology contributes more and
+    # varies along the line, so it is modelled as its own spatial term in
+    # generate.py rather than a second constant.
+    main_field_gradient_nT_per_m: 0.02
+    geology_gradient_scale_nT_per_m: 10.0
+  # Stage 2.5 item 3: swap the synthetic drift+wave background for a real
+  # geomagnetic observatory trace (data/reference/*.csv, USGS Geomagnetism
+  # Program, BOU/Boulder). Off by default -- it is a deliberate realism stress
+  # test, not the operating default: the storm trace's background residual after
+  # a degree-5 detrend (6.9-11.3 nT) exceeds the defect signal's own floor
+  # headroom and would break the Stage 2 detectability gate if left on by
+  # default. Flip `enabled: true` to reproduce the item-3 measurement.
+  observatory_background:
+    enabled: false
+    csv_path: data/reference/geomag_bou_2024-05-10_storm.csv
+    survey_speed_m_per_s: 1.0
+  geo:
+    lat0: 46.958
+    lon0: 8.365
+    bearing_deg: 35.0
+
+validate:
+  gates:
+    schema: fail
+    range: fail
+    saturation: fail
+    sample_idx_monotonic: fail
+    sample_idx_gap: warn
+    duplicate_sample_idx: fail
+    duplicate_content: fail
+    survey_overlap: fail
+    gps_jump: warn
+    gps_chainage_consistency: warn
+    noise_floor: warn
+    background_regime: warn
+    interference_density: warn
+    coverage: warn
+  max_gap_m: 2.0
+  max_gps_jump_m: 5.0
+  field_range_nT: [-80000.0, 80000.0]
+  noise_floor_range_nT: [1.0, 15.0]
+  min_coverage_frac: 0.95
+  saturation_run_length: 3
+  overlap_correlation_threshold: 0.9
+
+features:
+  version: 1
+  detrend:
+    # Two stages: a global robust polynomial removes the drift, then a rolling-median
+    # high-pass of window_m removes whatever long-wavelength structure the polynomial
+    # cannot fit. window_m must stay >> a defect's along-track footprint (~2-3x the
+    # stand-off) or the high-pass eats the signal it exists to expose.
+    method: robust_poly
+    degree: 3
+    window_m: 40.0
+  windows_m: [2.0, 5.0, 10.0, 25.0]
+  peak:
+    prominence_mad: 4.0        # peak detection threshold, in robust sigmas of |r|
+    flank_fit_span: [0.5, 3.0] # decay-exponent fit range, in FWHM from the peak
+    assign_radius_fwhm: 2.0    # rows within this many FWHM inherit the peak's shape
+  standoff_normalise: true
+  edge_policy: flag
+
+model:
+  split:
+    by: line_id
+    n_folds: 5
+    fallback_block_m: 100.0
+  bootstrap:
+    n_resamples: 1000
+    level: 0.95
+  lightgbm:
+    deterministic: true
+    force_row_wise: true
+    num_threads: 16
+  anomaly:
+    contamination: 0.03
+    n_estimators: 300
+  severity:
+    quantiles: [0.05, 0.5, 0.95]
+    conformal_alpha: 0.10
+  classify:
+    calibration: isotonic
+    class_weight: balanced
+  dig_budget_per_km: 5
+
+mlflow:
+  experiment: lsm-integrity
+
+schema_version: 2
