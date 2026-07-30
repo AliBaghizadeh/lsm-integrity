@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import numpy as np
-
 from conftest import generate_one_survey, run_pipeline_on
 
 

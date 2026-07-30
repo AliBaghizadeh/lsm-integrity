@@ -34,7 +34,6 @@ def test_defect_signature_is_detectable_against_background(cfg, tmp_path):
     against a ~4 nT background floor, i.e. learnable but small relative to the
     ~45000 nT raw field.
     """
-    import numpy as np
     import pandas as pd
 
     cfg.base.data.n_lines = 1
@@ -43,7 +42,6 @@ def test_defect_signature_is_detectable_against_background(cfg, tmp_path):
     df = pd.read_parquet(results[0].path)
 
     defect_rows = df[df["defect"] == 1]
-    background_rows = df[df["defect"] == 0]
     assert len(defect_rows) > 0
 
     # crude "residual" proxy: deviation from a rolling median (no real detrend yet)

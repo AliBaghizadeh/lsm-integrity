@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import logging
 
 from lsm.logging_utils import get_logger
 

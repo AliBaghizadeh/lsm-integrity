@@ -135,7 +135,7 @@ class BaseConfig(BaseModel):
 
     seed: int
     data: DataConfig
-    validate: ValidateConfig
+    validate: ValidateConfig  # type: ignore[assignment]  # shadows BaseModel.validate; not worth the call-site churn to rename, see pydantic UserWarning at import time
     features: FeaturesConfig
     model: ModelConfig
     mlflow: dict

@@ -16,10 +16,12 @@ dependencies = [
     "mlflow",
     "dagster",
     "streamlit",
+    "matplotlib",
+    "pydeck",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest", "hypothesis"]
+dev = ["pytest", "hypothesis", "ruff", "mypy", "pip-audit"]
 
 [project.scripts]
 lsm = "lsm.__main__:app"
@@ -34,3 +36,10 @@ packages = ["src/lsm"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+
+[tool.mypy]
+# None of numpy/pandas/pyarrow/sklearn/lightgbm/joblib/yaml/scipy ship inline
+# types or stubs this project installs -- ignore_missing_imports here, once,
+# so `mypy src/lsm` behaves identically locally and in CI rather than relying
+# on everyone remembering a command-line flag.
+ignore_missing_imports = true

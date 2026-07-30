@@ -568,7 +568,7 @@ def _log_and_persist(
             survey_ids,
         ).fetchall()
         mlflow.log_dict(
-            [dict(zip(("survey_id", "check_name", "status", "n_affected"), r)) for r in dq_rows],
+            {"checks": [dict(zip(("survey_id", "check_name", "status", "n_affected"), r)) for r in dq_rows]},
             "dq_report.json",
         )
 
@@ -729,7 +729,7 @@ def _log_and_persist(
             all_indications.append(indications)
         indications_df = pd.concat(all_indications, ignore_index=True) if all_indications else pd.DataFrame()
         n_written = write_indications(conn, indications_df)
-        mlflow.log_dict(indications_df.to_dict(orient="records"), "indications.json")
+        mlflow.log_dict({"indications": indications_df.to_dict(orient="records")}, "indications.json")
         mlflow.log_metric("n_indications_written", n_written)
 
     log.info(
