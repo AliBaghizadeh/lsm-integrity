@@ -16,6 +16,7 @@ from lsm.config import Config
 from lsm.features import SurveyContext, compute_and_store
 from lsm.generate import SurveyResult
 from lsm.ingest import load_readings, register_survey
+from lsm.predict import predict_survey
 from lsm.validate import DQReport, validate_raw_survey
 
 
@@ -109,3 +110,23 @@ def run_feature_pipeline(
         config_sha256=cfg.config_sha256,
         force=force,
     )
+
+
+def run_full_pipeline(
+    conn: sqlite3.Connection, sr: SurveyResult, cfg: Config
+) -> tuple[DQReport, pd.DataFrame | None]:
+    """Register -> validate -> features -> score, in one call. `indications` is
+    None iff `report.has_fail` -- a quarantined survey is never featurised or
+    scored, by design (the same guarantee `run_survey_pipeline` already gives
+    register vs `load_readings`). This never raises on a bad survey: a hard DQ
+    fail degrades to "here's why it failed" (the returned report), not an
+    exception -- that degradation is the whole point for a demo app's live
+    mode, but it is equally usable by anything else that wants "just get me
+    indications for this raw file" in one call.
+    """
+    _, report = run_survey_pipeline(conn, sr, cfg)
+    if report.has_fail:
+        return report, None
+    run_feature_pipeline(conn, sr.survey_id, cfg)
+    indications = predict_survey(conn, sr.survey_id, cfg)
+    return report, indications

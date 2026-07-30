@@ -35,7 +35,7 @@ packages = ["src/lsm"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]
+pythonpath = ["src", "app"]
 
 [tool.mypy]
 # None of numpy/pandas/pyarrow/sklearn/lightgbm/joblib/yaml/scipy ship inline

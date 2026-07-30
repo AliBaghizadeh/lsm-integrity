@@ -195,15 +195,21 @@ def monitor(env: str = "dev") -> None:
 
 
 @app.command()
-def serve(env: str = "dev") -> None:
-    """[Stage 4.5] The polished demo app (APP_MODE=demo/live, pre-baked
-    scenarios, HF Spaces deploy) -- not yet implemented.
+def serve() -> None:
+    """[Stage 4.5] Launch the polished demo app (APP_MODE=demo|live, pre-baked
+    scenarios). A thin `streamlit run` wrapper -- it blocks until Ctrl-C, same
+    as running Streamlit directly. HF Spaces deploy is a separate, not-yet-built
+    step (needs a cloud-account decision, see PLAN.md).
 
-    Stage 3's own thin app/streamlit_app.py already exists and needs no CLI
-    wrapper yet: run it directly with `streamlit run app/streamlit_app.py`.
+    Stage 3's own thin app/streamlit_app.py still exists, unchanged, and needs
+    no CLI wrapper: run it directly with `streamlit run app/streamlit_app.py`.
     """
-    typer.echo("serve: not yet implemented (Stage 4.5)")
-    raise typer.Exit(code=2)
+    import subprocess
+
+    app_path = Path(__file__).resolve().parents[2] / "app" / "demo_app.py"
+    result = subprocess.run(["streamlit", "run", str(app_path)], check=False)
+    if result.returncode != 0:
+        raise typer.Exit(code=result.returncode)
 
 
 if __name__ == "__main__":

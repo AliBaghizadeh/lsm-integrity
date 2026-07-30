@@ -1,0 +1,185 @@
+{
+  "baked_from_pipeline_version": "2026.07.30-62821561-dirty",
+  "feature_version": 2,
+  "schema_version": 2,
+  "config_sha256": "59ff17e5adbc54048ee31c728a64774d582bcb38076aae4325d7c831b915c282",
+  "pipeline_release": {
+    "pipeline_version": "2026.07.30-62821561-dirty",
+    "anomaly_version": "anomaly-if-2026.07.30-62821561-dirty",
+    "severity_version": "severity-lgbm-2026.07.30-62821561-dirty",
+    "classify_version": null,
+    "growth_version": null,
+    "feature_version": 2,
+    "schema_version": 2,
+    "container_digest": "local-dev",
+    "released_at": "2026-07-30T11:11:45.463733+00:00",
+    "alias": "challenger"
+  },
+  "model_run": {
+    "anomaly-if-2026.07.30-62821561-dirty": {
+      "model_version": "anomaly-if-2026.07.30-62821561-dirty",
+      "task": "anomaly",
+      "mlflow_run_id": "7c61a5a2a3364c5a9bb000963cb630b1",
+      "git_sha": "6282156163c0b934d56b3935271eefd00776972b-dirty",
+      "config_sha256": "59ff17e5adbc54048ee31c728a64774d582bcb38076aae4325d7c831b915c282",
+      "data_sha256": "416d99ad9060f47ae062b21ccf886a91ad4bf8ed004401178243ec50c24dd09f",
+      "feature_version": 2,
+      "truth_as_of": "2026-07-30T11:11:45.463733+00:00",
+      "trained_at": "2026-07-30T11:11:45.463733+00:00",
+      "metrics_json": "{\"recall_at_budget\": [0.6388888888888888, 0.5222222222222223, 0.7444444444444444], \"false_dig_rate\": [0.21619047619047616, 0.16664285714285718, 0.2695238095238095], \"interference_dig_fraction\": [0.19619047619047614, 0.14952380952380956, 0.24285714285714283], \"localisation_error_m\": [0.40217391304347827, 0.35434782608695653, 0.4543478260869565], \"pr_auc\": 0.4316423571951342}",
+      "artifact_uri": "data\\models\\anomaly-if-2026.07.30-62821561-dirty\\bundle.joblib",
+      "final_test_uses": 0
+    },
+    "severity-lgbm-2026.07.30-62821561-dirty": {
+      "model_version": "severity-lgbm-2026.07.30-62821561-dirty",
+      "task": "severity",
+      "mlflow_run_id": "7c61a5a2a3364c5a9bb000963cb630b1",
+      "git_sha": "6282156163c0b934d56b3935271eefd00776972b-dirty",
+      "config_sha256": "59ff17e5adbc54048ee31c728a64774d582bcb38076aae4325d7c831b915c282",
+      "data_sha256": "416d99ad9060f47ae062b21ccf886a91ad4bf8ed004401178243ec50c24dd09f",
+      "feature_version": 2,
+      "truth_as_of": "2026-07-30T11:11:45.463733+00:00",
+      "trained_at": "2026-07-30T11:11:45.463733+00:00",
+      "metrics_json": "{\"coverage\": [0.92, 0.8665, 0.9666666666666667], \"mae\": [7.462366179955889, 6.0893206519210485, 8.855623259418973], \"interval_width\": [55.51503538022176, 52.34113242811651, 59.03332289402427]}",
+      "artifact_uri": "data\\models\\severity-lgbm-2026.07.30-62821561-dirty\\bundle.joblib",
+      "final_test_uses": 0
+    }
+  },
+  "demo_scenarios": [
+    {
+      "survey_id": "LINE000_R0",
+      "label": "Clean survey A",
+      "kind": "clean"
+    },
+    {
+      "survey_id": "LINE001_R0",
+      "label": "Clean survey B",
+      "kind": "clean"
+    },
+    {
+      "survey_id": "LINE002_R0",
+      "label": "Clean survey C",
+      "kind": "clean"
+    },
+    {
+      "survey_id": "LINEDEMO_R0",
+      "label": "Corrupted survey (bad sensor reading)",
+      "kind": "corrupted"
+    }
+  ],
+  "corrupted_scenario_dq_report": {
+    "survey_id": "LINEDEMO_R0",
+    "checked_at": "2026-07-30T12:09:11.455814+00:00",
+    "results": [
+      {
+        "check_name": "schema",
+        "status": "fail",
+        "n_affected": 4000,
+        "detail": {
+          "error": "  schema_context column  ... failure_case  index\n0         Column  bx_nt  ...     999999.0      3\n\n[1 rows x 6 columns]"
+        }
+      },
+      {
+        "check_name": "range",
+        "status": "fail",
+        "n_affected": 1,
+        "detail": {}
+      },
+      {
+        "check_name": "saturation",
+        "status": "pass",
+        "n_affected": 0,
+        "detail": {
+          "axes": []
+        }
+      },
+      {
+        "check_name": "sample_idx_monotonic",
+        "status": "pass",
+        "n_affected": 0,
+        "detail": {}
+      },
+      {
+        "check_name": "sample_idx_gap",
+        "status": "pass",
+        "n_affected": 0,
+        "detail": {
+          "missing_length_m": 0.0
+        }
+      },
+      {
+        "check_name": "duplicate_sample_idx",
+        "status": "pass",
+        "n_affected": 0,
+        "detail": {}
+      },
+      {
+        "check_name": "duplicate_content",
+        "status": "pass",
+        "n_affected": 0,
+        "detail": {
+          "duplicates_of": []
+        }
+      },
+      {
+        "check_name": "survey_overlap",
+        "status": "pass",
+        "n_affected": 0,
+        "detail": {
+          "max_correlation": 0.0
+        }
+      },
+      {
+        "check_name": "gps_jump",
+        "status": "pass",
+        "n_affected": 0,
+        "detail": {
+          "max_jump_m": 0.4994382202602699
+        }
+      },
+      {
+        "check_name": "gps_chainage_consistency",
+        "status": "pass",
+        "n_affected": 0,
+        "detail": {
+          "relative_error": 0.001168730233323634
+        }
+      },
+      {
+        "check_name": "noise_floor",
+        "status": "warn",
+        "n_affected": 1,
+        "detail": {
+          "bx_nt": 15512.933647296955,
+          "by_nt": 5.435903279363174,
+          "bz_nt": 5.388739990231841
+        }
+      },
+      {
+        "check_name": "background_regime",
+        "status": "pass",
+        "n_affected": 0,
+        "detail": {
+          "reason": "insufficient history",
+          "n_prior": 0
+        }
+      },
+      {
+        "check_name": "interference_density",
+        "status": "pass",
+        "n_affected": 13,
+        "detail": {
+          "fraction": 0.00325
+        }
+      },
+      {
+        "check_name": "coverage",
+        "status": "pass",
+        "n_affected": 0,
+        "detail": {
+          "reason": "no expected length declared"
+        }
+      }
+    ]
+  }
+}

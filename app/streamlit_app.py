@@ -18,13 +18,14 @@ import sys
 from pathlib import Path
 
 import pandas as pd
-import pydeck as pdk
 import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from lsm.config import load_config  # noqa: E402
 from lsm.db import connect  # noqa: E402
+from map_utils import build_map  # noqa: E402
 
 st.set_page_config(layout="wide", page_title="LSM Stage 3 -- indications")
 
@@ -75,39 +76,7 @@ if pipeline_version:
 else:
     st.warning("No trained pipeline yet -- run `lsm train` first. Showing ground truth only.")
 
-# Thin the track for the map (cheap and plenty to see the line) -- the model
-# never sees fewer points than this, only the plotted path does.
-track = raw[["lat", "lon"]].iloc[:: max(1, len(raw) // 2000)]
-defects = raw.loc[raw["defect"] == 1, ["lat", "lon", "defect_type"]]
-interference = raw.loc[raw["interference"] == 1, ["lat", "lon"]]
-
-layers = [
-    pdk.Layer(
-        "PathLayer",
-        data=[{"path": track[["lon", "lat"]].to_numpy().tolist()}],
-        get_path="path",
-        get_width=2,
-        get_color=[120, 120, 120],
-    ),
-    pdk.Layer(
-        "ScatterplotLayer", data=defects, get_position=["lon", "lat"],
-        get_color=[220, 80, 40], get_radius=3, pickable=True,
-    ),
-    pdk.Layer(
-        "ScatterplotLayer", data=interference, get_position=["lon", "lat"],
-        get_color=[130, 130, 130], get_radius=3, pickable=True,
-    ),
-]
-if len(indications):
-    layers.append(
-        pdk.Layer(
-            "ScatterplotLayer", data=indications, get_position=["lon", "lat"],
-            get_color=[40, 120, 220], get_radius=4, pickable=True,
-        )
-    )
-
-view_state = pdk.ViewState(latitude=float(raw["lat"].mean()), longitude=float(raw["lon"].mean()), zoom=13)
-st.pydeck_chart(pdk.Deck(layers=layers, initial_view_state=view_state, map_style=None))
+st.pydeck_chart(build_map(raw, indications))
 st.caption(
     "orange = true defect · grey = true interference (unlabelled to the model) · "
     "blue = detected indication"

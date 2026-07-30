@@ -41,13 +41,13 @@ Use the cut lines.
 | 2.75 — EDA on the feature store | Done, findings acted on and re-run for real — see below |
 | 3 — Detection (MAD vs IsolationForest) | Built, **recall gap closed to -0.006 (was -0.056) after the EDA fix — gate still does not pass on the 0.15 margin, but interference-rejection is now a significant IsolationForest win** |
 | 4 — Severity (LightGBM CQR + conformal) | Built, **run for real at 5x scale — gate PASSES** |
-| 4.5 — Demo app | Not started |
+| 4.5 — Demo app | Local app built and headlessly verified (2026-07-30) — HF Spaces deploy deferred, see below |
 | 5 — Classification and risk ranking | Not started |
 | 6 — Scale rehearsal | Not started |
 | 7 — CI/CD and release gate | Partially built (`ci.yml` + `train.yml`; `deploy.yml`/S3/rollback deferred, see Stage 7) |
 | 8 — Growth, remaining life, monitoring | Not started |
 
-149/149 tests pass, ruff + mypy clean. Git repo: 8 commits, clean working tree, **not yet
+170/170 tests pass, ruff + mypy clean. Git repo: 13 commits, clean working tree, **not yet
 pushed anywhere** (no remote configured).
 
 **What's needed next, roughly in order of what unblocks the most:**
@@ -87,12 +87,15 @@ pushed anywhere** (no remote configured).
 4. **Push to GitHub.** Repo is local-only. Needs a GitHub repo created and a remote added —
    your call on timing, and I won't do this without you explicitly asking, same as any
    other publish-facing action.
-5. **Stage 4.5 (demo app)** blocks the rest of Stage 7 (`deploy.yml`, HF Spaces) — there's
-   nothing to deploy until it exists.
-6. **A cloud-account decision for the rest of Stage 7.** S3 + GitHub OIDC are designed but
-   not built (no cloud account exists today, `storage.s3.enabled: false` throughout) —
-   decide whether this demonstrator stays local-only (defensible on its own terms) or is
-   worth standing up real infrastructure for.
+5. **Stage 4.5 (demo app) — the local app is built and headlessly verified; HF Spaces
+   deploy is what's left, and it's blocked on item 6.** `streamlit run app/demo_app.py` (or
+   `lsm serve`) launches it directly; see the Stage 4.5 section below for the full writeup,
+   including two real bugs headless testing caught before Ali ever had to.
+6. **A cloud-account decision for the rest of Stage 7 (and for Stage 4.5's HF Spaces
+   deploy).** S3 + GitHub OIDC are designed but not built (no cloud account exists today,
+   `storage.s3.enabled: false` throughout) — decide whether this demonstrator stays
+   local-only (defensible on its own terms, and now includes a fully working local demo) or
+   is worth standing up real infrastructure for.
 7. **Stages 5, 6, 8** — classification/risk ranking, a full scale rehearsal (the ~60-defect,
    5-line corpus above is a step in that direction, not the Stage 6 rehearsal itself — both
    Stage 3 and 4's CIs are still wide enough to be worth narrowing further), and
@@ -689,6 +692,69 @@ check. Beat 4 is the one nobody else demos, and it is aimed straight at "validat
 trust".
 
 **Gate:** the whole demo runs end to end on an iPad over cellular, with the laptop closed.
+
+---
+
+**Built 2026-07-30 (local scope): the serving artifact, both APP_MODE paths, and all four
+beats are real and headlessly verified.** HF Spaces deploy is deliberately NOT built yet —
+it needs a cloud-account decision (item 6 above) and Stage 7's `deploy.yml`, neither of
+which exist. Run it: `streamlit run app/demo_app.py` or `lsm serve`.
+
+- `scripts/bake_demo_assets.py` builds a committed `serving/` directory (~6 MB) matching
+  `architecture.md`'s spec exactly: 3 clean scenarios reused from the real, already-trained
+  5-line corpus (different `line_id`s each, so `check_survey_overlap`/`check_background_
+  regime` never produce order-dependent surprises across scenario picks in one session) —
+  genuine model output, not fabricated — plus one freshly-corrupted scenario (`LINEDEMO_R0`:
+  one real raw survey's bytes, relabelled, then `bx_nt` pushed out of range at row 3, the
+  exact recipe `tests/test_validate.py` already proves trips `check_range`). The bake script
+  runs the corrupted scenario through the real validator against a throwaway db and
+  **asserts it actually fails** — if a future generator/validator change ever stops tripping
+  the gate, baking fails loudly instead of silently shipping a "corrupted" scenario that
+  isn't. Model bundles are copied verbatim from `data/models/`, not re-derived, so
+  `load_bundle`'s hard version-mismatch check still applies exactly as it would in
+  production.
+- `src/lsm/pipeline.py` gained `run_full_pipeline()`: register → validate → features →
+  score in one call, degrading to `(report, None)` (no exception) on a hard DQ fail — the
+  one new "real" function this stage needed, reused by nothing demo-specific.
+- `app/demo_lib.py` is the Streamlit-free seam: DEMO mode reads baked Parquet/JSON directly
+  (zero SQLite, zero compute, cannot fail — literally, not just in spirit). LIVE mode builds
+  one real, session-private SQLite db (a real tempfile, deliberately not the literal string
+  `":memory:"` through `db.connect()`'s `Path(...)` wrapping, which is ambiguous on
+  Windows), seeded from the manifest's own real `pipeline_release`/`model_run` rows so
+  `predict_survey`'s FK reads resolve, then drives `run_full_pipeline` for real.
+- `app/demo_app.py`: `st.segmented_control` for mode and scenario (never file upload), four
+  beats as tabs, dig-budget control as a pure client-side top-k slice, footer provenance
+  strip from the manifest. `app/map_utils.py` was extracted from Stage 3's `streamlit_app.py`
+  so the two apps' pydeck rendering can never quietly diverge.
+- **Two real bugs, both caught by headless testing before they'd have surfaced as "it's
+  broken" during an actual demo:**
+  1. Streamlit does **not** add the executed script's own directory to `sys.path` the way
+     plain `python script.py` does — `import demo_lib` raised `ModuleNotFoundError` the
+     first time the app was actually run (via `streamlit.testing.v1.AppTest`, not by eye).
+     Fixed by adding the same explicit `sys.path.insert` both apps already do for `src`.
+  2. The live-mode SQLite connection needed `check_same_thread=False` — **not** because of
+     `st.cache_resource` (correctly avoided here; that cache is a process-wide singleton,
+     wrong for a per-session writable connection) but because Streamlit can dispatch one
+     session's *own* consecutive reruns onto different worker threads from its thread pool,
+     which trips sqlite3's same-thread guard even though only one rerun ever executes at a
+     time. Caught by scripting exactly that sequence — switch to live mode, run one
+     scenario, then rerun on a *different* scenario in the same session — via `AppTest`.
+- **Verification, precisely scoped:** `tests/test_pipeline_full.py` (3 tests),
+  `tests/test_demo_lib.py` (10 tests, exercises every `demo_lib` function against the real
+  committed `serving/` dir, including a rebuild-drift check: bundles must load against
+  whatever `feature_version`/`schema_version` `config/base.yaml` *currently* declares, not
+  just what they were baked against), and `tests/test_demo_app.py` (5 tests, via
+  `streamlit.testing.v1.AppTest` — a real script execution through Streamlit's own
+  ScriptRunner, not a mirror script: demo mode boots clean, the corrupted scenario shows the
+  refusal, live mode survives the exact multi-rerun/thread-hop sequence that broke before
+  the fix). 170/170 tests total, ruff + mypy clean. **What's still NOT machine-verified**:
+  visual layout, the pydeck map's actual rendering, and the "~1 s" live-mode feel — `AppTest`
+  proves the script runs without exception and produces the right widgets/errors, not that
+  it looks right. That needs Ali to actually look at a browser.
+
+**Answers:** "do you have something I can actually click through, not just metrics?" — and
+demonstrates the habit of catching integration bugs with a headless test harness before
+they'd show up mid-demo, not after.
 
 ---
 
