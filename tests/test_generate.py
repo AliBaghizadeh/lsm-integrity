@@ -1,6 +1,10 @@
 from __future__ import annotations
 
-from lsm.generate import generate_all
+import numpy as np
+import pytest
+
+from lsm.generate import _build_features, generate_all
+from lsm.truth import build_truth_registry
 
 
 def test_generate_is_deterministic_given_same_seed(tiny_cfg, tmp_path):
@@ -53,3 +57,61 @@ def test_defect_signature_is_detectable_against_background(cfg, tmp_path):
     assert defect_resid > background_resid
     # raw field is ~19000-45000 nT; defect signal must be a small fraction of it
     assert defect_resid < 0.01 * df["bz_nt"].abs().median()
+
+
+def _label_windows(cfg, features):
+    """[(start, end, is_defect)] label windows for a features list, matching
+    generate.py's own half-width formula."""
+    windows = []
+    for f in features:
+        r_eff = float(np.hypot(cfg.depth_m, f["y_off_m"]))
+        hw = cfg.label_window_scale * r_eff
+        windows.append((f["chainage_m"] - hw, f["chainage_m"] + hw, f["is_defect"]))
+    return sorted(windows)
+
+
+def test_build_features_never_places_overlapping_label_windows(cfg):
+    """Unconstrained rng.uniform() placement silently corrupted the truth
+    registry at higher defect density: two overlapping same-kind windows
+    merge into ONE contiguous region, undercounting physical defects. This is
+    the regression test for _sample_spaced_chainage.
+    """
+    cfg.base.data.n_defects = 60
+    cfg.base.data.n_interference = 16
+    rng = np.random.default_rng(cfg.seed)
+    features = _build_features(cfg.base.data, rng)
+
+    windows = _label_windows(cfg.base.data, features)
+    for (_, hi, _), (lo2, _, _) in zip(windows, windows[1:]):
+        assert hi <= lo2, "two label windows overlap"
+
+
+def test_build_features_defect_count_survives_into_the_truth_registry(cfg, tmp_path):
+    """End-to-end proof the spacing fix does its job: the truth registry finds
+    exactly as many physical defects as were requested, not fewer.
+    """
+    from lsm.generate import generate_all
+
+    cfg.base.data.n_lines = 1
+    cfg.base.data.n_runs = 1
+    cfg.base.data.n_defects = 60
+    cfg.base.data.n_interference = 16
+    results = generate_all(cfg.base.data, tmp_path / "raw", seed=cfg.seed)
+
+    import pandas as pd
+
+    df = pd.read_parquet(results[0].path)
+    registry = build_truth_registry(df, line_id="LINE000")
+    assert (registry["kind"] == "defect").sum() == 60
+    assert (registry["kind"] == "interference").sum() == 16
+
+
+def test_build_features_raises_loudly_when_too_dense_to_place(cfg):
+    """Too many features for the line length must fail loudly, not silently
+    corrupt spacing by giving up the constraint.
+    """
+    cfg.base.data.n_defects = 80
+    cfg.base.data.n_interference = 20
+    rng = np.random.default_rng(cfg.seed)
+    with pytest.raises(RuntimeError):
+        _build_features(cfg.base.data, rng)

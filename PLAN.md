@@ -53,10 +53,16 @@ pushed anywhere** (no remote configured).
 
 1. **A decision on Stage 3's negative result.** IsolationForest doesn't beat the MAD
    baseline on the real corpus (recall gap -0.056, CI [-0.167, 0.056]) — reported honestly,
-   not a bug. Options: investigate/tune (feature selection, hyperparameters) before going
-   further, or accept it as the honest Stage 3 finding and move on with MAD as the more
-   defensible detector for now. Stage 4's severity numbers are conditional on whichever
-   detector's indications feed it, so this decision has downstream effects.
+   not a bug. **In progress (2026-07-30):** investigated whether row-level ranking quality
+   (IsolationForest's PR-AUC is actually slightly *better* than MAD's, 0.482 vs 0.430)
+   explains the indication-level loss — it doesn't cleanly; the loss shows up specifically
+   at the tight dig-budget cutoff (IsolationForest lets through more interference there,
+   consistent with wider average indications possibly reflecting sustained window-feature
+   elevation). `n_lines` bumped 1 → 5 (~60 physical defects, a proper Stage-6-style scale
+   step — more independent lines, not more defects crammed onto one line, which was tried
+   first and measured to degrade the background-contrast gate; see `generate.py` and the
+   commit history) specifically to narrow the CI enough to tell whether the small negative
+   effect is real. **Needs a real `lsm train` run on the 5-line corpus to get the answer.**
 2. **`README.md` — currently doesn't exist.** If this gets published to showcase
    production readiness, this is the first thing anyone sees on the repo homepage, and
    right now there isn't one. `PLAN.md` and `LSM_PROJECT.md` are internal planning

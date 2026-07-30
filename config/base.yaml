@@ -4,7 +4,20 @@
 seed: 42
 
 data:
-  n_lines: 1
+  # Bumped from 1 on 2026-07-30 to test whether Stage 3's negative result
+  # (IsolationForest doesn't beat MAD) is a real small effect the CI is just
+  # too wide to resolve, or a real effect -- more INDEPENDENT lines narrows the
+  # bootstrap CI (~2.2x, sqrt(60/12) physical defects) without changing WHICH
+  # conclusion is true. Deliberately more lines, not more defects on this one
+  # line: n_defects=60 on a single 2000 m line was tried first and measured to
+  # degrade the Stage 2 background-contrast gate (3.19x -> ~2.7-3.0x, noisy,
+  # sometimes failing) -- denser packing means background rows increasingly
+  # sit near an unlabelled neighbour's 1/r^3 field tail. Separate lines don't
+  # share a background at all, so this is the same statistical-power gain with
+  # none of that cost -- see PLAN.md Stage 6, which reaches the same
+  # conclusion for the same reason ("~40 lines", not "~40x the defects on one
+  # line").
+  n_lines: 5
   length_m: 2000.0
   step_m: 0.5
   depth_m: 1.5

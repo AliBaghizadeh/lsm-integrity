@@ -86,13 +86,55 @@ class SurveyResult:
     surveyed_at: str
 
 
+def _sample_spaced_chainage(
+    rng: np.random.Generator,
+    low: float,
+    high: float,
+    half_width: float,
+    placed: list[tuple[float, float]],
+    margin: float = 2.0,
+    max_tries: int = 2000,
+) -> float:
+    """Reject-sample a chainage so this feature's label window never touches an
+    already-placed feature's window (plus a small margin).
+
+    Without this, unconstrained `rng.uniform()` placement produces overlapping
+    label windows once feature density rises (measured: 25% of features
+    overlap at n_defects=40 on this line length, unconstrained). A SAME-KIND
+    overlap (defect-defect or interference-interference) is silent data
+    corruption, not cosmetic: `truth.build_truth_registry` finds physical
+    sources by looking for contiguous `defect==1` (or `interference==1`) runs,
+    so two overlapping defects merge into what it counts as ONE physical
+    defect -- undercounting exactly the thing a denser corpus is meant to
+    increase. A cross-kind overlap (defect touching interference) doesn't
+    corrupt the count, but still creates row-level assignment ambiguity at the
+    boundary; excluding it too keeps the corpus unambiguous everywhere.
+    """
+    for _ in range(max_tries):
+        candidate = rng.uniform(low, high)
+        if all(abs(candidate - c) >= (half_width + hw + margin) for c, hw in placed):
+            return candidate
+    raise RuntimeError(
+        f"Could not place a feature with the required label-window spacing after "
+        f"{max_tries} tries -- too many features (or too wide a label window) for "
+        f"this line length. Reduce n_defects/n_interference or increase length_m."
+    )
+
+
 def _build_features(cfg: DataConfig, rng: np.random.Generator) -> list[dict]:
     types = ["scc", "weld", "dent", "corrosion"]
     feats = []
+    placed: list[tuple[float, float]] = []  # (chainage_m, half_width_m), for spacing checks
+    # y_off_m=0 for every defect, so r_eff=depth_m and the half-width is the
+    # same constant for all of them.
+    defect_half_width = cfg.label_window_scale * cfg.depth_m
+
     for _ in range(cfg.n_defects):
+        chainage = _sample_spaced_chainage(rng, 50, cfg.length_m - 50, defect_half_width, placed)
+        placed.append((chainage, defect_half_width))
         feats.append(
             {
-                "chainage_m": rng.uniform(50, cfg.length_m - 50),
+                "chainage_m": chainage,
                 "y_off_m": 0.0,
                 "type": rng.choice(types),
                 "severity": rng.uniform(20, 80),
@@ -110,10 +152,14 @@ def _build_features(cfg: DataConfig, rng: np.random.Generator) -> list[dict]:
         # traps nothing. Scaled this way it arrives at DEFECT-COMPARABLE
         # amplitude but visibly BROADER, which is the discrimination the whole
         # project turns on: shape separates it, amplitude does not.
+        y_off_m = rng.uniform(3, 8) * rng.choice([-1, 1])
+        half_width = cfg.label_window_scale * float(np.hypot(cfg.depth_m, y_off_m))
+        chainage = _sample_spaced_chainage(rng, 50, cfg.length_m - 50, half_width, placed)
+        placed.append((chainage, half_width))
         feats.append(
             {
-                "chainage_m": rng.uniform(50, cfg.length_m - 50),
-                "y_off_m": rng.uniform(3, 8) * rng.choice([-1, 1]),
+                "chainage_m": chainage,
+                "y_off_m": y_off_m,
                 "type": "interference",
                 "severity": rng.uniform(30, 90) * cfg.interference_moment_scale,
                 "orientation": rng.normal(0, 1, 3),
