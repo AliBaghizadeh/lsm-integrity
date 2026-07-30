@@ -174,3 +174,56 @@ code path, both times. That symmetry is the point.
 - **Structured JSON logs** correlated by `survey_id` / `run_id` / `pipeline_version`. An
   alert with no destination is not monitoring; a log with no correlation key is not
   debuggable.
+
+## Building a Streamlit app: hard-won conventions, not LSM-specific
+
+Learned building Stage 4.5's demo app, but every point below is a Streamlit/data-app
+convention, not a physics or pipeline one — apply it on any project with a Streamlit
+front end.
+
+- **Streamlit does NOT add the executed script's own directory to `sys.path`**, unlike
+  plain `python script.py`. If the app imports sibling modules (a shared plotting helper, a
+  data-access module), add `sys.path.insert(0, str(Path(__file__).resolve().parent))`
+  explicitly, or the import only fails the first time the app is actually *run* — not when
+  it's written, not when its functions are unit-tested.
+- **The whole script reruns top-to-bottom on every widget interaction — including every
+  `st.tabs` body, even the ones not currently visible.** Anything expensive or side-
+  effecting called at module level or inside a tab will silently re-run on a click that has
+  nothing to do with it (a slider in one tab retriggering a live pipeline run meant for a
+  different control entirely). Cache pure data loads with `st.cache_data`; cache anything
+  with side effects (a live scoring run, a DB write) in `st.session_state`, keyed by the
+  actual input that should invalidate it (e.g. a scenario id) — not "has this ever run this
+  session." Verify the fix, don't just assume it: assert the cached object is the *same
+  object* (not just equal) before and after an unrelated widget change.
+- **`st.cache_resource` is a process-wide singleton shared across every concurrent session
+  hitting the app — never put a writable or session-scoped resource in it.** It's correct
+  for a read-only, shareable connection; wrong the moment anything writes through it (one
+  user's action would then affect every other session). Use `st.session_state` for anything
+  written to or scoped per browser session.
+- **A session-scoped SQLite connection needs `check_same_thread=False`, and the reason is
+  not what it looks like.** It is not a real concurrent-access hazard (`st.session_state`
+  already ensures only one session owns it) — it's that Streamlit can dispatch one
+  session's own *consecutive reruns* onto different worker threads from its internal thread
+  pool, which trips sqlite3's same-thread guard even though only one rerun ever executes at
+  a time. A false-positive guard, not a real one — but it still raises unless disabled.
+- **Headless verification means `streamlit.testing.v1.AppTest`, not a hand-written mirror
+  script and not just unit-testing the functions the app calls.** `AppTest` runs the actual
+  script through Streamlit's real `ScriptRunner` and catches exactly the class of bug pure
+  unit tests structurally cannot see, because the bug is in how the *framework* runs the
+  script, not in the business logic (both gotchas above were found this way, before a human
+  ever opened a browser). Any Streamlit app in a project like this should have an
+  `AppTest`-based test file, in addition to (not instead of) unit tests for its non-UI
+  helper functions.
+- **Demo-visualization UX, learned from a real user's first reaction, not guessed:**
+  - Don't collapse a multi-channel signal into one aggregate-magnitude line when the point
+    of the chart is "can you see structure here" — plot the components separately.
+  - A literal log-scale axis doesn't work on signed data centred away from zero (a raw
+    sensor field, say). If a log view is requested to "see" something small against a huge
+    background, show the *deviation from a robust baseline* (e.g. `|x - median(x)|`) on the
+    log axis instead — that's the transform that actually reveals structure.
+  - Overlay ground-truth/reference markers so a "there's nothing visible here" claim is
+    something the viewer can verify themselves, not just something the app asserts in a
+    caption.
+  - Caption *why* a view matters, not just what it shows, and define domain jargon in an
+    intro line (what is a "survey", a "scenario", etc.) — skipping this reads as an
+    unfinished/"naked" app even when the underlying logic is completely correct.
