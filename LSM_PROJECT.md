@@ -77,24 +77,27 @@ Python · numpy/pandas · scikit-learn · LightGBM · MLflow · Streamlit · pyt
 Real observatory background; a tiny ILI-vs-LSM "data fusion" mock; conformal prediction for the regression; a simple active-learning demo ("which segment should we dig next?").
 
 ## Insights & Additions from Literature (NeurIPS 2020)
-Based on *Mitra et al.*'s paper on ML-based LSM anomaly detection, here is a detailed comparison and actionable additions to our pipeline.
+Based on *Mitra et al.*'s workshop paper on ML-based LSM anomaly detection (real experimental
+data, two physical defects on a lab rig) — the closest peer to this project in spirit, and
+independently re-read in full (not just summarized) to check this comparison honestly rather
+than assume it. They are ahead of us on breadth of technique (a working multi-output 1D-CNN,
+FastDTW alignment, RAPIDS cuML GPU acceleration); we are ahead of them on statistical rigor
+(bootstrap CIs on every headline metric vs. their bare accuracy/MCC with no interval at all,
+and a documented, *re-verified* negative-result investigation vs. their "found a leakage bug,
+fixed it, moved on"). Below is what we considered from their approach and the actual reasoning
+for building vs. deferring each one — not a to-do list, since three of the five were
+deliberately not built, for reasons specific to this project, not lack of time.
 
-### Project vs. Research Paper Comparison
+### Project vs. research paper: what we considered, and why we did or didn't build it
 
-| Category | Our Implementation | Research Paper Proposal | Actionable Addition |
+| Category | Their approach | Our approach | Built? Why / why not |
 | :--- | :--- | :--- | :--- |
-| **Data Alignment** | Detrending and along-track gradients. | **FastDTW** (linear time-series alignment). | FastDTW to align multi-run surveys (Runs 0-2). |
-| **Unsupervised Model** | Isolation Forest + robust-MAD threshold. | **k-Nearest Neighbors (k-NN)** (`pyod`). | Incorporate k-NN from `pyod` as baseline. |
-| **Supervised Modeling** | Separate regression and classification. | **Unified Multi-Output 1D-CNN** in Keras. | Multi-output Conv1D for mask + depth + volume. |
-| **Hardware / Scaling** | CPU-bound training. | **RAPIDS AI cuML** for GPU-accelerated SVC. | Leverage cuML to solve $O(N^3)$ SVC complexity. |
-| **Data Leakage Split** | Grouped split by chainage segment. | Hold out **entire contiguous defect regions**. | Define 3-foot buffer bounds around defects. |
-| **Data Augmentation** | Synthetic dipole forward generator. | **Magneto-restriction principles** for physics. | Augment training via stress-induced permeability. |
-
-### Key Additions Detail
-1. **Dynamic Time Warping (FastDTW) for Multi-Survey Alignment:** Physical offsets across different inspections cause phase shifts. FastDTW aligns different surveys prior to feature extraction in [features.py](file:///c:/Ali/kaggle/Rosen/project/src/features.py).
-2. **k-NN as Primary Unsupervised Baseline:** In the paper, k-NN was the only `pyod` model that effectively isolated anomalies with minimal noise. We will incorporate `pyod.models.knn.KNN` in [train.py](file:///c:/Ali/kaggle/Rosen/project/src/train.py).
-3. **Multi-Output 1D-CNN:** The authors built a 1D-CNN with multi-level spatial concatenations to predict classification mask and regression depth/volume simultaneously.
-4. **RAPIDS cuML Acceleration:** RBF-kernel SVC scales poorly ($O(N^3)$). Using cuML on GPU achieves a 200x speedup, making scale-up to millions of field points computationally feasible.
+| **Data alignment** | FastDTW (time-series alignment) | Detrending + along-track gradients; no alignment step | **Not built, deliberately.** Our synthetic generator keeps every defect's chainage position exactly fixed across a line's repeat runs — there is no phase/chainage misalignment in this data for DTW to correct. Real LSM data (odometer slip, GPS drift) would need it; building DTW here would be solving a problem the demo doesn't have. |
+| **Unsupervised baseline** | k-NN (`pyod`) — their best-performing unsupervised model | MAD threshold + IsolationForest | **Partially open.** A k-NN baseline alongside MAD/IsolationForest is a real, cheap candidate addition, not yet done — unlike the other four rows, this one has no principled reason to skip, just hasn't been prioritized yet. |
+| **Supervised modelling** | Unified multi-output 1D-CNN (mask + depth + volume, Keras) | Separate LightGBM models per stage (anomaly, severity) | **Not built, deliberately.** LightGBM was chosen because Stage 6's scale target favours a fast, interpretable tabular model with native SHAP support, at a data volume (tens of thousands of rows) where a CNN's main advantage — learning spatial features from raw windows — is less clear-cut than on their scale. A 1D-CNN remains an explicit "stretch" comparison, not a gap papered over. |
+| **Hardware / scaling** | RAPIDS cuML for GPU-accelerated SVC (their SVC scales as *O(N³)*) | CPU-bound LightGBM/scikit-learn (`n_jobs=16`) | **Not applicable, not just "not built."** We never use an SVC anywhere in this pipeline, so their specific *O(N³)* problem doesn't exist here. LightGBM/IsolationForest are CPU-native and don't benefit meaningfully from GPU at this row count; GPU only becomes relevant if a future 1D-CNN stage is actually started (and then needs a Blackwell/CUDA 12.8+-matched PyTorch build first — the installed one today is CPU-only). |
+| **Leakage-safe splitting** | Hold out entire contiguous defect regions with a buffer | `GroupKFold` by whole `line_id` (a defect's entire physical line goes to one fold) | **Already handled, arguably more conservatively.** Grouping by whole line is a strictly larger exclusion zone than a buffer around each defect — a real, CI-enforced test (`tests/test_leakage.py`) already pins that no group crosses folds. This is a case where our approach and theirs converge on the same guarantee via a different mechanism, not a gap. |
+| **Data augmentation** | Magnetostriction-informed physical augmentation | Full-control synthetic forward generator (no augmentation step) | **Not applicable.** Augmentation exists to stretch scarce *real* data further; since we already control ground truth completely and can generate more scenarios directly, "augmenting" a synthetic dataset via magnetostriction modelling would add complexity without adding real signal. This idea earns its place once real proprietary data is in play, not before.
 
 ---
 
@@ -133,11 +136,19 @@ As a materials scientist, you can map the microstructural changes to their magne
 
 ## Comprehensive Literature Review & Project Alignment
 
-Below is an overview of the technical papers and reference documents found in the folder, detailing how they align with or expand upon the methodologies implemented in this project.
+An overview of the technical papers and reference documents found in the folder, read in full
+(not just skimmed for keywords) so the comparisons below are checked against what each
+document actually contains, not assumed from its title. Two corrections from that re-read,
+stated plainly rather than quietly fixed: item 2's paper contains no dataset, experiment, or
+results table anywhere — treat it as a proposal, not an empirical benchmark. Item 5 below is
+**my own interview-prep synthesis** (built from the flyer and general domain knowledge for the
+2nd-round interview with Richard Föcke), not a document ROSEN published — the earlier title
+"ROSEN Reference Standards & Best Practices" implied an external authority this doesn't have,
+and has been corrected.
 
 ### 1. npj Materials Degradation Review (Olawole et al., 2026)
 *   **Title:** *Advanced sensor systems and machine learning for pipeline integrity management: a review of corrosion monitoring and prediction strategies*
-*   **Focus:** A comprehensive evaluation of In-Line Inspection (ILI) techniques (MFL, UT, EMAT) vs. long-range continuous monitoring (GWUT, AET, DFOS) and the machine learning architectures used to interpret their signals.
+*   **Focus:** A comprehensive evaluation of In-Line Inspection (ILI) techniques (MFL, UT, EMAT) vs. long-range continuous monitoring (GWUT, AET, DFOS) and the machine learning architectures used to interpret their signals. **This is a review, not primary research** — it cites other groups' numbers (e.g. a cited GAN's NCC 0.82) rather than running its own experiments, so it's a source of vocabulary and of what the field considers emerging (multimodal fusion, PINNs, digital twins), not a rigor benchmark this project should be measured against directly.
 *   **Key Findings:**
     *   **The "ML Hook":** Sensors create either *volume bottlenecks* (e.g., DFOS producing 30 million points/sec, needing compression) or *complexity bottlenecks* (e.g., MFL and GWUT, where signals are indirect, non-linear, and obscured by operational noise).
     *   **Multimodal Data Fusion:** Combining MFL (magnetic) and UT (acoustic) compensates for individual sensor blind spots (e.g., MFL is blind to mid-wall laminations, while UT fails in gas pockets). Fusing them increases Probability of Identification (POI).
@@ -145,24 +156,24 @@ Below is an overview of the technical papers and reference documents found in th
         *   *GAN Translation:* Using Generative Adversarial Networks (e.g., Res-Pix2Pix) to translate raw 2D MFL maps into pseudo-UT thickness profiles to ease fusion.
         *   *FEA-ANN Prognosis:* Training an Artificial Neural Network on finite element simulations of parameterized defects (varying length, width, and depth) to predict pipeline failure pressure instantly (relative error 0%–7%), avoiding slow real-time FEA.
         *   *Trust & PINNs:* Emphasizes the need for Explainable AI (SHAP/LIME) and Physics-Informed Neural Networks (PINNs) that constrain the loss function using physical laws (Maxwell's equations and Ramberg-Osgood stress-strain relations).
-*   **Project Alignment:** Our project aligns directly with the "Sim-to-Real" transfer learning workflow highlighted here. We generate synthetic anomalies using a physical forward model, implement feature engineering, and design robust grouped-splitting schemes to handle the complexity bottleneck before modeling.
+*   **Project alignment, honestly stated:** none of GAN fusion, FEA-ANN, or PINNs are built here — this project is single-modality (magnetometry only), and multimodal fusion isn't reachable without a second sensor's real data. What genuinely carries over is the framing: this project's synthetic-forward-model-plus-feature-engineering approach is a "sim-to-real" story in the same spirit this review describes as emerging practice, not evidence we've implemented what the review surveys.
 
 ### 2. Subsea Pipeline Integrity Model (Wegner et al., 2021)
 *   **Title:** *A Machine Learning-Enhanced Model for Predicting Pipeline Integrity in Offshore Oil and Gas Fields*
-*   **Focus:** Fuses heterogeneous operational registries to predict structural degradation in subsea flowlines.
-*   **Key Findings:**
-    *   **Data Fusion:** Integrates tabular data from Remotely Operated Vehicle (ROV) visual inspection reports, Cathodic Protection (CP) electrical surveys, and maintenance registries.
-    *   **Modeling:** Applies supervised learning (Support Vector Machines and Random Forests) to forecast armor loss, coating damage, and corrosion fatigue.
-    *   **Explainability:** Evaluates model risk features using SHAP value analysis to help pipeline engineers understand key risk drivers.
-*   **Project Alignment:** Validates our use of auxiliary metadata (like GIS, operational runs, and pipe attributes) and highlights the importance of using feature importance and SHAP analysis for model trust, which we incorporate in Stage 6 of our [PLAN.md](file:///c:/Ali/kaggle/Rosen/project/PLAN.md).
+*   **Focus:** Proposes fusing heterogeneous operational registries to predict structural degradation in subsea flowlines. **Read in full and worth being direct about: this paper contains no dataset, no experiment, and no results table or figure with a number in it anywhere — the "Modeling" and "Explainability" content is prose describing what a model would do, not results from one that was built.** It reads as a proposal/literature synthesis, not a completed empirical study.
+*   **What it describes (proposed, not demonstrated):**
+    *   **Data Fusion:** Integrating tabular data from ROV visual inspection reports, Cathodic Protection (CP) electrical surveys, and maintenance registries.
+    *   **Modeling:** Supervised learning (SVMs, Random Forests) to forecast armor loss, coating damage, and corrosion fatigue.
+    *   **Explainability:** SHAP value analysis for risk-driver interpretation.
+*   **Project alignment, corrected:** this project has real bootstrap CIs, a real leakage test, and real (including negative) measured results — rigor this paper doesn't demonstrate having, whatever techniques it names. The one real gap it points at honestly: SHAP/feature-importance analysis is **Stage 5 in this project's own plan, not yet built** — a previous version of this section claimed it was already incorporated, which wasn't true.
 
 ### 3. Pipeline Defect Detection using SVM (Isa, Rajkumar, & Woo, 2007)
 *   **Title:** *Pipeline Defect Detection Using Support Vector Machines*
-*   **Focus:** Continuous monitoring of pipe wall thinning using guided ultrasonic wave propagation on a lab-scale rig.
+*   **Focus:** Continuous monitoring of pipe wall thinning using guided ultrasonic wave propagation on a lab-scale rig, one defect.
 *   **Key Findings:**
-    *   **Signal Processing:** Applies **Discrete Wavelet Transform (DWT)** (comparing Haar and Daubechies DB2 wavelets) to compress raw 1D acoustic signals and filter out high-frequency environmental noise.
-    *   **Classification:** Feeds the DWT coefficients into an SVM (LIBSVM). Comparing polynomial, RBF, and sigmoid kernels, the **RBF kernel** performed best, achieving **89.65% classification accuracy** with a Haar wavelet and a frame window size of 25.
-*   **Project Alignment:** Confirms the utility of window-based features and RBF-kernel SVMs for localized classification, supporting the choice of RBF SVC in our classification benchmarks.
+    *   **Signal Processing:** Discrete Wavelet Transform (DWT) (Haar vs. Daubechies DB2) to compress raw 1D acoustic signals and filter high-frequency noise.
+    *   **Classification:** DWT coefficients fed to an SVM (LIBSVM); RBF kernel performed best, **89.65%** classification accuracy, Haar wavelet, frame window 25. No cross-validation, no confidence interval, no baseline comparison, and a single lab defect — a reasonable 2007-vintage proof of concept, not a rigor bar.
+*   **Project alignment, corrected:** this project does **not** use an SVM anywhere — Stage 5's plan is LightGBM multiclass, not RBF-SVC. A previous version of this section claimed this paper "supports the choice of RBF SVC in our classification benchmarks," which was wrong on two counts: no SVC exists in this project, and this 18-year-old single-defect result isn't grounds to choose one over LightGBM if it did. What legitimately carries over is the general idea that window-based features work for localized classification — the classifier choice doesn't.
 
 ### 4. ROSEN LSM Technical Flyer (Product Specifications)
 *   **Focus:** Commercial capabilities of ROSEN's above-ground Large Stand-Off Magnetometry (LSM) system for unpiggable pipelines.
@@ -170,14 +181,27 @@ Below is an overview of the technical papers and reference documents found in th
     *   *Pipeline Diameter:* 152–1820 mm (6"–72").
     *   *Optimal Standoff:* Up to 12 times the pipe diameter (e.g., ~3 m or 9.8 ft for a 10" pipeline).
     *   *Accuracy:* Lateral accuracy within 100 mm (0.33 ft); mapping accuracy ±5% of actual position.
-    *   *Performance:* Probability of Detection (POD) >80% at a 95% confidence level (in the absence of magnetic interference).
+    *   *Performance:* Probability of Detection (POD) >80% at a 95% confidence level, **explicitly stated "in the absence of magnetic interference."**
     *   *Output:* Identifies Stress Concentration Zones (SCZs) and reports stress magnitude in MPa or %SMYS.
-*   **Project Alignment:** These operational specifications define the physical bounds of our synthetic generator (e.g., simulating sensor standoff distances, lateral resolutions, and noise regimes) and establish our target metrics (beating POD >80% at 95% confidence).
+*   **Project alignment, precisely stated (not simplified):** these specs define the physical bounds the synthetic generator was built to respect (standoff distances, lateral resolution, noise regime). On the *measured* comparison: this project's real recall-at-dig-budget is ~64% (both the MAD baseline and IsolationForest), which sits below the flyer's 80% figure — but the comparison is **not apples-to-apples**, because this project's evaluation corpus *always* includes interference by design (it's the deliberate false-positive trap the whole project is built to stress-test), while the flyer's 80% figure explicitly excludes interference. The honest statement is "64% under a harder condition their own spec doesn't cover," not a direct miss against their number.
 
-### 5. ROSEN Reference Standards & Best Practices
-*   **Methodology Guidelines:**
-    *   **Decision-Driven Pipelines:** All model predictions must integrate with pipeline integrity decision logic (e.g., categorizing anomalies to guide excavation vs. continuous monitoring plans).
-    *   **Priority on Ingestion & Alignment:** Sensor data integration, spatial alignment (FastDTW), and data quality validation form the high-value core of the NDT processing chain.
-    *   **Evaluation Metrics:** Standard accuracy is rejected due to extreme class imbalance. Instead, the model is evaluated on Recall (Probability of Detection), PR-AUC, and sizing error (MAE). A high penalty is placed on False Negatives (unregistered defects) relative to False Positives.
-    *   **Calibration & Reliability:** Estimations are reported as calibrated probabilities or physical uncertainty intervals to ensure high engineering reliability.
-*   **Project Alignment:** These structural guidelines dictate our focus on data validation and quarantine (Stage 1), FastDTW sequence alignment (Stage 2), cost-sensitive evaluations (Stage 3), and calibrated uncertainty outputs (Stage 6).
+### 5. My own interview-prep synthesis (not a ROSEN document)
+Built for the 2nd-round interview (5 Aug 2026, Richard Föcke, Head of NDT Apps & Products) from
+the flyer plus general domain reasoning — notes to prepare with, not something ROSEN
+published. Its own 7-stage framing of the pipeline (**1** ingest & integrate → **2** register/align
+→ **3** signal processing & features → **4** label from digs → **5** model → **6** calibrate +
+uncertainty → **7** serve heat map) maps closely onto this project's actual stage structure, with
+one honest, deliberate gap worth naming proactively rather than hoping it doesn't come up:
+*   **Stage 2, "register/align," has no counterpart here.** This project's synthetic generator
+    keeps every defect's chainage position exactly fixed across a line's repeat runs, so there is
+    no misalignment for a registration step to fix. Real LSM data (odometer slip, GPS drift
+    between runs) would need one — this demonstrator doesn't simulate that failure mode, so it
+    doesn't build the fix either.
+*   **Its "recall/POD, PR-AUC, sizing error, calibrated uncertainty, cost-sensitive evaluation"
+    metrics guidance is genuinely what this project already does** (Stage 3's recall-at-budget +
+    false-dig-rate + PR-AUC-as-diagnostic, Stage 4's split-conformal calibration, both reported
+    with bootstrap CIs, never bare accuracy).
+*   **Forecasting (its stage-6-adjacent mention of corrosion growth/remaining life)** maps to
+    this project's **Stage 8, a CLI stub, not built** — and forecasting is separately named as
+    required experience in the actual job posting, which makes this the more load-bearing gap
+    of the two, not just a nice-to-have.
