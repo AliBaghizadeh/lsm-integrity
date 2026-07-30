@@ -83,15 +83,39 @@ GATE_SEVERITY_COVERAGE_RANGE = (0.87, 0.93)
 CONFORMAL_CALIB_FRACTION = 0.3
 
 
-def _git_sha() -> str:
+def _git_sha(cwd: str | Path | None = None) -> str:
+    """HEAD's SHA, with a `-dirty` suffix if the working tree has uncommitted
+    changes. Without this, a run against edited-but-uncommitted code would tag
+    itself with the PREVIOUS commit's SHA, silently claiming to be reproducible
+    from a commit that doesn't actually match what ran -- a real gap in the
+    project's own git_sha + config_sha256 + data_sha256 reproducibility
+    invariant (SKILL #6), not a hypothetical one.
+    """
     try:
         out = subprocess.run(
-            ["git", "rev-parse", "HEAD"], capture_output=True, text=True, timeout=5
+            ["git", "rev-parse", "HEAD"], capture_output=True, text=True, timeout=5, cwd=cwd
         )
         sha = out.stdout.strip()
-        return sha if out.returncode == 0 and sha else "uncommitted"
+        if out.returncode != 0 or not sha:
+            return "uncommitted"
+        status = subprocess.run(
+            ["git", "status", "--porcelain"], capture_output=True, text=True, timeout=5, cwd=cwd
+        )
+        if status.returncode == 0 and status.stdout.strip():
+            return f"{sha}-dirty"
+        return sha
     except Exception:
         return "uncommitted"
+
+
+def _short_sha(git_sha: str) -> str:
+    """First 8 hex chars, with `-dirty` preserved if present -- so a dirty-tree
+    run is visible in the human-readable model/pipeline version tag, not only
+    in the full `git_sha` field logged to MLflow and `model_run`.
+    """
+    if git_sha.endswith("-dirty"):
+        return f"{git_sha[: -len('-dirty')][:8]}-dirty"
+    return git_sha[:8]
 
 
 def _load_truth_and_geometry(conn, survey_ids: list[str]) -> pd.DataFrame:
@@ -574,8 +598,9 @@ def _log_and_persist(
 
         model_dir = Path(cfg.env.storage.model_dir)
         date_tag = now.strftime("%Y.%m.%d")
-        mad_version = f"anomaly-mad-{date_tag}-{git_sha[:8]}"
-        if_version = f"anomaly-if-{date_tag}-{git_sha[:8]}"
+        short_sha = _short_sha(git_sha)
+        mad_version = f"anomaly-mad-{date_tag}-{short_sha}"
+        if_version = f"anomaly-if-{date_tag}-{short_sha}"
         truth_as_of = now.isoformat()
         feature_summary = training_feature_summary(corpus, feature_cols)
 
@@ -621,8 +646,8 @@ def _log_and_persist(
         sev_feature_cols = [*feature_cols, "extent_m"]
         sev_final, sev_baseline_final = _fit_final_severity_model(severity_frame, sev_feature_cols, cfg, cfg.seed)
         if sev_final is not None:
-            severity_version = f"severity-lgbm-{date_tag}-{git_sha[:8]}"
-            baseline_version = f"severity-mean-{date_tag}-{git_sha[:8]}"
+            severity_version = f"severity-lgbm-{date_tag}-{short_sha}"
+            baseline_version = f"severity-mean-{date_tag}-{short_sha}"
             sev_artifact_path = model_dir / severity_version / "bundle.joblib"
             save_bundle(
                 sev_artifact_path,
@@ -664,7 +689,7 @@ def _log_and_persist(
             )
         conn.commit()
 
-        pipeline_version = f"{date_tag}-{git_sha[:8]}"
+        pipeline_version = f"{date_tag}-{short_sha}"
         conn.execute(
             "INSERT OR REPLACE INTO pipeline_release (pipeline_version, anomaly_version, "
             "severity_version, classify_version, growth_version, feature_version, "
