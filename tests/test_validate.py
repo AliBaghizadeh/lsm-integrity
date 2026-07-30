@@ -51,6 +51,30 @@ def test_range_violation_is_caught(tiny_cfg, tmp_path):
     assert n_rows == 0
 
 
+def test_one_bad_value_reports_one_row_affected_not_the_whole_survey(tiny_cfg, tmp_path):
+    """Regression: check_schema used to hardcode n_affected=len(df), so a
+    SINGLE out-of-range value on a 200-row tiny_cfg survey reported "200 rows
+    affected" -- misleading, and exactly what the demo app's refusal card
+    showed Ali on a 4000-row real survey ("4000 row(s) affected" for 1 bad
+    value). This same corruption recipe trips BOTH range and schema
+    (pandera's own Check.in_range duplicates the range gate) -- both must
+    report the true count, 1, not the survey's row count.
+    """
+    def corrupt(df):
+        df.loc[3, "bx_nt"] = 999_999.0
+        return df
+
+    sr = generate_one_survey(tiny_cfg, tmp_path, mutate=corrupt)
+    _, _, report = run_pipeline_on(tiny_cfg, sr)
+
+    affected = _n_affected_by_check(report)
+    assert affected["range"] == 1
+    assert affected["schema"] == 1
+    schema_result = next(r for r in report.results if r.check_name == "schema")
+    assert schema_result.detail["failures"][0]["row_index"] == 3
+    assert schema_result.detail["failures"][0]["column"] == "bx_nt"
+
+
 def test_saturation_is_caught(tiny_cfg, tmp_path):
     def corrupt(df):
         df.loc[5:9, "by_nt"] = 1234.5  # 5 identical consecutive values >= run_length=3

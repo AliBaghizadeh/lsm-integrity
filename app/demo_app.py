@@ -199,7 +199,13 @@ with beat4:
         for r in failed:
             with st.container(border=True):
                 st.markdown(f"**{r['check_name']}** -- {r['n_affected']} row(s) affected")
-                if r["detail"]:
+                failures = r["detail"].get("failures") if r["detail"] else None
+                if failures:
+                    for f in failures:
+                        where = f"row {f['row_index']}" if f["row_index"] is not None else "the whole survey"
+                        column = f"`{f['column']}`" if f["column"] else "a"
+                        st.markdown(f"- {column} at {where} failed `{f['check']}` (value: `{f['failure_case']}`)")
+                elif r["detail"]:
                     st.json(r["detail"])
 
 st.divider()

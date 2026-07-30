@@ -69,14 +69,21 @@
   ],
   "corrupted_scenario_dq_report": {
     "survey_id": "LINEDEMO_R0",
-    "checked_at": "2026-07-30T12:09:11.455814+00:00",
+    "checked_at": "2026-07-30T13:59:10.424745+00:00",
     "results": [
       {
         "check_name": "schema",
         "status": "fail",
-        "n_affected": 4000,
+        "n_affected": 1,
         "detail": {
-          "error": "  schema_context column  ... failure_case  index\n0         Column  bx_nt  ...     999999.0      3\n\n[1 rows x 6 columns]"
+          "failures": [
+            {
+              "column": "bx_nt",
+              "check": "in_range(-80000.0, 80000.0)",
+              "failure_case": 999999.0,
+              "row_index": 3
+            }
+          ]
         }
       },
       {

@@ -40,7 +40,13 @@ Break any of these and the demo stops being credible.
    ~2.7%). Headline number is **recall at a fixed dig budget** (top-k indications per km)
    plus **false-dig rate** and **localisation error in metres**. Accuracy is banned.
 5. **Every prediction ships with its uncertainty and its data-quality flag.** An indication
-   with no interval or an unresolved DQ warning is not a prediction, it is a rumour.
+   with no interval or an unresolved DQ warning is not a prediction, it is a rumour. The
+   flag's own reported scope has to be honest too: a validation check that reports
+   "n_affected = len(df)" when only one row actually failed (a placeholder from early
+   scaffolding, not a deliberate choice) just relocates the rumour into the DQ report
+   itself — extract the underlying validator's structured failure info (which rows, which
+   check) rather than defaulting to "the whole thing," especially before surfacing it to a
+   user.
 6. **One `config.yaml`, one seed, one entry point.** `python -m lsm <step>`. Any run must
    be reproducible from `git_sha` + `config_sha256` + `data_sha256`, all three logged to
    MLflow and to the `model_run` table.

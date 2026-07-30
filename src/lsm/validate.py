@@ -76,7 +76,10 @@ def check_schema(df: pd.DataFrame, gate: str) -> DQCheckResult:
         validate_reading_schema(df)
         return DQCheckResult("schema", "pass", 0)
     except SchemaValidationError as exc:
-        return DQCheckResult("schema", gate, len(df), {"error": str(exc)[:2000]})
+        # n_affected is the count of DISTINCT rows that actually violated a
+        # check, not len(df) -- one bad value in a 4000-row survey is "1 row
+        # affected", not "the whole survey is bad".
+        return DQCheckResult("schema", gate, exc.n_affected_rows, {"failures": exc.failures})
 
 
 def check_range(df: pd.DataFrame, field_range: tuple[float, float], gate: str) -> DQCheckResult:

@@ -45,6 +45,28 @@ def test_out_of_range_field_is_rejected():
         validate_reading_schema(df)
 
 
+def test_schema_error_reports_affected_rows_not_the_whole_frame():
+    """One bad value in a 3-row frame is "1 row affected", not "3 rows
+    affected" -- n_affected_rows previously wasn't computed at all; the only
+    caller (validate.check_schema) used to hardcode len(df), which reported
+    the entire survey as bad for a single out-of-range value.
+    """
+    df = _clean_df()
+    df.loc[0, "bx_nt"] = 200_000.0
+    with pytest.raises(SchemaValidationError) as exc_info:
+        validate_reading_schema(df)
+    exc = exc_info.value
+    assert exc.n_affected_rows == 1
+    assert len(exc.failures) == 1
+    failure = exc.failures[0]
+    assert failure["column"] == "bx_nt"
+    assert failure["row_index"] == 0
+    assert failure["failure_case"] == 200_000.0
+    # JSON/st.json-safe: native Python types, not numpy scalars.
+    assert isinstance(failure["failure_case"], float)
+    assert isinstance(failure["row_index"], int)
+
+
 def test_null_required_field_is_rejected():
     df = _clean_df()
     df.loc[0, "bx_nt"] = np.nan

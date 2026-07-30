@@ -14,6 +14,7 @@ Key decisions this module encodes:
 
 from __future__ import annotations
 
+import pandas as pd
 import pandera.pandas as pa
 from pandera.pandas import Column, DataFrameSchema, Check
 
@@ -97,7 +98,44 @@ FeatureFrameSchema = DataFrameSchema(
 
 
 class SchemaValidationError(Exception):
-    """Raised when a frame fails RawReadingSchema -- always a hard `fail` gate."""
+    """Raised when a frame fails RawReadingSchema/FeatureFrameSchema -- always a
+    hard `fail` gate.
+
+    Carries pandera's structured `failure_cases` (one row per violated check),
+    not just its string repr -- a caller that only had `str(exc)` had no way to
+    tell "1 row out of 4000 violated one check" from "the whole frame is bad"
+    except by re-parsing a pandas DataFrame's printed representation. Both
+    `n_affected_rows` (distinct rows, not distinct checks) and `failures` (JSON-
+    safe: native Python types, not numpy scalars) are computed once here so
+    every caller gets the same honest count.
+    """
+
+    def __init__(self, failure_cases) -> None:
+        self.failures: list[dict] = [
+            {
+                "column": None if pd.isna(row.get("column")) else str(row["column"]),
+                "check": str(row["check"]),
+                "failure_case": None if pd.isna(row.get("failure_case")) else _to_native(row["failure_case"]),
+                "row_index": None if pd.isna(row.get("index")) else int(row["index"]),
+            }
+            for row in failure_cases.to_dict("records")
+        ]
+        row_indices = failure_cases["index"].dropna()
+        # A dataframe-level check (no per-row index) still affected >=1 row --
+        # never report 0 rows affected for a check that failed.
+        self.n_affected_rows: int = int(row_indices.nunique()) if len(row_indices) else len(self.failures)
+        super().__init__(
+            f"{len(self.failures)} check failure(s) across {self.n_affected_rows} row(s): "
+            f"{self.failures[:5]}"
+        )
+
+
+def _to_native(value):
+    """numpy scalar -> the equivalent native Python type, so `failures` is
+    directly JSON/`st.json`-safe without a `default=str` escape hatch."""
+    if hasattr(value, "item"):
+        return value.item()
+    return value
 
 
 def validate_reading_schema(df) -> None:
@@ -105,7 +143,7 @@ def validate_reading_schema(df) -> None:
     try:
         RawReadingSchema.validate(df, lazy=True)
     except pa.errors.SchemaErrors as exc:  # pragma: no cover - exercised via validate.py
-        raise SchemaValidationError(str(exc.failure_cases)) from exc
+        raise SchemaValidationError(exc.failure_cases) from exc
 
 
 def validate_feature_schema(df) -> None:
@@ -116,4 +154,4 @@ def validate_feature_schema(df) -> None:
     try:
         FeatureFrameSchema.validate(df, lazy=True)
     except pa.errors.SchemaErrors as exc:
-        raise SchemaValidationError(str(exc.failure_cases)) from exc
+        raise SchemaValidationError(exc.failure_cases) from exc
