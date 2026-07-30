@@ -77,3 +77,11 @@ Python · numpy/pandas · scikit-learn + XGBoost/LightGBM · MLflow · Streamlit
 
 ## Stretch (only if you have spare time)
 Real observatory background; a tiny ILI-vs-LSM "data fusion" mock; conformal prediction for the regression; a simple active-learning demo ("which segment should we dig next?").
+
+## Insights & Additions from Literature (NeurIPS 2020)
+Based on *Mitra et al.*'s paper on ML-based LSM anomaly detection, the following methodologies are added to address gaps in our initial plan:
+1. **Multi-Survey Alignment (FastDTW):** Real-world inspections suffer from sensor alignment phase shifts across consecutive runs. We will use **FastDTW** (linear time approximation of DTW) to align multi-run sequences prior to modeling.
+2. **k-NN Unsupervised Baseline:** Out of multiple `pyod` point-based models, only the **k-Nearest Neighbor (k-NN)** model successfully separates anomalies from normal baseline scans. We incorporate this alongside Isolation Forest.
+3. **Multi-Task 1D-CNN:** We will construct a unified **1D-CNN** in Keras that performs joint classification (defect mask prediction) and regression (depth/volume prediction) via spatial feature concatenation.
+4. **RAPIDS AI cuML for GPU Acceleration:** Classical classifiers like RBF SVC are highly robust but suffer from quadratic/cubic time complexity ($O(N^3)$). For field datasets (>100k points), we will utilize **cuML** on GPUs to achieve a **200x speedup** (reducing train time from 18,274s to 98s).
+5. **Fidelity and Leakage Limits:** The paper confirms that standard randomized splits cause severe spatial data leakage. It validates our chainage-grouped segment split by masking and holding out contiguous defect regions using a physical 3-foot buffer.
