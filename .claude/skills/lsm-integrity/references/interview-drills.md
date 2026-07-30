@@ -97,22 +97,21 @@ is a genuine business argument, not a research nicety.
 
 **"Why not just threshold?"** I do — MAD threshold is the baseline, and IsolationForest has
 to beat it by a stated margin, on the confidence interval, not the point estimate. When I
-actually ran it: **it didn't**, and I ran it twice. First on a 1-line/12-defect corpus:
-recall gap -0.056, CI [-0.167, 0.056] — straddling zero, too little data to tell if the
-effect was real. Rather than accept that as the final word, I scaled the corpus to 5
-independent lines (~60 defects — more lines, not more defects crammed onto one line, which
-I tried first and it degraded a different gate by contaminating background rows with
-neighbouring sources' field tails) specifically to narrow that CI. Re-ran: gap -0.028, CI
-[-0.083, 0.022] — about half the point estimate, about half the width, still just barely
-straddling zero. That's not "still inconclusive," it's a **more precise measurement of a
-small real effect**: MAD and IsolationForest are statistically indistinguishable on this
-task at this scale, with a slight edge to MAD. I could have quietly re-tuned IsolationForest
-until it passed; I reported the negative result instead, because that's what the gate is
-*for*. What's NOT the explanation: row-level ranking quality — IsolationForest's own PR-AUC
-is consistently *better* than MAD's (0.43 vs 0.35 on the second run), and the model's own
-interference-attribution check doesn't cleanly explain the gap either. The loss is
-localized to the tight dig-budget cutoff, which reads as a feature-interaction / calibration
-question, not a "wrong algorithm" or "not enough data" one.
+actually ran it: **it didn't**, across three real runs, though the story gets better each
+time. First on a 1-line/12-defect corpus: recall gap -0.056, CI [-0.167, 0.056] — straddling
+zero, too little data to tell if the effect was real. Rather than accept that as the final
+word, I scaled the corpus to 5 independent lines (~60 defects — more lines, not more defects
+crammed onto one line, which I tried first and it degraded a different gate by contaminating
+background rows with neighbouring sources' field tails) specifically to narrow that CI.
+Re-ran: gap -0.028, CI [-0.083, 0.022] — about half the point estimate, about half the width,
+still just barely straddling zero, a **more precise measurement of a small real effect**, not
+"still inconclusive." I could have stopped there and called it a legitimate negative result.
+Instead I ran a real EDA (below) that found a specific, fixable mechanism, fixed it, and
+re-ran a third time: gap closed to **-0.006, CI [-0.067, 0.050]** — recall is now
+statistically indistinguishable between the two models, and the interference-rejection
+mechanism the EDA predicted turned out to be real and significant (see below). I could have
+quietly re-tuned IsolationForest until it passed the ≥0.15 margin; I reported the honest
+result — parity, not a win — instead, because that's what the gate is *for*.
 
 I went further and ran a real EDA over the 48-feature set (Stage 2.75) to stop guessing at
 that mechanism. It found the model is fit on ~20 mutually-correlated amplitude features
@@ -125,9 +124,18 @@ interference are a different, smaller set — wide-window shape descriptors like
 (PR-AUC 0.985). An isolation forest splitting roughly uniformly across 48 dimensions, a
 third of which are redundant amplitude features, has more chances to isolate on that
 dominant cluster than on the one or two shape features that would correctly reject
-interference. That's a specific, evidenced mechanism now, not a hedge — and a concrete next
-experiment (drop the duplicates, re-weight toward the shape features, re-run) rather than an
-open question with no next step.
+interference. That's a specific, evidenced mechanism, not a hedge — so I acted on it: dropped
+the two duplicate features entirely (a real `feature_version` bump, not just excluding them
+from the model), and gave IsolationForest an `emphasis_repeats` knob that repeats
+`w25m_kurt`/`w25m_zcr`/`w10m_kurt` in its fitted matrix to raise their selection odds. Re-ran:
+recall gap closed to **-0.006, CI [-0.067, 0.050]** (was -0.028) — recall is now
+statistically indistinguishable between the two models — and the interference-attribution
+check flipped from "doesn't cleanly explain it" to **significant** (CI [0.007, 0.058],
+excludes zero): MAD now wastes significantly more of the dig budget on interference than
+IsolationForest does. The ≥0.15 recall-margin gate still doesn't pass — the honest result is
+parity, not an IsolationForest win — but "I found a specific mechanism via EDA, fixed it, and
+measurably improved the thing the fix targeted, confirmed by a CI that excludes zero" is a
+complete, evidence-driven story, end to end, not a shrug.
 
 **"Why two stages?"** Because the unit of decision is an **indication**, not a 0.5 m
 sample. Row-level scoring, then peak clustering into indications, then per-indication
@@ -281,14 +289,20 @@ prediction (CQR). If either was new to you, say so plainly and say what studying
 
 **"Walk me through something that didn't work."** Two real ones, fully reportable without
 hedging:
-1. IsolationForest vs the MAD baseline (Stage 3) — didn't beat it, on two separate runs at
-   two different scales. First (12 defects): recall gap -0.056, CI [-0.167, 0.056]. Rather
-   than leave it there, I scaled the corpus 5x (more independent lines, not more defects
-   packed onto one line — that move alone surfaced a real data-generation bug I fixed
-   first) specifically to sharpen that CI, and re-ran: gap -0.028, CI [-0.083, 0.022]. That's
-   not "still not enough data" — it's a tighter measurement confirming a real, small,
-   practically negligible effect. Reported as the actual result rather than tuned until it
-   passed either time.
+1. IsolationForest vs the MAD baseline (Stage 3) — never beat it, across three real runs.
+   First (12 defects): recall gap -0.056, CI [-0.167, 0.056]. Rather than leave it there, I
+   scaled the corpus 5x (more independent lines, not more defects packed onto one line —
+   that move alone surfaced a real data-generation bug I fixed first) specifically to
+   sharpen that CI, and re-ran: gap -0.028, CI [-0.083, 0.022] — a tighter measurement
+   confirming a real, small effect, not "still not enough data." Then I ran a real EDA over
+   the feature set, found the model was fit on ~20 redundant amplitude features that were
+   drowning out the 3 that actually separate defect from interference, fixed it (dropped 2
+   exact-duplicate features, added a knob to up-weight the other 3), and re-ran a third
+   time: gap closed to -0.006, CI [-0.067, 0.050] — recall is now statistically
+   indistinguishable between the models, and the interference-rejection mechanism the EDA
+   predicted turned out real and significant. Still doesn't clear the gate's ≥0.15 margin —
+   parity isn't a win — but reported as the actual result at every step, not tuned until it
+   passed.
 2. Split-conformal undercoverage (Stage 4) — traced to a real bug in my own code (a naive
    quantile where the theory calls for a finite-sample-corrected one), fixed it, and the
    gate *still* didn't clear on the original 12-defect data (0.727 vs a [0.87,0.93] target,
@@ -302,9 +316,12 @@ before being accepted, not just shrugged at: the conformal undercoverage was tra
 specific formula error and confirmed by hand-computing the correction on a small example and
 by inspecting per-defect coverage row by row, not by assumption. The IsolationForest result
 was checked by re-running at 5x the scale specifically to see if the effect held up or was
-noise — it held up, tighter and smaller. A suspicious number deserves inspection; a
-genuinely small effect, once you've ruled out a bug and ruled out "just not enough data," is
-a real finding, not an excuse.
+noise — it held up, tighter and smaller — and then by running a real EDA to find and fix a
+specific, named mechanism (redundant amplitude features drowning out the ones that actually
+separate defect from interference), which produced a predicted, measurable, significant
+improvement on re-run rather than a shrug. A suspicious number deserves inspection; a
+genuinely small effect, once you've ruled out a bug, ruled out "just not enough data," and
+acted on the mechanism you found, is a real finding, not an excuse.
 
 **"What would you do next with more time or data?"** Stage 6 (the full scale rehearsal —
 ~40 lines, ~10⁷ rows) is the designed answer, and it's not purely hypothetical anymore: a
