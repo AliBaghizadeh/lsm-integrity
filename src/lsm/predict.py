@@ -1,13 +1,14 @@
 """
-Stage 3/4: batch inference on a single already-featurised survey -> `indication`
-rows + `indications.geojson`.
+Stage 3/4/5: batch inference on a single already-featurised survey ->
+`indication` rows + `indications.geojson`.
 
 Loads the latest released bundle(s) via `bundle.py` (the real versioned
 artifact contract: hard-fails on a feature_version/schema_version/library
 mismatch, not just an ad hoc joblib dict). Scores the anomaly detector always;
-scores severity too if a `severity_version` has been released -- an indication
-is a valid detection with no severity estimate before Stage 4 exists, not an
-error.
+scores severity too if a `severity_version` has been released, and
+classification/risk too if a `classify_version` has been released -- an
+indication is a valid detection with no severity/classification estimate
+before Stage 4/5 exist, not an error.
 
 Run: python -m lsm predict <survey_id>
 """
@@ -23,7 +24,7 @@ import pandas as pd
 from lsm.bundle import load_bundle
 from lsm.config import Config
 from lsm.features import feature_store_dir
-from lsm.indications import attach_severity, cluster_indications, write_indications
+from lsm.indications import attach_classification, attach_severity, cluster_indications, write_indications
 
 
 class NoReleasedPipelineError(Exception):
@@ -34,9 +35,9 @@ class SurveyNotScorableError(Exception):
     """The survey is not registered, not accepted, or has no computed features."""
 
 
-def latest_pipeline_release(conn: sqlite3.Connection) -> tuple[str, str, str | None]:
-    """(pipeline_version, anomaly_model_version, severity_model_version) for
-    the most recent release.
+def latest_pipeline_release(conn: sqlite3.Connection) -> tuple[str, str, str | None, str | None]:
+    """(pipeline_version, anomaly_model_version, severity_model_version,
+    classify_model_version) for the most recent release.
 
     A real deployment reads whichever release carries `alias='champion'`;
     nothing in this demonstrator has ever been promoted past the freshly
@@ -44,8 +45,8 @@ def latest_pipeline_release(conn: sqlite3.Connection) -> tuple[str, str, str | N
     scope), so "most recent by released_at" is the honest stand-in.
     """
     row = conn.execute(
-        "SELECT pipeline_version, anomaly_version, severity_version FROM pipeline_release "
-        "ORDER BY released_at DESC LIMIT 1"
+        "SELECT pipeline_version, anomaly_version, severity_version, classify_version "
+        "FROM pipeline_release ORDER BY released_at DESC LIMIT 1"
     ).fetchone()
     if row is None:
         raise NoReleasedPipelineError("no pipeline_release found -- run `lsm train` first")
@@ -105,7 +106,7 @@ def predict_survey(conn: sqlite3.Connection, survey_id: str, cfg: Config) -> pd.
     raw = pd.read_parquet(source_uri, columns=["sample_idx", "lat", "lon"])
     df = features.merge(raw, on="sample_idx", how="left", validate="one_to_one")
 
-    pipeline_version, anomaly_version, severity_version = latest_pipeline_release(conn)
+    pipeline_version, anomaly_version, severity_version, classify_version = latest_pipeline_release(conn)
     anomaly_bundle = load_bundle(
         Path(cfg.env.storage.model_dir) / anomaly_version / "bundle.joblib",
         expected_feature_version=cfg.base.features.version,
@@ -131,6 +132,19 @@ def predict_survey(conn: sqlite3.Connection, survey_id: str, cfg: Config) -> pd.
         indications = attach_severity(
             indications, df, severity_bundle["model"], base_feature_cols,
             nominal_coverage=1.0 - sev_cfg["conformal_alpha"],
+        )
+
+    if classify_version is not None:
+        classify_bundle = load_bundle(
+            Path(cfg.env.storage.model_dir) / classify_version / "bundle.joblib",
+            expected_feature_version=cfg.base.features.version,
+            expected_schema_version=cfg.base.schema_version,
+        )
+        # Same "strip extent_m back off" reasoning as severity above.
+        classify_base_feature_cols = [c for c in classify_bundle["feature_cols"] if c != "extent_m"]
+        indications = attach_classification(
+            indications, df, classify_bundle["model"], classify_bundle["defect_calibrator"],
+            classify_base_feature_cols, cfg.base.model.classify["consequence_proxy"],
         )
 
     write_indications(conn, indications)

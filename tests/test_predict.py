@@ -36,7 +36,7 @@ def test_predict_survey_writes_indications_referencing_the_latest_release(tiny_c
 
     indications = predict_survey(conn, survey_id, tiny_cfg)
 
-    pipeline_version, _, _ = latest_pipeline_release(conn)
+    pipeline_version, _, _, _ = latest_pipeline_release(conn)
     if len(indications) > 0:
         assert (indications["pipeline_version"] == pipeline_version).all()
         assert (indications["survey_id"] == survey_id).all()
@@ -103,7 +103,7 @@ def test_predict_survey_attaches_severity_and_writes_geojson(cfg):
         run_feature_pipeline(conn, sr.survey_id, cfg)
     run_train(cfg, conn)
 
-    pipeline_version, _, severity_version = latest_pipeline_release(conn)
+    pipeline_version, _, severity_version, _ = latest_pipeline_release(conn)
     assert severity_version is not None, "test fixture sized wrong -- no severity model trained"
 
     survey_id = results[0].survey_id
@@ -122,3 +122,71 @@ def test_predict_survey_attaches_severity_and_writes_geojson(cfg):
         feature = geojson["features"][0]
         assert feature["geometry"]["type"] == "Point"
         assert "sev_pred" in feature["properties"]
+
+
+def _classify_sized_cfg(cfg):
+    """Same sizing as test_train.py's _severity_sized_cfg -- confirmed
+    empirically to also produce >= 8 matched, multi-class indications, enough
+    to exercise Stage 5's classify path, not just severity's.
+    """
+    cfg.base.data.length_m = 500.0
+    cfg.base.data.step_m = 1.0
+    cfg.base.data.n_lines = 1
+    cfg.base.data.n_runs = 3
+    cfg.base.data.n_defects = 10
+    cfg.base.data.n_interference = 3
+    return cfg
+
+
+def test_predict_survey_attaches_classification_and_risk_score(cfg):
+    """A real classify_version release must produce pred_type/risk_score on
+    the served indications -- not just a trained model that never gets used
+    at serving time.
+    """
+    cfg = _classify_sized_cfg(cfg)
+    results = generate_all(cfg.base.data, cfg.env.storage.raw_dir, seed=cfg.seed)
+    conn = connect(cfg.env.storage.sqlite_path)
+    for sr in results:
+        run_survey_pipeline(conn, sr, cfg)
+    for sr in results:
+        run_feature_pipeline(conn, sr.survey_id, cfg)
+    run_train(cfg, conn)
+
+    pipeline_version, _, severity_version, classify_version = latest_pipeline_release(conn)
+    assert classify_version is not None, "test fixture sized wrong -- no classify model trained"
+    assert severity_version is not None  # risk_score needs sev_pred already attached
+
+    survey_id = results[0].survey_id
+    indications = predict_survey(conn, survey_id, cfg)
+
+    if len(indications) > 0:
+        assert indications["pred_type"].notna().any()
+        assert indications["pred_type_conf"].notna().any()
+        assert indications["p_defect_cal"].notna().any()
+        # risk_score requires both p_defect_cal and sev_pred -- both
+        # released here, so at least one indication should have a real value.
+        assert indications["risk_score"].notna().any()
+
+    geojson_path = Path(cfg.env.storage.reports_dir) / survey_id / "indications.geojson"
+    geojson = json.loads(geojson_path.read_text(encoding="utf-8"))
+    if len(indications) > 0:
+        feature = geojson["features"][0]
+        assert "pred_type" in feature["properties"]
+        assert "risk_score" in feature["properties"]
+
+
+def test_predict_survey_without_a_classify_release_leaves_classify_columns_unfilled(tiny_cfg):
+    """Regression check: `classify_version=None` (tiny_cfg never trains a
+    classifier) must not change existing anomaly/severity behaviour -- the
+    classify block is purely additive.
+    """
+    conn, results = _train_tiny(tiny_cfg)
+    pipeline_version, _, _, classify_version = latest_pipeline_release(conn)
+    assert classify_version is None
+
+    survey_id = results[0].survey_id
+    indications = predict_survey(conn, survey_id, tiny_cfg)
+
+    if len(indications) > 0:
+        assert indications["pred_type"].isna().all()
+        assert indications["risk_score"].isna().all()

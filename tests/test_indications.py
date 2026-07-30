@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+import pytest
 
 import lsm.indications as indications_module
 from lsm.indications import (
+    attach_classification,
     attach_indication_features,
     attach_severity,
     cluster_indications,
@@ -162,4 +164,96 @@ def test_attach_severity_on_empty_indications():
     df["feat_a"] = 0.0
     empty = cluster_indications(df, "score", threshold=1.0, survey_id="S1", pipeline_version="P1")
     out = attach_severity(empty, df, _FakeSeverityModel(), base_feature_cols=["feat_a"], nominal_coverage=0.9)
+    assert len(out) == 0
+
+
+class _FakeClassifyModel:
+    """Deterministic stand-in: always predicts 'scc' at confidence 0.8."""
+
+    def predict(self, X):
+        n = len(X)
+        return np.array(["scc"] * n), np.full(n, 0.8)
+
+
+class _FakeDefectCalibrator:
+    """Deterministic stand-in: P(defect) = anomaly_score / 10, unclipped."""
+
+    def predict(self, scores):
+        return np.asarray(scores, dtype=float) / 10.0
+
+
+_CONSEQUENCE_PROXY = {"scc": 1.0, "weld": 0.4, "dent": 0.5, "corrosion": 0.6, "interference": 0.0}
+
+
+def test_attach_classification_fills_pred_type_and_overwrites_p_defect_cal():
+    df = _survey_frame()
+    df["survey_id"] = "S1"
+    df["feat_a"] = np.arange(len(df), dtype=float)
+    df.loc[95:105, "score"] = 5.0
+    df.loc[100, "score"] = 9.0  # peak, anomaly_score=9.0
+
+    indications = cluster_indications(df, "score", threshold=1.0, survey_id="S1", pipeline_version="P1")
+    out = attach_classification(
+        indications, df, _FakeClassifyModel(), _FakeDefectCalibrator(),
+        base_feature_cols=["feat_a"], consequence_proxy=_CONSEQUENCE_PROXY,
+    )
+
+    assert out.iloc[0]["pred_type"] == "scc"
+    assert out.iloc[0]["pred_type_conf"] == 0.8
+    # overwritten from cluster_indications' percentile-rank stand-in (which
+    # would have been > 0.9 here, see test_p_defect_cal_is_a_percentile_rank_
+    # against_the_full_survey) to the calibrator's own value: 9.0 / 10 = 0.9.
+    assert out.iloc[0]["p_defect_cal"] == pytest.approx(0.9)
+
+
+def test_attach_classification_risk_score_formula():
+    df = _survey_frame()
+    df["survey_id"] = "S1"
+    df["feat_a"] = np.arange(len(df), dtype=float)
+    df.loc[95:105, "score"] = 5.0
+    df.loc[100, "score"] = 9.0
+
+    indications = cluster_indications(df, "score", threshold=1.0, survey_id="S1", pipeline_version="P1")
+    indications = attach_severity(
+        indications, df, _FakeSeverityModel(), base_feature_cols=["feat_a"], nominal_coverage=0.9
+    )
+    out = attach_classification(
+        indications, df, _FakeClassifyModel(), _FakeDefectCalibrator(),
+        base_feature_cols=["feat_a"], consequence_proxy=_CONSEQUENCE_PROXY,
+    )
+
+    # sev_pred = feat_a = 100.0 (peak's own feature value, see _FakeSeverityModel);
+    # p_defect_cal = anomaly_score/10 = 0.9; consequence_proxy["scc"] = 1.0.
+    expected = 0.9 * 100.0 * 1.0
+    assert out.iloc[0]["risk_score"] == pytest.approx(expected)
+
+
+def test_attach_classification_risk_score_is_none_when_sev_pred_is_none():
+    df = _survey_frame()
+    df["survey_id"] = "S1"
+    df["feat_a"] = np.arange(len(df), dtype=float)
+    df.loc[95:105, "score"] = 5.0
+    df.loc[100, "score"] = 9.0
+
+    # no attach_severity call -- sev_pred stays whatever cluster_indications
+    # initialised it to (None), never a fabricated number.
+    indications = cluster_indications(df, "score", threshold=1.0, survey_id="S1", pipeline_version="P1")
+    assert indications.iloc[0]["sev_pred"] is None
+
+    out = attach_classification(
+        indications, df, _FakeClassifyModel(), _FakeDefectCalibrator(),
+        base_feature_cols=["feat_a"], consequence_proxy=_CONSEQUENCE_PROXY,
+    )
+    assert pd.isna(out.iloc[0]["risk_score"])
+
+
+def test_attach_classification_on_empty_indications():
+    df = _survey_frame()
+    df["survey_id"] = "S1"
+    df["feat_a"] = 0.0
+    empty = cluster_indications(df, "score", threshold=1.0, survey_id="S1", pipeline_version="P1")
+    out = attach_classification(
+        empty, df, _FakeClassifyModel(), _FakeDefectCalibrator(),
+        base_feature_cols=["feat_a"], consequence_proxy=_CONSEQUENCE_PROXY,
+    )
     assert len(out) == 0

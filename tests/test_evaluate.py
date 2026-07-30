@@ -8,15 +8,21 @@ import pytest
 
 from lsm.evaluate import (
     bootstrap_ci,
+    brier_by_group,
     defect_hit_rates,
     false_dig_rate_per_run,
     interference_dig_fraction_per_run,
+    interference_precision_units,
     localisation_errors_m,
     mae_by_severity_decile,
     match_dug_indications,
+    multiclass_brier_score,
     paired_bootstrap_ci,
+    per_class_recall_units,
     per_group_severity_metrics,
     pr_auc,
+    reliability_curve,
+    shap_denylist_check,
 )
 
 REGISTRY = pd.DataFrame(
@@ -234,3 +240,95 @@ def test_per_group_severity_metrics_computes_coverage_mae_width_per_group():
     assert set(metrics["coverage"]) == {1.0, 0.0}
     assert sorted(metrics["mae"]) == [2.5, 10.0]  # d0: (|50-50|+|55-50|)/2=2.5; d1: |20-30|=10
     assert sorted(metrics["interval_width"]) == [5.0, 20.0]  # d0: hi-lo=20 both rows; d1: hi-lo=5
+
+
+# ---------------------------------------------------------------------------
+# Stage 5: classification metrics
+# ---------------------------------------------------------------------------
+
+CLASSES = ["scc", "weld", "dent", "corrosion", "interference"]
+
+
+def test_per_class_recall_units_one_entry_per_group_correct_class_only():
+    df = pd.DataFrame(
+        {
+            "source_id": ["d0", "d0", "d1", "i0"],
+            "true_class": ["scc", "scc", "weld", "interference"],
+            "pred_class": ["scc", "weld", "weld", "interference"],
+        }
+    )
+    recall = per_class_recall_units(df, "source_id", "true_class", "pred_class", CLASSES)
+    assert recall["scc"] == [0.5]  # d0: 1 of 2 rows correctly predicted scc
+    assert recall["weld"] == [1.0]  # d1: fully correct
+    assert recall["interference"] == [1.0]  # i0: fully correct
+    assert recall["dent"] == []  # never a true class in this frame
+    assert recall["corrosion"] == []
+
+
+def test_interference_precision_units_only_counts_predicted_interference():
+    df = pd.DataFrame(
+        {
+            "source_id": ["a", "b", "c"],
+            "true_class": ["interference", "scc", "interference"],
+            "pred_class": ["interference", "interference", "interference"],
+        }
+    )
+    # predicted interference: a (correct), b (wrong -- true scc), c (correct)
+    units = interference_precision_units(df, "source_id", "true_class", "pred_class")
+    assert sorted(units) == [0.0, 1.0, 1.0]
+
+
+def test_interference_precision_units_empty_when_nothing_predicted_interference():
+    df = pd.DataFrame({"source_id": ["a"], "true_class": ["scc"], "pred_class": ["scc"]})
+    assert interference_precision_units(df, "source_id", "true_class", "pred_class") == []
+
+
+def test_multiclass_brier_score_zero_for_a_perfect_calibrated_prediction():
+    proba = pd.DataFrame({c: [1.0 if c == "scc" else 0.0] for c in CLASSES})
+    assert multiclass_brier_score(np.array(["scc"]), proba, CLASSES) == 0.0
+
+
+def test_multiclass_brier_score_positive_for_a_wrong_confident_prediction():
+    proba = pd.DataFrame({c: [1.0 if c == "weld" else 0.0] for c in CLASSES})
+    score = multiclass_brier_score(np.array(["scc"]), proba, CLASSES)
+    assert score == pytest.approx(2.0)  # (1-0)^2 for scc + (0-1)^2 for weld = 2.0
+
+
+def test_brier_by_group_one_entry_per_group():
+    proba = pd.DataFrame({c: [1.0 if c == "scc" else 0.0] for c in CLASSES})
+    proba = pd.concat([proba, proba], ignore_index=True)
+    df = pd.concat([proba, pd.DataFrame({"source_id": ["d0", "d1"], "true_class": ["scc", "weld"]})], axis=1)
+    units = brier_by_group(df, "source_id", "true_class", CLASSES, CLASSES)
+    assert len(units) == 2
+    assert min(units) == pytest.approx(0.0)  # d0: correct
+    assert max(units) == pytest.approx(2.0)  # d1: confidently wrong
+
+
+def test_reliability_curve_bins_by_confidence_and_reports_empirical_accuracy():
+    confidences = np.array([0.9, 0.9, 0.9, 0.5, 0.5, 0.5])
+    correct = np.array([1, 1, 0, 1, 0, 0])
+    curve = reliability_curve(confidences, correct, n_bins=2)
+    assert len(curve) == 2
+    assert set(curve["n"]) == {3, 3}
+    assert sorted(curve["bin_accuracy"]) == pytest.approx([1 / 3, 2 / 3])
+
+
+def test_reliability_curve_collapses_on_a_single_unique_confidence():
+    curve = reliability_curve(np.array([0.7, 0.7]), np.array([1, 0]), n_bins=10)
+    assert len(curve) == 1
+    assert curve["bin_accuracy"].iloc[0] == 0.5
+
+
+def test_shap_denylist_check_passes_when_no_denylisted_feature_in_top_k():
+    importance = pd.Series({"r_mag_nt": 5.0, "w25m_kurt": 3.0, "chainage_m": 0.01})
+    result = shap_denylist_check(importance, denylist=["chainage_m", "sample_idx"], top_k=2)
+    assert result["passed"] is True
+    assert result["leaked_denylist_features"] == []
+    assert result["top_features"] == ["r_mag_nt", "w25m_kurt"]
+
+
+def test_shap_denylist_check_fails_when_a_denylisted_feature_ranks_in_top_k():
+    importance = pd.Series({"chainage_m": 10.0, "r_mag_nt": 5.0, "w25m_kurt": 1.0})
+    result = shap_denylist_check(importance, denylist=["chainage_m", "sample_idx"], top_k=2)
+    assert result["passed"] is False
+    assert result["leaked_denylist_features"] == ["chainage_m"]

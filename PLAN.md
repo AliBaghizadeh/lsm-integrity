@@ -798,6 +798,58 @@ buried anomaly was genuinely there rather than just asserted, the app never expl
 
 ---
 
+**Built 2026-07-30 (local scope): the full classify pipeline is real and headlessly
+verified — model, calibration, metrics, `risk_score`, model card, and the physics-consistency
+gate.** Real corpus numbers (SCC recall at the CI lower bound, the real Brier score/
+reliability diagram, how often the degenerate-calibration fallback fires) still need Ali's
+`lsm train` run — same division of labour as every prior stage.
+
+- The codebase had already anticipated this stage extensively before it was built:
+  `config/base.yaml`'s bare `model.classify` block, `pipeline_release.classify_version`,
+  `indication.pred_type`/`pred_type_conf`/`risk_score` columns, and `bundle.py`'s
+  `defect_type_categories` stamp were all pre-built placeholders. `truth.build_truth_
+  registry` already carried `defect_type` per physical source (including the literal
+  `"interference"`), so Stage 5 needed one new join, not new label-derivation logic.
+- `src/lsm/models/classify.py` (new): `ClassifyModel` (LightGBM multiclass, dynamic
+  `num_class` per fold — hardcoding it to the full class count breaks on any fold with fewer
+  distinct labels), calibrated via `sklearn.frozen.FrozenEstimator` wrapping the fitted model
+  (`CalibratedClassifierCV(cv="prefit")` is **removed** in the installed sklearn 1.9.0) fit
+  against a class-stratified-then-defect-grouped calibration split. Degenerate folds (a
+  class missing from calib entirely, or only one class in train at all — both real,
+  reproducible sklearn failure modes at this project's small per-class counts, confirmed
+  empirically not assumed) fall back to uncalibrated softmax / a constant prediction, logged
+  loudly rather than silently swallowed. `MajorityClassBaseline` is the required baseline.
+- **SHAP via LightGBM's native `pred_contrib=True`, not the external `shap` package.** `shap`
+  is installed but `import shap` raises `ImportError: Numba needs NumPy 2.4 or less` — numba
+  0.66.0 (latest available) doesn't support the installed numpy 2.5.1, and this isn't
+  fixable by upgrading. LightGBM's own `pred_contrib=True` gives genuine TreeSHAP
+  contributions with no new dependency (verified: an engineered informative feature scores
+  ~3.3 mean|contrib| vs ~0.02 for noise). The physics-consistency test is an **engineered-
+  leak integration test** (not just an absent-name check, which would pass trivially since
+  `chainage_m` is already structurally excluded from `feature_columns()`): a chainage-derived
+  column is deliberately made informative by construction, a real model fit on it, and the
+  denylist check must catch it — proving the gate has teeth.
+- `risk_score = calibrated P(defect) × predicted severity × consequence proxy`. The
+  consequence proxy (`config/base.yaml: model.classify.consequence_proxy`) is a stated
+  engineering-judgment ranking, not derived from real data — SCC 1.0 (crack-like, sudden
+  failure), corrosion 0.6, dent 0.5, weld 0.4 (best-controlled), interference 0.0 (never a
+  pipe defect, so it can never dominate a dig ranking). Called out as a judgment call in both
+  the config comment and the model card, not hidden as a bare constant. `p_defect_cal` (an
+  explicitly-flagged, previously-uncalibrated percentile-rank stand-in) is now a real
+  `IsotonicRegression` fit on the full out-of-fold matched-indication population (matched-
+  defect, matched-interference, and unmatched false alarms alike).
+- `train.py`'s matching step was refactored into a shared `_match_all_indications()` (the
+  clustering half, `_cluster_all_indications()`, was already factored out) so severity and
+  classify both build off one pass — verified zero regression in the existing severity path
+  by re-running its pre-existing test unmodified before adding anything new.
+- **Verification:** `tests/test_models_classify.py` (10), Stage 5 additions to
+  `tests/test_evaluate.py` (~14), `tests/test_indications.py` (4), `tests/test_predict.py`
+  (2), `tests/test_bundle_roundtrip.py` (1), `tests/test_model_card.py` (2), plus the
+  extended `test_train.py` end-to-end smoke test and the two engineered-leak SHAP tests.
+  212/212 tests total, ruff + mypy clean.
+
+---
+
 ## Stage 6 — Scale rehearsal  *(~1 day)* — the answer to "millions of rows"
 
 The single most valuable stage for their stated situation, and the one most people skip.

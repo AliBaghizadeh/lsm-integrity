@@ -15,11 +15,18 @@ from pathlib import Path
 
 import numpy as np
 
+import pandas as pd
+
 from lsm.bundle import load_bundle
 from lsm.db import connect
+from lsm.evaluate import shap_denylist_check
 from lsm.generate import generate_all
+from lsm.models.classify import ClassifyModel
 from lsm.pipeline import run_feature_pipeline, run_survey_pipeline
-from lsm.train import run_train
+from lsm.schemas import CLASSIFY_CLASSES
+from lsm.train import CLASSIFY_DENYLIST, _lightgbm_shap_importance, run_train
+
+_LGBM_CFG = {"deterministic": True, "force_row_wise": True, "num_threads": 1}
 
 
 def test_train_runs_end_to_end_on_a_tiny_survey(tiny_cfg, tmp_path):
@@ -142,3 +149,107 @@ def test_train_exercises_the_severity_cv_path(cfg, tmp_path):
     model_card_path = Path(cfg.env.storage.model_dir) / pipeline_version / "model_card.md"
     card_text = model_card_path.read_text(encoding="utf-8")
     assert "## Severity" in card_text
+
+    # Stage 5: this same fixture already produces enough matched,
+    # multi-class indications to exercise the classify path too (confirmed
+    # empirically -- no separate, larger fixture needed).
+    assert result["n_classify_samples"] >= 8, (
+        "test fixture sized wrong -- not enough matched indications to exercise "
+        "the classify CV path at all"
+    )
+    assert "classify" in result, "classify CV should have run, not been skipped"
+
+    for model_name in ("classify", "classify_baseline"):
+        m = result[model_name]
+        for triple in m["per_class_recall"].values():
+            point, lo, hi = triple
+            # a class absent from this tiny fixture's test folds legitimately
+            # yields an empty bootstrap sample -- bootstrap_ci's honest "no
+            # data" answer is (nan, nan, nan), not an error.
+            assert np.isnan(lo) or lo <= hi
+        for metric in ("interference_precision", "brier"):
+            point, lo, hi = m[metric]
+            assert np.isnan(lo) or lo <= hi
+    assert isinstance(result["classify_recall_gate_passed"], (bool, np.bool_))
+    assert "classify_shap_check" in result
+    assert isinstance(result["classify_shap_check"]["passed"], bool)
+    assert isinstance(result["classify_gate_passed"], (bool, np.bool_))
+
+    classify_rows = conn.execute(
+        "SELECT model_version, artifact_uri FROM model_run WHERE task='classify'"
+    ).fetchall()
+    assert len(classify_rows) == 2  # lightgbm multiclass + majority-class baseline
+    classify_lgbm_row = next(r for r in classify_rows if "lgbm" in r[0])
+    classify_bundle = load_bundle(
+        classify_lgbm_row[1], expected_feature_version=cfg.base.features.version,
+        expected_schema_version=cfg.base.schema_version,
+    )
+    assert classify_bundle["task"] == "classify"
+    assert classify_bundle["defect_calibrator"] is not None
+    assert classify_bundle["classify_classes"] == ["scc", "weld", "dent", "corrosion", "interference"]
+
+    release_classify_version = conn.execute(
+        "SELECT classify_version FROM pipeline_release WHERE pipeline_version=?", (pipeline_version,)
+    ).fetchone()[0]
+    assert release_classify_version == classify_lgbm_row[0]
+
+    assert "## Classification" in card_text
+
+
+def test_shap_check_catches_a_deliberately_leaky_chainage_feature():
+    """Engineered-leak integration test for the physics-consistency gate.
+    `chainage_m` is structurally excluded from `feature_columns()` in real
+    use, so a test asserting it's absent from the real feature set would pass
+    trivially regardless of whether the CHECK ITSELF has teeth. This proves
+    it does: chainage is deliberately included here and made informative by
+    construction (perfectly predicts the class), a real ClassifyModel is fit,
+    real contribution importances are computed, and the check must catch it.
+    """
+    rng = np.random.default_rng(0)
+    n = 200
+    chainage = rng.uniform(0, 2000, size=n)
+    y = np.where(chainage < 1000, "scc", "weld")  # perfectly predictable from chainage alone
+    X = pd.DataFrame({
+        "chainage_m": chainage,
+        "noise1": rng.normal(size=n),
+        "noise2": rng.normal(size=n),
+    })
+    X_train, y_train = X.iloc[:150], y[:150]
+    X_calib, y_calib = X.iloc[150:], y[150:]
+
+    model = ClassifyModel(
+        feature_cols=["chainage_m", "noise1", "noise2"], classes=CLASSIFY_CLASSES,
+        seed=0, lgbm_cfg=_LGBM_CFG,
+    ).fit(X_train, y_train, X_calib, y_calib)
+
+    importance = _lightgbm_shap_importance(model, X)
+    check = shap_denylist_check(importance, CLASSIFY_DENYLIST, top_k=2)
+    assert check["passed"] is False
+    assert "chainage_m" in check["leaked_denylist_features"]
+
+
+def test_shap_check_does_not_cry_wolf_when_the_denylisted_feature_is_pure_noise():
+    """Companion non-leaky case: `chainage_m` is present in the feature set
+    (same as the test above) but this time it's pure noise, not informative
+    -- the real, physically-meaningful feature (`a`) determines the class
+    instead. Proves the check doesn't flag a denylisted column just for
+    existing.
+    """
+    rng = np.random.default_rng(1)
+    n = 200
+    a = rng.normal(size=n)
+    y = np.where(a > 0, "scc", "weld")
+    X = pd.DataFrame({
+        "chainage_m": rng.uniform(0, 2000, size=n),  # present, but uninformative
+        "a": a,
+    })
+    X_train, y_train = X.iloc[:150], y[:150]
+    X_calib, y_calib = X.iloc[150:], y[150:]
+
+    model = ClassifyModel(
+        feature_cols=["chainage_m", "a"], classes=CLASSIFY_CLASSES, seed=0, lgbm_cfg=_LGBM_CFG,
+    ).fit(X_train, y_train, X_calib, y_calib)
+
+    importance = _lightgbm_shap_importance(model, X)
+    check = shap_denylist_check(importance, CLASSIFY_DENYLIST, top_k=1)
+    assert check["passed"] is True

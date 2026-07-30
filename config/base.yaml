@@ -161,6 +161,35 @@ model:
   classify:
     calibration: isotonic
     class_weight: balanced
+    # Small-sample accommodation, same reasoning as severity's -- with as few
+    # as a dozen SCC instances total in the real corpus, LightGBM's own
+    # min_child_samples=20 default would refuse to split at all.
+    n_estimators: 50
+    num_leaves: 7
+    min_child_samples: 3
+    # Fraction of each fold's dev-set defects held out for isotonic
+    # calibration, allocated per class (not a bare shuffle) -- see
+    # train.py's _stratified_defect_calib_split.
+    calib_fraction: 0.3
+    # risk_score's third term: calibrated P(defect) * predicted severity *
+    # consequence_proxy[pred_type]. There is no real consequence-of-failure
+    # data in this project (population density, product type, MAOP) -- this
+    # is a STATED engineering-judgment ranking, not derived from data, meant
+    # to be replaced wholesale once that data exists:
+    #   scc:          1.0  crack-like -- sudden, limited-warning failure mode,
+    #                      the highest-consequence flaw class
+    #   corrosion:    0.6  gradual, well-characterised (B31G/RSTRENG)
+    #   dent:         0.5  consequence depends on strain/interacting features
+    #                      this project doesn't model
+    #   weld:         0.4  workmanship anomaly, best-controlled class
+    #   interference: 0.0  not a pipe defect at all -- zero weight so it can
+    #                      never dominate a dig-priority ranking
+    consequence_proxy:
+      scc: 1.0
+      corrosion: 0.6
+      dent: 0.5
+      weld: 0.4
+      interference: 0.0
   dig_budget_per_km: 5
 
 mlflow:

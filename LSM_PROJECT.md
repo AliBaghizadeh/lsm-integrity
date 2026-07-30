@@ -165,7 +165,7 @@ and has been corrected.
     *   **Data Fusion:** Integrating tabular data from ROV visual inspection reports, Cathodic Protection (CP) electrical surveys, and maintenance registries.
     *   **Modeling:** Supervised learning (SVMs, Random Forests) to forecast armor loss, coating damage, and corrosion fatigue.
     *   **Explainability:** SHAP value analysis for risk-driver interpretation.
-*   **Project alignment, corrected:** this project has real bootstrap CIs, a real leakage test, and real (including negative) measured results — rigor this paper doesn't demonstrate having, whatever techniques it names. The one real gap it points at honestly: SHAP/feature-importance analysis is **Stage 5 in this project's own plan, not yet built** — a previous version of this section claimed it was already incorporated, which wasn't true.
+*   **Project alignment, corrected:** this project has real bootstrap CIs, a real leakage test, and real (including negative) measured results — rigor this paper doesn't demonstrate having, whatever techniques it names. SHAP/feature-importance analysis is now built (Stage 5, 2026-07-30): LightGBM's native `pred_contrib=True` TreeSHAP values, not the external `shap` package (its `numba` dependency doesn't support the installed numpy), feeding a physics-consistency gate proven with an engineered-leak integration test, not just an absent-name check.
 
 ### 3. Pipeline Defect Detection using SVM (Isa, Rajkumar, & Woo, 2007)
 *   **Title:** *Pipeline Defect Detection Using Support Vector Machines*
@@ -173,7 +173,7 @@ and has been corrected.
 *   **Key Findings:**
     *   **Signal Processing:** Discrete Wavelet Transform (DWT) (Haar vs. Daubechies DB2) to compress raw 1D acoustic signals and filter high-frequency noise.
     *   **Classification:** DWT coefficients fed to an SVM (LIBSVM); RBF kernel performed best, **89.65%** classification accuracy, Haar wavelet, frame window 25. No cross-validation, no confidence interval, no baseline comparison, and a single lab defect — a reasonable 2007-vintage proof of concept, not a rigor bar.
-*   **Project alignment, corrected:** this project does **not** use an SVM anywhere — Stage 5's plan is LightGBM multiclass, not RBF-SVC. A previous version of this section claimed this paper "supports the choice of RBF SVC in our classification benchmarks," which was wrong on two counts: no SVC exists in this project, and this 18-year-old single-defect result isn't grounds to choose one over LightGBM if it did. What legitimately carries over is the general idea that window-based features work for localized classification — the classifier choice doesn't.
+*   **Project alignment, corrected:** this project does **not** use an SVM anywhere — Stage 5 is built as LightGBM multiclass, not RBF-SVC. A previous version of this section claimed this paper "supports the choice of RBF SVC in our classification benchmarks," which was wrong on two counts: no SVC exists in this project, and this 18-year-old single-defect result isn't grounds to choose one over LightGBM if it did. What legitimately carries over is the general idea that window-based features work for localized classification — the classifier choice doesn't.
 
 ### 4. ROSEN LSM Technical Flyer (Product Specifications)
 *   **Focus:** Commercial capabilities of ROSEN's above-ground Large Stand-Off Magnetometry (LSM) system for unpiggable pipelines.

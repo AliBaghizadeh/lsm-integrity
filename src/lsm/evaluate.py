@@ -256,3 +256,99 @@ def per_group_severity_metrics(df: pd.DataFrame, group_col: str) -> dict[str, li
         mae.append(float(np.mean(np.abs(g["y_true"] - g["y_pred"]))))
         width.append(float(np.mean(g["hi"] - g["lo"])))
     return {"coverage": coverage, "mae": mae, "interval_width": width}
+
+
+# ---------------------------------------------------------------------------
+# Stage 5: classification metrics
+# ---------------------------------------------------------------------------
+
+
+def per_class_recall_units(
+    df: pd.DataFrame, group_col: str, true_col: str, pred_col: str, classes: list[str]
+) -> dict[str, list[float]]:
+    """Per TRUE class, per-physical-source correct-classification indicator --
+    same grouping discipline as `defect_hit_rates`/`per_group_severity_metrics`
+    (a source re-observed across a line's 3 runs is one sample, not three).
+    Feed each class's list straight into `bootstrap_ci` -- one CI per class,
+    no new bootstrap loop. A class absent from `df[true_col]` gets an empty
+    list (`bootstrap_ci` already returns NaNs for that, not an error).
+    """
+    out: dict[str, list[float]] = {c: [] for c in classes}
+    for _, g in df.groupby(group_col):
+        true_class = g[true_col].iloc[0]
+        if true_class not in out:
+            continue
+        out[true_class].append(float((g[pred_col] == true_class).mean()))
+    return out
+
+
+def interference_precision_units(df: pd.DataFrame, group_col: str, true_col: str, pred_col: str) -> list[float]:
+    """Of indications PREDICTED 'interference', per-source fraction whose TRUE
+    class really was interference -- the false-positive-trap converse of
+    interference recall (already covered by `per_class_recall_units`)."""
+    predicted_interference = df[df[pred_col] == "interference"]
+    if len(predicted_interference) == 0:
+        return []
+    return [
+        float((g[true_col] == "interference").mean())
+        for _, g in predicted_interference.groupby(group_col)
+    ]
+
+
+def multiclass_brier_score(y_true: np.ndarray, proba: pd.DataFrame, classes: list[str]) -> float:
+    """Mean squared error between calibrated probability and one-hot truth,
+    summed over classes, averaged over rows -- the standard multiclass Brier
+    score generalisation. 0 is a perfect calibrated prediction; a uniform
+    1/n_classes guess for every row scores (n_classes - 1) / n_classes.
+    """
+    one_hot = pd.DataFrame(
+        {c: (np.asarray(y_true) == c).astype(float) for c in classes}, index=proba.index
+    )
+    return float(((proba[classes] - one_hot[classes]) ** 2).sum(axis=1).mean())
+
+
+def brier_by_group(
+    df: pd.DataFrame, group_col: str, true_col: str, proba_cols: list[str], classes: list[str]
+) -> list[float]:
+    """Per-physical-source mean Brier score -- feed into `bootstrap_ci`, same
+    grouping discipline as every other Stage 5 metric."""
+    return [
+        multiclass_brier_score(g[true_col].to_numpy(), g[proba_cols], classes)
+        for _, g in df.groupby(group_col)
+    ]
+
+
+def reliability_curve(confidences: np.ndarray, correct: np.ndarray, n_bins: int = 10) -> pd.DataFrame:
+    """Bin by predicted max-probability confidence; empirical accuracy per bin
+    -- a well-calibrated classifier's points fall near the diagonal
+    (confidence == accuracy). What train.py plots as the reliability diagram.
+    Same `duplicates='drop'` bin-collapsing as `mae_by_severity_decile` for a
+    small, low-diversity confidence sample.
+    """
+    df = pd.DataFrame({"confidence": confidences, "correct": correct})
+    n_unique = df["confidence"].nunique()
+    if n_unique < 2:
+        return pd.DataFrame(
+            {"bin_mean_confidence": [df["confidence"].mean()], "bin_accuracy": [df["correct"].mean()],
+             "n": [len(df)]}
+        )
+    bins = min(n_bins, n_unique)
+    df["bin"] = pd.qcut(df["confidence"], q=bins, duplicates="drop")
+    grouped = df.groupby("bin", observed=True).agg(
+        bin_mean_confidence=("confidence", "mean"), bin_accuracy=("correct", "mean"), n=("correct", "size")
+    )
+    return grouped.reset_index(drop=True)
+
+
+def shap_denylist_check(shap_importance: pd.Series, denylist: list[str], top_k: int = 10) -> dict:
+    """Pure logic, no SHAP/contribution computation itself -- takes an
+    already-computed mean-|contribution| `Series` indexed by feature name.
+    The physics-consistency gate: the model should key on residual amplitude/
+    gradient/peak width, not absolute position (chainage, sample_idx) -- a
+    shortcut that would happen to work on this synthetic corpus's fixed
+    defect placement but never generalise to a real, different pipeline.
+    """
+    ranked = shap_importance.sort_values(ascending=False)
+    top_features = ranked.index[:top_k].tolist()
+    leaked = [f for f in top_features if f in denylist]
+    return {"top_features": top_features, "leaked_denylist_features": leaked, "passed": len(leaked) == 0}

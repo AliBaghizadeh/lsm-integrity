@@ -22,6 +22,12 @@ from pandera.pandas import Column, DataFrameSchema, Check
 # infer this from whatever happened to be in a training frame.
 DEFECT_TYPES: list[str] = ["scc", "weld", "dent", "corrosion", "interference", "none"]
 
+# Stage 5: the classifier's actual trained classes. "none" has no ground-truth
+# label (only unmatched/false-alarm indications would be "none", and those
+# have no true physical source to learn from) so it is never a training
+# class -- DEFECT_TYPES minus "none", same pinned-order discipline.
+CLASSIFY_CLASSES: list[str] = [t for t in DEFECT_TYPES if t != "none"]
+
 FIELD_RANGE_NT = (-80_000.0, 80_000.0)
 
 # Raw reading table, as generated/ingested per survey. This is the schema

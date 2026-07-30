@@ -25,6 +25,7 @@ import matplotlib.pyplot as plt  # noqa: E402
 import mlflow
 import numpy as np
 import pandas as pd
+from sklearn.isotonic import IsotonicRegression
 from sklearn.metrics import precision_recall_curve
 
 from lsm.bundle import save_bundle, training_feature_summary
@@ -32,15 +33,20 @@ from lsm.config import Config
 from lsm.evaluate import (
     add_fold_column,
     bootstrap_ci,
+    brier_by_group,
     defect_hit_rates,
     false_dig_rate_per_run,
     interference_dig_fraction_per_run,
+    interference_precision_units,
     localisation_errors_m,
     mae_by_severity_decile,
     match_dug_indications,
     paired_bootstrap_ci,
+    per_class_recall_units,
     per_group_severity_metrics,
     pr_auc,
+    reliability_curve,
+    shap_denylist_check,
 )
 from lsm.features import feature_columns, load_feature_corpus
 from lsm.hashing import data_sha256
@@ -53,8 +59,9 @@ from lsm.indications import (
 from lsm.logging_utils import get_logger
 from lsm.model_card import write_model_card
 from lsm.models.anomaly import IsolationForestAnomalyModel, MADBaseline, calibrated_threshold
+from lsm.models.classify import ClassifyModel, MajorityClassBaseline
 from lsm.models.severity import GlobalMeanSeverityBaseline, SeverityModel
-from lsm.schemas import DEFECT_TYPES
+from lsm.schemas import CLASSIFY_CLASSES, DEFECT_TYPES
 from lsm.truth import build_truth_registry
 
 log = get_logger("lsm.train")
@@ -81,6 +88,23 @@ GATE_SEVERITY_COVERAGE_RANGE = (0.87, 0.93)
 # calibration set to be disjoint from what fit the quantile models -- fitting
 # and calibrating on the same rows leaks, same as any other fitted transform.
 CONFORMAL_CALIB_FRACTION = 0.3
+
+# The Stage 5 gate's other half (see CLASSIFY_DENYLIST below): SCC is
+# protected specifically because a missed crack-like defect is the sudden-
+# failure-mode class this whole project cares most about catching -- checked
+# on the CI lower bound, same discipline as every other gate here.
+GATE_SCC_RECALL = 0.90
+
+# Physics-consistency denylist for the classifier's SHAP/contribution
+# importance ranking. These are absolute-position columns that could make a
+# model key on "this class always sits at this chainage" -- true only on
+# THIS synthetic corpus's fixed defect placement, and a shortcut that would
+# never generalise to a real, different pipeline.
+CLASSIFY_DENYLIST = ["chainage_m", "chainage_peak_m", "chainage_start_m", "chainage_end_m", "sample_idx"]
+
+# Same reasoning as CONFORMAL_CALIB_FRACTION, for the classifier's isotonic
+# probability calibration -- a defect-grouped split, never by row.
+CLASSIFY_CALIB_FRACTION = 0.3
 
 
 def _git_sha(cwd: str | Path | None = None) -> str:
@@ -224,25 +248,35 @@ def _cluster_all_indications(
     return pd.concat(all_indications, ignore_index=True) if all_indications else pd.DataFrame()
 
 
-def _build_severity_training_frame(
-    corpus: pd.DataFrame, feature_cols: list[str], registry: pd.DataFrame
+def _match_all_indications(
+    indications: pd.DataFrame, corpus: pd.DataFrame, registry: pd.DataFrame
 ) -> pd.DataFrame:
-    """Every indication (clustered from IsolationForest's out-of-fold scores at
-    its self-calibrated threshold=0.0) that matches a real defect, with its
-    feature vector, true severity, and CV fold attached -- the full severity
-    training/evaluation universe.
+    """Match every clustered indication -- defect, interference, AND unmatched
+    false alarm, the unfiltered superset -- to its nearest truth source, per
+    survey's own line registry. Shared by the severity frame (defect-only),
+    the Stage 5 classify frame (defect+interference), and the Stage 5
+    `p_defect_cal` calibrator, which specifically NEEDS the unmatched rows
+    too (it learns what "not a real match" looks like from them).
     """
-    indications = _cluster_all_indications(corpus, "score_if", 0.0)
     if len(indications) == 0:
         return indications
-
     matched_frames = []
     for survey_id, group in indications.groupby("survey_id"):
         line_id = corpus.loc[corpus["survey_id"] == survey_id, "line_id"].iloc[0]
         line_registry = registry[registry["line_id"] == line_id]
         matched_frames.append(match_dug_indications(group, line_registry, MATCH_TOLERANCE_M))
-    matched = pd.concat(matched_frames, ignore_index=True)
+    return pd.concat(matched_frames, ignore_index=True)
 
+
+def _build_severity_training_frame(
+    matched: pd.DataFrame, corpus: pd.DataFrame, feature_cols: list[str]
+) -> pd.DataFrame:
+    """Every already-matched indication that matches a real DEFECT (not
+    interference, not unmatched), with its feature vector, true severity, and
+    CV fold attached -- the full severity training/evaluation universe.
+    `matched` is the shared cluster+match pass (`_cluster_all_indications` +
+    `_match_all_indications`), not recomputed here.
+    """
     defects_only = matched[matched["matched_kind"] == "defect"].copy()
     if len(defects_only) == 0:
         return defects_only
@@ -258,6 +292,30 @@ def _build_severity_training_frame(
     with_features = with_features.merge(truth, on=["survey_id", "chainage_peak_m"], how="left")
 
     # fold: whichever fold the peak row belongs to (assigned in _run_grouped_cv).
+    fold_lookup = corpus[["survey_id", "chainage_m", "fold"]].rename(columns={"chainage_m": "chainage_peak_m"})
+    return with_features.merge(fold_lookup, on=["survey_id", "chainage_peak_m"], how="left")
+
+
+def _build_classify_training_frame(
+    matched: pd.DataFrame, corpus: pd.DataFrame, feature_cols: list[str], registry: pd.DataFrame
+) -> pd.DataFrame:
+    """Every already-matched indication that matches a real DEFECT OR
+    INTERFERENCE source -- widened from severity's defect-only restriction,
+    since interference is an explicit class to classify here, not to exclude.
+    `defect_type` comes straight off the registry join (already carries the
+    literal string "interference" for interference sources) -- no new
+    label-derivation logic, just one merge.
+    """
+    labelled = matched[matched["matched_kind"].isin(["defect", "interference"])].copy()
+    if len(labelled) == 0:
+        return labelled
+
+    with_features = attach_indication_features(labelled, corpus, feature_cols)
+
+    with_features = with_features.merge(
+        registry[["source_id", "defect_type"]], left_on="matched_source_id", right_on="source_id", how="left"
+    ).drop(columns=["source_id"])
+
     fold_lookup = corpus[["survey_id", "chainage_m", "fold"]].rename(columns={"chainage_m": "chainage_peak_m"})
     return with_features.merge(fold_lookup, on=["survey_id", "chainage_peak_m"], how="left")
 
@@ -332,6 +390,168 @@ def _severity_bootstrap_metrics(oof: pd.DataFrame, cfg: Config, seed: int) -> di
         "mae": bootstrap_ci(per_group["mae"], boot_cfg.n_resamples, boot_cfg.level, seed + 1),
         "interval_width": bootstrap_ci(per_group["interval_width"], boot_cfg.n_resamples, boot_cfg.level, seed + 2),
     }
+
+
+def _stratified_defect_calib_split(
+    dev: pd.DataFrame, class_col: str, group_col: str, calib_fraction: float, rng: np.random.Generator
+) -> tuple[set, set]:
+    """Allocate each class's OWN distinct defects to calib proportionally,
+    rather than a bare shuffle of all defects -- a plain shuffle risks a rare
+    class (as few as a dozen SCC instances total in the real corpus) landing
+    with zero calibration examples purely by chance, which sklearn's isotonic
+    calibration cannot recover from (confirmed empirically: raises
+    `IndexError`, not a theoretical concern). Returns (train_defect_ids,
+    calib_defect_ids). A class with too few distinct defects to split at all
+    keeps all of that class's defects in train -- same "honest but noisy"
+    acceptance as severity's own degenerate-fold path.
+    """
+    train_ids: set = set()
+    calib_ids: set = set()
+    for _, class_group in dev.groupby(class_col):
+        defects = class_group[group_col].unique()
+        rng.shuffle(defects)
+        n_calib = max(1, round(len(defects) * calib_fraction)) if len(defects) > 1 else 0
+        calib_ids.update(defects[:n_calib])
+        train_ids.update(defects[n_calib:])
+    return train_ids, calib_ids
+
+
+def _run_classify_cv(
+    classify_frame: pd.DataFrame, feature_cols: list[str], cfg: Config, seed: int
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Fold-by-fold: hold out one fold's matched indications as test, split
+    the remaining folds' indications into an inner train/calibration
+    partition by DEFECT, class-stratified (`_stratified_defect_calib_split`)
+    -- fit `ClassifyModel` + `MajorityClassBaseline` on train/calib, predict
+    on the held-out fold. Returns (oof_model, oof_baseline): pooled
+    out-of-fold rows (defect_id, true_class, pred_type, pred_conf, and one
+    column per class's calibrated probability) for the classifier and the
+    baseline, evaluated identically.
+    """
+    n_folds = int(classify_frame["fold"].max()) + 1 if len(classify_frame) else 0
+    classify_cfg = cfg.base.model.classify
+    lgbm_cfg = cfg.base.model.lightgbm.model_dump()
+    rng = np.random.default_rng(seed)
+
+    model_rows, baseline_rows = [], []
+    for k in range(n_folds):
+        test = classify_frame[classify_frame["fold"] == k].reset_index(drop=True)
+        dev = classify_frame[classify_frame["fold"] != k]
+        if len(test) == 0 or len(dev) == 0:
+            continue
+
+        train_ids, calib_ids = _stratified_defect_calib_split(
+            dev, "defect_type", "matched_source_id", CLASSIFY_CALIB_FRACTION, rng
+        )
+        train = dev[dev["matched_source_id"].isin(train_ids)]
+        calib = dev[dev["matched_source_id"].isin(calib_ids)]
+        if len(train) == 0:
+            train, calib = dev, dev.iloc[0:0]
+
+        model = ClassifyModel(
+            feature_cols=feature_cols, classes=CLASSIFY_CLASSES, seed=seed, lgbm_cfg=lgbm_cfg,
+            class_weight=classify_cfg.get("class_weight", "balanced"),
+            min_child_samples=classify_cfg.get("min_child_samples", 3),
+        ).fit(train, train["defect_type"].to_numpy(), calib, calib["defect_type"].to_numpy())
+        proba = model.predict_proba(test)
+        pred_type, pred_conf = model.predict(test)
+
+        baseline = MajorityClassBaseline(classes=CLASSIFY_CLASSES).fit(train["defect_type"].to_numpy())
+        baseline_proba = baseline.predict_proba(len(test))
+        base_pred_type, base_pred_conf = baseline.predict(len(test))
+
+        for i in range(len(test)):
+            row = test.iloc[i]
+            model_row = {
+                "defect_id": row["matched_source_id"], "true_class": row["defect_type"],
+                "pred_type": pred_type[i], "pred_conf": pred_conf[i],
+            }
+            model_row.update({c: proba.iloc[i][c] for c in CLASSIFY_CLASSES})
+            model_rows.append(model_row)
+
+            baseline_row = {
+                "defect_id": row["matched_source_id"], "true_class": row["defect_type"],
+                "pred_type": base_pred_type[i], "pred_conf": base_pred_conf[i],
+            }
+            baseline_row.update({c: baseline_proba.iloc[i][c] for c in CLASSIFY_CLASSES})
+            baseline_rows.append(baseline_row)
+
+    return pd.DataFrame(model_rows), pd.DataFrame(baseline_rows)
+
+
+def _classify_bootstrap_metrics(oof: pd.DataFrame, cfg: Config, seed: int) -> dict:
+    boot_cfg = cfg.base.model.bootstrap
+    recall_units = per_class_recall_units(oof, "defect_id", "true_class", "pred_type", CLASSIFY_CLASSES)
+    per_class_recall = {
+        c: bootstrap_ci(recall_units[c], boot_cfg.n_resamples, boot_cfg.level, seed + i)
+        for i, c in enumerate(CLASSIFY_CLASSES)
+    }
+    interference_prec_units = interference_precision_units(oof, "defect_id", "true_class", "pred_type")
+    brier_units = brier_by_group(oof, "defect_id", "true_class", CLASSIFY_CLASSES, CLASSIFY_CLASSES)
+    return {
+        "per_class_recall": per_class_recall,
+        "interference_precision": bootstrap_ci(
+            interference_prec_units, boot_cfg.n_resamples, boot_cfg.level, seed + 100
+        ),
+        "brier": bootstrap_ci(brier_units, boot_cfg.n_resamples, boot_cfg.level, seed + 101),
+    }
+
+
+def _lightgbm_shap_importance(model: ClassifyModel, X: pd.DataFrame) -> pd.Series:
+    """Mean(|contribution|) per feature, aggregated across rows and classes --
+    LightGBM's native `pred_contrib=True` gives genuine TreeSHAP values
+    without the external `shap` package, whose `numba` dependency does not
+    support the installed numpy in this environment (confirmed empirically:
+    `import shap` raises `ImportError: Numba needs NumPy 2.4 or less`, and
+    numba's latest release still doesn't support it -- not fixable by
+    upgrading). This is what `evaluate.shap_denylist_check` (the physics-
+    consistency gate) runs against.
+    """
+    assert model.model is not None, "_lightgbm_shap_importance requires a real (non-constant-fallback) model"
+    X_mat = X[model.feature_cols].fillna(0.0)
+    contrib = model.model.predict(X_mat, pred_contrib=True)
+    n_features = len(model.feature_cols)
+    # The ACTUALLY-fitted model's class count, not len(model.classes) (the
+    # full pinned list) -- num_class is set dynamically per fit from the
+    # classes really present in y_train (see ClassifyModel.fit), so the two
+    # can differ, and pred_contrib's output width follows the fitted model.
+    n_classes = len(model.model.classes_)
+    reshaped = np.asarray(contrib).reshape(len(X_mat), n_classes, n_features + 1)
+    mean_abs = np.abs(reshaped[:, :, :n_features]).mean(axis=(0, 1))
+    return pd.Series(mean_abs, index=model.feature_cols)
+
+
+def _explain_indications_sample(
+    model: ClassifyModel, X: pd.DataFrame, pred_type: np.ndarray, n_examples: int = 5
+) -> dict:
+    """One worked example per predicted class: its own per-feature
+    contribution to ITS predicted class, via the same native `pred_contrib`
+    mechanism as `_lightgbm_shap_importance`. Logged as an MLflow JSON
+    artifact only -- no `indication` table column exists for per-indication
+    SHAP, and adding one is a `schema_version` bump this first pass doesn't
+    need (no consumer yet); a real productionisation would add one once a
+    dashboard panel actually reads it.
+    """
+    assert model.model is not None, "_explain_indications_sample requires a real (non-constant-fallback) model"
+    X_mat = X[model.feature_cols].fillna(0.0)
+    contrib = np.asarray(model.model.predict(X_mat, pred_contrib=True))
+    n_features = len(model.feature_cols)
+    n_classes = len(model.model.classes_)  # see _lightgbm_shap_importance's comment
+    reshaped = contrib.reshape(len(X_mat), n_classes, n_features + 1)
+    class_index = {c: i for i, c in enumerate(model.model.classes_)}
+
+    examples: dict = {}
+    for c in model.classes:
+        if c not in class_index:
+            continue
+        rows_of_class = np.where(pred_type == c)[0]
+        if len(rows_of_class) == 0:
+            continue
+        i, ci = rows_of_class[0], class_index[c]
+        examples[c] = dict(zip(model.feature_cols, reshaped[i, ci, :n_features].tolist()))
+        if len(examples) >= n_examples:
+            break
+    return examples
 
 
 def _bootstrap_metrics(
@@ -431,9 +651,15 @@ def run_train(cfg: Config, conn) -> dict:
         "n_surveys": len(survey_ids),
     }
 
+    # Stage 4 and Stage 5 share one cluster+match pass over IsolationForest's
+    # OOF scores -- the unfiltered superset (defect, interference, AND
+    # unmatched false alarms), computed once rather than separately per stage.
+    all_indications = _cluster_all_indications(corpus, "score_if", 0.0)
+    matched_all = _match_all_indications(all_indications, corpus, registry)
+
     # Stage 4: severity, conditional on the anomaly detector having flagged
-    # SOMETHING that matches a real defect -- see _build_severity_training_frame.
-    severity_frame = _build_severity_training_frame(corpus, feature_cols, registry)
+    # SOMETHING that matches a real defect.
+    severity_frame = _build_severity_training_frame(matched_all, corpus, feature_cols)
     result["n_severity_samples"] = len(severity_frame)
     if len(severity_frame) >= 4 and severity_frame["matched_source_id"].nunique() >= 2:
         oof_model, oof_baseline = _run_severity_cv(
@@ -455,7 +681,44 @@ def run_train(cfg: Config, conn) -> dict:
                 ).to_dict().items()
             }
 
-    _log_and_persist(cfg, conn, corpus, feature_cols, registry, survey_ids, result, mad_threshold, severity_frame)
+    # Stage 5: the p_defect_cal calibrator -- fit on the UNFILTERED matched
+    # population (defect, interference, unmatched all present), so it learns
+    # what "not a real match" looks like, which the classifier itself never
+    # sees (its training universe excludes true false alarms -- see
+    # _build_classify_training_frame).
+    defect_calibrator = None
+    if len(matched_all) > 0:
+        is_defect = (matched_all["matched_kind"] == "defect").astype(float).to_numpy()
+        defect_calibrator = IsotonicRegression(out_of_bounds="clip").fit(
+            matched_all["anomaly_score"].to_numpy(), is_defect
+        )
+
+    # Stage 5: classification, conditional on enough matched, multi-class
+    # data to fit and evaluate at all (mirrors severity's own sample-size
+    # guard, widened to also require class diversity).
+    classify_frame = _build_classify_training_frame(matched_all, corpus, feature_cols, registry)
+    result["n_classify_samples"] = len(classify_frame)
+    if len(classify_frame) >= 8 and classify_frame["defect_type"].nunique() >= 3:
+        oof_classify, oof_classify_baseline = _run_classify_cv(
+            classify_frame, [*feature_cols, "extent_m"], cfg, seed=cfg.seed
+        )
+        if len(oof_classify) > 0:
+            classify_metrics = _classify_bootstrap_metrics(oof_classify, cfg, seed=cfg.seed + 40)
+            classify_baseline_metrics = _classify_bootstrap_metrics(oof_classify_baseline, cfg, seed=cfg.seed + 50)
+            scc_recall_ci = classify_metrics["per_class_recall"].get("scc", (float("nan"),) * 3)
+            scc_gate_passed = scc_recall_ci[1] >= GATE_SCC_RECALL  # lower CI bound, not the point estimate
+            result["classify"] = classify_metrics
+            result["classify_baseline"] = classify_baseline_metrics
+            result["classify_recall_gate_passed"] = scc_gate_passed
+            result["classify_reliability"] = reliability_curve(
+                oof_classify["pred_conf"].to_numpy(),
+                (oof_classify["pred_type"] == oof_classify["true_class"]).to_numpy(),
+            ).to_dict(orient="list")
+
+    _log_and_persist(
+        cfg, conn, corpus, feature_cols, registry, survey_ids, result, mad_threshold,
+        severity_frame, classify_frame, defect_calibrator,
+    )
     _print_report(result)
     return result
 
@@ -491,6 +754,37 @@ def _fit_final_severity_model(
     return model, baseline
 
 
+def _fit_final_classify_model(
+    classify_frame: pd.DataFrame, feature_cols: list[str], cfg: Config, seed: int
+) -> tuple[ClassifyModel | None, MajorityClassBaseline | None]:
+    """The classifier that ships: fit on ALL matched (defect+interference)
+    indications, with one more class-stratified train/calibration split (by
+    defect) for its own isotonic calibration -- a production bundle needs a
+    calibrated model too, not just the CV loop's honest-but-thrown-away fold
+    models.
+    """
+    if len(classify_frame) < 8 or classify_frame["defect_type"].nunique() < 3:
+        return None, None
+    rng = np.random.default_rng(seed)
+    classify_cfg = cfg.base.model.classify
+    train_ids, calib_ids = _stratified_defect_calib_split(
+        classify_frame, "defect_type", "matched_source_id", CLASSIFY_CALIB_FRACTION, rng
+    )
+    train = classify_frame[classify_frame["matched_source_id"].isin(train_ids)]
+    calib = classify_frame[classify_frame["matched_source_id"].isin(calib_ids)]
+    if len(train) == 0:
+        train, calib = classify_frame, classify_frame.iloc[0:0]
+
+    model = ClassifyModel(
+        feature_cols=feature_cols, classes=CLASSIFY_CLASSES, seed=seed,
+        lgbm_cfg=cfg.base.model.lightgbm.model_dump(),
+        class_weight=classify_cfg.get("class_weight", "balanced"),
+        min_child_samples=classify_cfg.get("min_child_samples", 3),
+    ).fit(train, train["defect_type"].to_numpy(), calib, calib["defect_type"].to_numpy())
+    baseline = MajorityClassBaseline(classes=CLASSIFY_CLASSES).fit(train["defect_type"].to_numpy())
+    return model, baseline
+
+
 def _log_and_persist(
     cfg: Config,
     conn,
@@ -501,6 +795,8 @@ def _log_and_persist(
     result: dict,
     mad_threshold: float,
     severity_frame: pd.DataFrame,
+    classify_frame: pd.DataFrame,
+    defect_calibrator: IsotonicRegression | None,
 ) -> None:
     """MLflow logging + model_run/pipeline_release rows + a real `indication`
     table, populated from models refit on the FULL corpus (the CV-fold models in
@@ -563,6 +859,22 @@ def _log_and_persist(
                     mlflow.log_metric(f"{model_name}_{metric_name}_hi", hi)
             mlflow.log_metric("severity_gate_passed", int(result["severity_gate_passed"]))
             mlflow.log_dict(result["severity_mae_by_decile"], "severity_mae_by_decile.json")
+
+        mlflow.log_metric("n_classify_samples", result["n_classify_samples"])
+        if "classify" in result:
+            for model_name in ("classify", "classify_baseline"):
+                m = result[model_name]
+                for cls, (point, lo, hi) in m["per_class_recall"].items():
+                    mlflow.log_metric(f"{model_name}_recall_{cls}", point)
+                    mlflow.log_metric(f"{model_name}_recall_{cls}_lo", lo)
+                    mlflow.log_metric(f"{model_name}_recall_{cls}_hi", hi)
+                for metric_name in ("interference_precision", "brier"):
+                    point, lo, hi = m[metric_name]
+                    mlflow.log_metric(f"{model_name}_{metric_name}", point)
+                    mlflow.log_metric(f"{model_name}_{metric_name}_lo", lo)
+                    mlflow.log_metric(f"{model_name}_{metric_name}_hi", hi)
+            mlflow.log_metric("classify_recall_gate_passed", int(result["classify_recall_gate_passed"]))
+            mlflow.log_dict(result["classify_reliability"], "classify_reliability.json")
 
         dq_rows = conn.execute(
             f"SELECT survey_id, check_name, status, n_affected FROM dq_report "
@@ -693,13 +1005,94 @@ def _log_and_persist(
             )
         conn.commit()
 
+        # Stage 5: fit and persist the final classifier + the p_defect_cal
+        # calibrator, if there was enough matched, multi-class data to do so.
+        classify_version = None
+        classify_feature_cols = [*feature_cols, "extent_m"]
+        classify_final, classify_baseline_final = _fit_final_classify_model(
+            classify_frame, classify_feature_cols, cfg, cfg.seed
+        )
+        if classify_final is not None:
+            # Physics-consistency check: the classifier should key on residual
+            # amplitude/gradient/peak width, not absolute position -- run on
+            # the FINAL model, not a CV fold's, since this is the gate on what
+            # actually ships.
+            shap_importance = _lightgbm_shap_importance(classify_final, classify_frame)
+            shap_check = shap_denylist_check(shap_importance, CLASSIFY_DENYLIST, top_k=10)
+            result["classify_shap_check"] = shap_check
+            result["classify_gate_passed"] = (
+                result.get("classify_recall_gate_passed", False) and shap_check["passed"]
+            )
+            mlflow.log_metric("classify_shap_check_passed", int(shap_check["passed"]))
+            mlflow.log_dict(shap_check, "classify_shap_denylist_check.json")
+
+            fig, ax = plt.subplots(figsize=(6, 5))
+            ranked = shap_importance.sort_values(ascending=False).head(15)
+            ax.barh(ranked.index[::-1], ranked.to_numpy()[::-1])
+            ax.set_xlabel("mean |contribution| (LightGBM native SHAP, all classes)")
+            ax.set_title("Stage 5: global feature importance")
+            fig.tight_layout()
+            mlflow.log_figure(fig, "classify_shap_importance.png")
+            plt.close(fig)
+
+            pred_type_full, _ = classify_final.predict(classify_frame)
+            mlflow.log_dict(
+                _explain_indications_sample(classify_final, classify_frame, pred_type_full),
+                "classify_shap_examples.json",
+            )
+
+            classify_version = f"classify-lgbm-{date_tag}-{short_sha}"
+            classify_baseline_version = f"classify-majority-{date_tag}-{short_sha}"
+            classify_artifact_path = model_dir / classify_version / "bundle.joblib"
+            save_bundle(
+                classify_artifact_path,
+                {
+                    "task": "classify",
+                    "model_kind": "lightgbm_multiclass",
+                    "model": classify_final,
+                    "defect_calibrator": defect_calibrator,
+                    "feature_cols": classify_feature_cols,
+                    "classify_classes": CLASSIFY_CLASSES,
+                    "defect_type_categories": DEFECT_TYPES,
+                    "feature_version": cfg.base.features.version,
+                    "schema_version": cfg.base.schema_version,
+                    "config_sha256": cfg.config_sha256,
+                    "git_sha": git_sha,
+                    "data_sha256": corpus_data_sha256,
+                    "truth_as_of": truth_as_of,
+                    "training_feature_summary": feature_summary,
+                },
+            )
+            conn.execute(
+                "INSERT OR REPLACE INTO model_run (model_version, task, mlflow_run_id, git_sha, "
+                "config_sha256, data_sha256, feature_version, truth_as_of, trained_at, "
+                "metrics_json, artifact_uri, final_test_uses) VALUES (?,?,?,?,?,?,?,?,?,?,?,0)",
+                (
+                    classify_version, "classify", run.info.run_id, git_sha, cfg.config_sha256,
+                    corpus_data_sha256, cfg.base.features.version, truth_as_of, now.isoformat(),
+                    json.dumps(result.get("classify", {}), default=list), str(classify_artifact_path),
+                ),
+            )
+            # baseline logged for comparison/audit only -- not referenced by any release.
+            conn.execute(
+                "INSERT OR REPLACE INTO model_run (model_version, task, mlflow_run_id, git_sha, "
+                "config_sha256, data_sha256, feature_version, truth_as_of, trained_at, "
+                "metrics_json, artifact_uri, final_test_uses) VALUES (?,?,?,?,?,?,?,?,?,?,?,0)",
+                (
+                    classify_baseline_version, "classify", run.info.run_id, git_sha, cfg.config_sha256,
+                    corpus_data_sha256, cfg.base.features.version, truth_as_of, now.isoformat(),
+                    json.dumps(result.get("classify_baseline", {}), default=list), "n/a (baseline, no artifact)",
+                ),
+            )
+        conn.commit()
+
         pipeline_version = f"{date_tag}-{short_sha}"
         conn.execute(
             "INSERT OR REPLACE INTO pipeline_release (pipeline_version, anomaly_version, "
             "severity_version, classify_version, growth_version, feature_version, "
             "schema_version, container_digest, released_at, alias) VALUES (?,?,?,?,?,?,?,?,?,?)",
             (
-                pipeline_version, if_version, severity_version, None, None, cfg.base.features.version,
+                pipeline_version, if_version, severity_version, classify_version, None, cfg.base.features.version,
                 cfg.base.schema_version, "local-dev", now.isoformat(), "challenger",
             ),
         )
@@ -713,6 +1106,7 @@ def _log_and_persist(
                 "git_sha": git_sha, "data_sha256": corpus_data_sha256,
                 "feature_version": cfg.base.features.version, "schema_version": cfg.base.schema_version,
                 "n_defects": result["n_defects"], "n_surveys": result["n_surveys"],
+                "consequence_proxy": cfg.base.model.classify.get("consequence_proxy", {}),
             },
             result=result,
         )
@@ -782,17 +1176,45 @@ def _print_report(result: dict) -> None:
     if "severity" not in result:
         print(f"  Skipped: only {result['n_severity_samples']} matched, severity-labelled indications "
               "-- too few (or too few distinct defects) to fit and calibrate at all.")
+    else:
+        for model_name, label in (("severity_baseline", "Global-mean baseline"), ("severity", "LightGBM CQR")):
+            m = result[model_name]
+            print(f"\n{label}:")
+            print(fmt("coverage @ 90% nominal", m["coverage"]))
+            print(fmt("MAE", m["mae"]))
+            print(fmt("mean interval width", m["interval_width"]))
+
+        verdict = "PASSES" if result["severity_gate_passed"] else "DOES NOT PASS"
+        print(f"\nStage 4 gate (coverage in [{GATE_SEVERITY_COVERAGE_RANGE[0]}, "
+              f"{GATE_SEVERITY_COVERAGE_RANGE[1]}]): {verdict}")
+        print(f"MAE by severity decile: {result['severity_mae_by_decile']}")
+        print(f"(n={result['n_severity_samples']} matched, severity-labelled indications)")
+
+    print("\n=== Stage 5: classification -- LightGBM multiclass + isotonic calibration vs majority-class baseline ===")
+    if "classify" not in result:
+        print(f"  Skipped: only {result['n_classify_samples']} matched, classifiable indications "
+              "-- too few (or too few distinct classes) to fit and calibrate at all.")
         return
 
-    for model_name, label in (("severity_baseline", "Global-mean baseline"), ("severity", "LightGBM CQR")):
+    for model_name, label in (("classify_baseline", "Majority-class baseline"), ("classify", "LightGBM multiclass")):
         m = result[model_name]
         print(f"\n{label}:")
-        print(fmt("coverage @ 90% nominal", m["coverage"]))
-        print(fmt("MAE", m["mae"]))
-        print(fmt("mean interval width", m["interval_width"]))
+        for cls, triple in m["per_class_recall"].items():
+            print(fmt(f"  recall: {cls}", triple))
+        print(fmt("interference precision", m["interference_precision"]))
+        print(fmt("Brier score", m["brier"]))
 
-    verdict = "PASSES" if result["severity_gate_passed"] else "DOES NOT PASS"
-    print(f"\nStage 4 gate (coverage in [{GATE_SEVERITY_COVERAGE_RANGE[0]}, "
-          f"{GATE_SEVERITY_COVERAGE_RANGE[1]}]): {verdict}")
-    print(f"MAE by severity decile: {result['severity_mae_by_decile']}")
-    print(f"(n={result['n_severity_samples']} matched, severity-labelled indications)")
+    scc_point, scc_lo, _ = result["classify"]["per_class_recall"].get("scc", (float("nan"),) * 3)
+    verdict = "PASSES" if result["classify_recall_gate_passed"] else "DOES NOT PASS"
+    print(f"\nSCC recall: {scc_point:.3f} [CI lower bound {scc_lo:.3f}]")
+    print(f"Stage 5 recall gate (SCC recall >= {GATE_SCC_RECALL:.2f} at the CI lower bound): {verdict}")
+
+    if "classify_shap_check" in result:
+        shap_verdict = "PASSES" if result["classify_shap_check"]["passed"] else "DOES NOT PASS"
+        print(f"Stage 5 physics-consistency gate (no {CLASSIFY_DENYLIST} feature in top-10 "
+              f"by contribution): {shap_verdict}")
+        if not result["classify_shap_check"]["passed"]:
+            print(f"  Leaked features: {result['classify_shap_check']['leaked_denylist_features']}")
+        overall_verdict = "PASSES" if result.get("classify_gate_passed") else "DOES NOT PASS"
+        print(f"Stage 5 gate overall: {overall_verdict}")
+    print(f"(n={result['n_classify_samples']} matched, classifiable indications)")

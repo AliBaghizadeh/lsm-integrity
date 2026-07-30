@@ -192,6 +192,49 @@ def attach_severity(
     return out
 
 
+def attach_classification(
+    indications: pd.DataFrame,
+    rows: pd.DataFrame,
+    classify_model,
+    defect_calibrator,
+    base_feature_cols: list[str],
+    consequence_proxy: dict[str, float],
+) -> pd.DataFrame:
+    """Stage 5: fill `pred_type`/`pred_type_conf` on every indication via its
+    peak row's feature vector, scored through the classifier. OVERWRITES
+    `p_defect_cal` via `defect_calibrator` -- replacing `cluster_indications`'s
+    percentile-rank stand-in with a real isotonic-calibrated P(this is a real
+    defect), fit on the out-of-fold clustered indication population (matched-
+    defect, matched-interference, AND unmatched false alarms alike -- see
+    `train.py`'s `defect_calibrator`). Computes
+    `risk_score = p_defect_cal * sev_pred * consequence_proxy[pred_type]`.
+
+    `risk_score` stays `None` wherever `sev_pred` is `None` (no severity model
+    released yet, or this indication wasn't scored by one) -- a risk score
+    computed from a missing severity term would be a fabricated number, not an
+    honestly absent prediction (SKILL invariant #5: "an indication with no
+    interval... is not a prediction, it is a rumour").
+    """
+    if len(indications) == 0:
+        return indications
+    with_features = attach_indication_features(indications, rows, base_feature_cols)
+    pred_type, pred_conf = classify_model.predict(with_features)
+
+    out = indications.copy()
+    out["pred_type"] = pred_type
+    out["pred_type_conf"] = pred_conf
+    out["p_defect_cal"] = defect_calibrator.predict(out["anomaly_score"].to_numpy())
+
+    # sev_pred is Python None until attach_severity() has run (or forever, if
+    # no severity model has been released) -- coerce to real NaN so the
+    # multiplication below propagates NaN rather than raising on None.
+    sev_pred_numeric = pd.to_numeric(out["sev_pred"], errors="coerce")
+    consequence = out["pred_type"].map(consequence_proxy)
+    risk = out["p_defect_cal"] * sev_pred_numeric * consequence
+    out["risk_score"] = risk.where(sev_pred_numeric.notna())
+    return out
+
+
 def write_indications(conn, indications: pd.DataFrame) -> int:
     """Persist to the `indication` table. Idempotent on `indication_id` (itself
     deterministic on survey_id + pipeline_version + peak chainage): re-running

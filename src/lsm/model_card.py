@@ -18,11 +18,13 @@ def _fmt_ci(triple: tuple[float, float, float]) -> str:
 
 def write_model_card(path: str | Path, provenance: dict, result: dict) -> None:
     """`provenance` needs: pipeline_version, config_sha256, git_sha,
-    data_sha256, feature_version, schema_version, n_defects, n_surveys.
-    `result` is exactly what `train.run_train` returns -- `mad`,
-    `isolation_forest`, `gate_passed`, `interference_attributable`, and
-    (once Stage 4's severity CV has run) `severity`, `severity_baseline`,
-    `severity_gate_passed`.
+    data_sha256, feature_version, schema_version, n_defects, n_surveys, and
+    (once Stage 5's classifier has run) consequence_proxy. `result` is
+    exactly what `train.run_train` returns -- `mad`, `isolation_forest`,
+    `gate_passed`, `interference_attributable`, and (once Stage 4's severity
+    CV has run) `severity`, `severity_baseline`, `severity_gate_passed`, and
+    (once Stage 5's classify CV has run) `classify`, `classify_baseline`,
+    `classify_recall_gate_passed`, `classify_shap_check`, `classify_gate_passed`.
     """
     now = dt.datetime.now(dt.timezone.utc).isoformat()
     mad, iso = result["mad"], result["isolation_forest"]
@@ -83,6 +85,56 @@ def write_model_card(path: str | Path, provenance: dict, result: dict) -> None:
             f"- n matched, severity-labelled indications: {result['n_severity_samples']}",
             "",
         ]
+
+    if "classify" in result:
+        clf, cbase = result["classify"], result["classify_baseline"]
+        lines += [
+            "## Classification (Stage 5): LightGBM multiclass + isotonic calibration "
+            "vs majority-class baseline",
+            "",
+            "Per-class recall (model / baseline):",
+        ]
+        for cls, triple in clf["per_class_recall"].items():
+            base_triple = cbase["per_class_recall"].get(cls, (float("nan"),) * 3)
+            marker = " **(protected, gate below)**" if cls == "scc" else ""
+            lines.append(f"- {cls}{marker}: {_fmt_ci(triple)} / {_fmt_ci(base_triple)}")
+        lines += [
+            "",
+            f"- interference precision: model {_fmt_ci(clf['interference_precision'])}, "
+            f"baseline {_fmt_ci(cbase['interference_precision'])}",
+            f"- Brier score (lower is better): model {_fmt_ci(clf['brier'])}, "
+            f"baseline {_fmt_ci(cbase['brier'])}",
+            f"- **recall gate (SCC recall >= 0.90 at the CI lower bound): "
+            f"{'PASSED' if result.get('classify_recall_gate_passed') else 'DID NOT PASS'}**",
+        ]
+        if "classify_shap_check" in result:
+            shap_check = result["classify_shap_check"]
+            lines += [
+                f"- **physics-consistency gate (no absolute-position feature in the top-10 "
+                f"by contribution): {'PASSED' if shap_check['passed'] else 'DID NOT PASS'}**",
+                f"  - top features by contribution: {shap_check['top_features']}",
+            ]
+            if not shap_check["passed"]:
+                lines.append(f"  - leaked features: {shap_check['leaked_denylist_features']}")
+            lines.append(
+                f"- **overall Stage 5 gate: "
+                f"{'PASSED' if result.get('classify_gate_passed') else 'DID NOT PASS'}**"
+            )
+        lines += [f"- n matched, classifiable indications: {result['n_classify_samples']}", ""]
+
+        consequence_proxy = provenance.get("consequence_proxy")
+        if consequence_proxy:
+            lines += [
+                "**`risk_score` = calibrated P(defect) x predicted severity x consequence proxy.** "
+                "The consequence proxy below is a STATED ENGINEERING-JUDGMENT ranking, not derived "
+                "from real consequence-of-failure data (population density, product type, MAOP) -- "
+                "there is none in this synthetic project. It is meant to be replaced wholesale once "
+                "that data exists, not treated as a calibrated output:",
+                "",
+            ]
+            for cls, weight in consequence_proxy.items():
+                lines.append(f"- {cls}: {weight}")
+            lines.append("")
 
     lines += [
         "## Known limitations",
