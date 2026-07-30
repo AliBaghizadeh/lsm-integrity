@@ -10,6 +10,12 @@ the same baked survey files, against a session-private SQLite db seeded from
 `serving/manifest.json` -- same code, so the impressive path and the safe
 path are the same path.
 
+Data loads are `st.cache_data`-wrapped and live-mode scoring is cached per
+survey_id in `st.session_state`: Streamlit reruns this whole script on EVERY
+widget interaction, so without caching, clicking the dig-budget control in
+Beat 3 would silently re-run the full validate->features->score pipeline in
+live mode even though nothing about the scenario changed.
+
 Run: streamlit run app/demo_app.py
 """
 
@@ -20,13 +26,12 @@ import os
 import sys
 from pathlib import Path
 
-import numpy as np
-import pandas as pd
 import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import chart_utils  # noqa: E402
 import demo_lib  # noqa: E402
 from map_utils import build_map  # noqa: E402
 
@@ -34,13 +39,39 @@ from lsm.config import load_config  # noqa: E402
 
 st.set_page_config(layout="wide", page_title="LSM demo -- Stage 4.5", initial_sidebar_state="collapsed")
 
+
+@st.cache_data(show_spinner=False)
+def _cached_demo_raw(survey_id: str):
+    return demo_lib.load_demo_raw(survey_id)
+
+
+@st.cache_data(show_spinner=False)
+def _cached_demo_features(survey_id: str):
+    return demo_lib.load_demo_features(survey_id)
+
+
+@st.cache_data(show_spinner=False)
+def _cached_demo_indications(survey_id: str):
+    return demo_lib.load_demo_indications(survey_id)
+
+
 manifest = demo_lib.load_manifest()
 scenarios = demo_lib.demo_scenarios()
+
+st.title("LSM Pipeline Integrity -- Live Demo")
+st.markdown(
+    "A **survey** is one magnetometer pass along a stretch of pipeline -- the raw sensor "
+    "reading the whole pipeline runs on. The three **clean** scenarios below are real "
+    "surveys the trained model has genuinely scored (not fabricated for this demo); the "
+    "**corrupted** one is a real survey with one sensor reading pushed out of range, to show "
+    "what happens when the data itself is bad, not the model."
+)
 
 top = st.columns([1, 2])
 with top[0]:
     mode = st.segmented_control(
-        "Mode", ["demo", "live"], default=os.environ.get("APP_MODE", "demo"), key="app_mode"
+        "Mode", ["demo", "live"], default=os.environ.get("APP_MODE", "demo"), key="app_mode",
+        help="demo: precomputed results, zero compute. live: re-runs the real pipeline now, ~1s.",
     )
 with top[1]:
     labels = [s["label"] for s in scenarios]
@@ -48,13 +79,12 @@ with top[1]:
 
 scenario = next(s for s in scenarios if s["label"] == selected_label)
 survey_id = scenario["survey_id"]
-
-st.title(f"{scenario['label']} ({survey_id})")
+st.caption(f"Scenario: **{scenario['label']}** -- survey_id `{survey_id}`, mode `{mode}`")
 
 if mode == "demo":
-    raw = demo_lib.load_demo_raw(survey_id)
-    features = demo_lib.load_demo_features(survey_id)
-    indications = demo_lib.load_demo_indications(survey_id)
+    raw = _cached_demo_raw(survey_id)
+    features = _cached_demo_features(survey_id)
+    indications = _cached_demo_indications(survey_id)
     dq_failure = demo_lib.load_demo_dq_failure(survey_id)
 else:
     if "live_conn" not in st.session_state:
@@ -62,44 +92,68 @@ else:
         conn, live_cfg = demo_lib.init_live_session(base_cfg)
         st.session_state["live_conn"] = conn
         st.session_state["live_cfg"] = live_cfg
+        st.session_state["live_results"] = {}
     live_cfg = st.session_state["live_cfg"]
+    live_results = st.session_state["live_results"]
 
-    raw = demo_lib.load_demo_raw(survey_id)
-    with st.spinner("Running validate -> features -> score..."):
-        report, indications = demo_lib.run_live_scenario(
-            st.session_state["live_conn"], live_cfg, survey_id
-        )
-    if report.has_fail:
-        dq_failure = {
+    raw = _cached_demo_raw(survey_id)  # raw bytes are identical regardless of mode
+    if survey_id not in live_results:
+        with st.spinner("Running validate -> features -> score..."):
+            report, indications = demo_lib.run_live_scenario(
+                st.session_state["live_conn"], live_cfg, survey_id
+            )
+            if report.has_fail:
+                features_live = None
+            else:
+                features_live = demo_lib.load_live_features(live_cfg, survey_id)
+            live_results[survey_id] = (report, indications, features_live)
+    report, indications, features = live_results[survey_id]
+    dq_failure = (
+        {
             "survey_id": report.survey_id,
             "checked_at": report.checked_at,
             "results": [dataclasses.asdict(r) for r in report.results],
         }
-        features = None
-    else:
-        dq_failure = None
-        features = demo_lib.load_live_features(live_cfg, survey_id)
+        if report.has_fail
+        else None
+    )
 
 beat1, beat2, beat3, beat4 = st.tabs([
     "1. Raw signal", "2. Detrend + gradient", "3. Ranked indications", "4. Corrupted survey",
 ])
 
 with beat1:
-    st.caption("The full-range raw field. The defect is invisible against ~45,000 nT background.")
-    r_mag = np.sqrt(raw["bx_nt"] ** 2 + raw["by_nt"] ** 2 + raw["bz_nt"] ** 2)
-    st.line_chart(pd.DataFrame({"chainage_m": raw["chainage_m"], "|B| (nT)": r_mag}).set_index("chainage_m"))
+    st.subheader("The raw field, full range")
+    st.caption(
+        "bx/by/bz per axis against the ~45,000 nT background. Dashed lines mark where the "
+        "true defects (orange) and interference sources (grey) actually are -- if the "
+        "anomaly were visible here, background removal wouldn't be the hard part of this "
+        "project."
+    )
+    st.altair_chart(chart_utils.raw_components_chart(raw), width="stretch")
+
+    if st.checkbox(
+        "Show |B| deviation from its own median, log scale",
+        key="beat1_log",
+        help="Proof the anomaly is genuinely there, just buried -- the log-scale deviation "
+             "view is where it stops being invisible.",
+    ):
+        st.altair_chart(chart_utils.deviation_log_chart(raw), width="stretch")
 
 with beat2:
+    st.subheader("Background removed")
     if features is None:
-        st.warning("No features computed for this scenario (it was refused at validation -- see tab 4).")
+        st.warning("No features computed for this scenario -- it was refused at validation. See tab 4.")
     else:
-        st.caption("Background removed: the residual and the along-track gradient. Defects AND interference sources both appear.")
-        cols = {"chainage_m": features["chainage_m"], "residual |r| (nT)": features["r_mag_nt"]}
-        if "g_mag_nt_per_m" in features.columns:
-            cols["gradient (nT/m)"] = features["g_mag_nt_per_m"]
-        st.line_chart(pd.DataFrame(cols).set_index("chainage_m"))
+        st.caption(
+            "Residual (and the along-track/vertical gradient, if a second sensor head is "
+            "present) after detrending. Both true defects AND true interference sources "
+            "appear now -- separating them is what Stage 3's model does."
+        )
+        st.altair_chart(chart_utils.residual_gradient_chart(features, raw), width="stretch")
 
 with beat3:
+    st.subheader("Ranked indications, on a dig budget")
     if indications is None or not len(indications):
         st.info("No indications for this scenario.")
     else:
@@ -118,6 +172,7 @@ with beat3:
         st.dataframe(dug[show_cols], width="stretch")
 
 with beat4:
+    st.subheader("What happens when the data itself is bad")
     if dq_failure is None:
         st.success("This scenario passed every DQ gate -- nothing to refuse.")
     else:

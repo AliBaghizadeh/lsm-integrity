@@ -756,6 +756,32 @@ which exist. Run it: `streamlit run app/demo_app.py` or `lsm serve`.
 demonstrates the habit of catching integration bugs with a headless test harness before
 they'd show up mid-demo, not after.
 
+**First real-use feedback from Ali, acted on same day.** After actually running it: Beat 1
+showed only one line (`|B|` magnitude — threw away axis information), no way to confirm the
+buried anomaly was genuinely there rather than just asserted, the app never explained what a
+"survey" even is, and it felt slow. Fixed:
+- `app/chart_utils.py` (new, Streamlit-free like `map_utils.py`/`demo_lib.py`) — Beat 1 now
+  plots bx/by/bz as three separate lines, with a log-scale "|B| deviation from its own
+  median" toggle (the literal answer to "I need log scale to see anomalies" — raw bx/by/bz
+  are signed and can't be log-scaled directly, but the absolute deviation can, and that's
+  the view where the anomaly stops being invisible). Both Beat 1 and Beat 2's charts now
+  overlay dashed vertical markers at the true defect/interference chainages (contiguous-run
+  midpoints, not one mark per row), so it's visually obvious whether the raw trace shows
+  anything there.
+- The slowness had a real, findable cause, not a vague "Streamlit is slow": the whole script
+  reruns on **every** widget interaction, and the app was reloading raw/features/indications
+  from disk AND, in live mode, re-running the **entire** validate→features→score pipeline on
+  every rerun — including totally unrelated ones, like moving the Beat 3 dig-budget control.
+  Fixed with `st.cache_data` on the demo-mode loaders and a `survey_id`-keyed cache in
+  `st.session_state` for live-mode results, so the pipeline now runs once per scenario per
+  session, not once per click. Pinned by a new test that asserts the cached result object is
+  the *same object* (not just equal) before and after an unrelated widget change — proof of
+  no recompute, not just proof of no crash.
+- Added an intro paragraph explaining what a "survey" and a "scenario" are, and per-beat
+  subheaders/captions explaining *why* each view matters, not just what it shows.
+- `tests/test_chart_utils.py` (5 tests) + a new `test_demo_app.py` caching-regression test.
+  176/176 tests total, ruff + mypy clean.
+
 ---
 
 ## Stage 5 — Classification and risk ranking  *(~1 day)*

@@ -14,6 +14,8 @@ from pathlib import Path
 
 from streamlit.testing.v1 import AppTest
 
+import demo_lib
+
 APP_PATH = str(Path(__file__).resolve().parents[1] / "app" / "demo_app.py")
 
 
@@ -47,6 +49,32 @@ def test_live_mode_survives_two_consecutive_reruns_on_different_scenarios():
 
     at.segmented_control(key="scenario_label").set_value("Clean survey B").run()
     assert not at.exception
+
+
+def test_live_mode_does_not_rerun_the_pipeline_for_an_unrelated_widget_change():
+    """Ali's original complaint: the app felt slow. Root cause -- Streamlit
+    reruns the whole script on ANY widget interaction, so without per-
+    survey_id caching, moving the dig-budget control in Beat 3 (which has
+    nothing to do with which scenario is scored) silently re-ran the full
+    live validate->features->score pipeline every time. Pin that it doesn't.
+    """
+    at = AppTest.from_file(APP_PATH, default_timeout=90)
+    at.run()
+    at.segmented_control(key="app_mode").set_value("live").run()
+    scenario_label = at.session_state["scenario_label"]
+    survey_id = next(
+        s["survey_id"] for s in demo_lib.demo_scenarios() if s["label"] == scenario_label
+    )
+    cached_before = dict(at.session_state["live_results"])
+    assert survey_id in cached_before
+
+    at.segmented_control(key="dig_budget").set_value("10").run()
+    assert not at.exception
+    cached_after = dict(at.session_state["live_results"])
+
+    assert set(cached_before) == set(cached_after)
+    # same object, not just equal content -- proves no recompute happened.
+    assert cached_before[survey_id] is cached_after[survey_id]
 
 
 def test_live_mode_refuses_the_corrupted_scenario_too():
