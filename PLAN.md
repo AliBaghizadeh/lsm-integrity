@@ -38,6 +38,7 @@ Use the cut lines.
 | 1.5 — Orchestration and backfill | Done |
 | 2 — Features, gradiometer | Done |
 | 2.5 — Data fidelity | Done, all 3 items |
+| 2.75 — EDA on the feature store | Done — see Stage 2.75 below |
 | 3 — Detection (MAD vs IsolationForest) | Built, **run for real at 5x scale — gate still does not pass** |
 | 4 — Severity (LightGBM CQR + conformal) | Built, **run for real at 5x scale — gate PASSES** |
 | 4.5 — Demo app | Not started |
@@ -69,23 +70,33 @@ pushed anywhere** (no remote configured).
    gate. **Bonus finding from the same re-run: Stage 4's severity gate now PASSES**
    (coverage 0.905 ∈ [0.87, 0.93], up from 0.727 on the 12-defect corpus) — the same extra
    data that sharpened Stage 3 also gave conformal calibration enough held-out points to hit
-   its target band. See [[lsm-stage3-anomaly-detection]] and [[lsm-stage4-severity]].
-2. **`README.md` — currently doesn't exist.** If this gets published to showcase
+   its target band.
+2. **EDA (Stage 2.75, done 2026-07-30) found a concrete, testable lead on Stage 3's
+   remaining gap, not yet acted on.** Per-feature separability shows the ~20-feature
+   amplitude block (that IsolationForest is fit on unweighted) is mediocre at defect-vs-
+   interference specifically (mostly PR-AUC < 0.55), while a small, different set of wide-
+   window shape features (`w25m_kurt` = 0.985, `w25m_zcr` = 0.786) does the actual
+   discriminating. That's a plausible mechanism for the interference let through at the
+   tight dig-budget cutoff. Untested next step: drop the two exact-duplicate features
+   (`r_mag_nt`/`r_mag_norm_nt_m3`, `peak_prominence_nt`/`peak_prominence_norm_nt_m3`) and/or
+   re-weight so `w25m_kurt` isn't drowned out, then re-run Stage 3 to see if the recall gap
+   closes. A modelling change, needs a decision before touching `anomaly.py`.
+3. **`README.md` — currently doesn't exist.** If this gets published to showcase
    production readiness, this is the first thing anyone sees on the repo homepage, and
    right now there isn't one. `PLAN.md` and `LSM_PROJECT.md` are internal planning
    documents, not a README.
-3. **`LICENSE` — currently doesn't exist.** Standard for a public repo; pick one before
+4. **`LICENSE` — currently doesn't exist.** Standard for a public repo; pick one before
    pushing.
-4. **Push to GitHub.** Repo is local-only. Needs a GitHub repo created and a remote added —
+5. **Push to GitHub.** Repo is local-only. Needs a GitHub repo created and a remote added —
    your call on timing, and I won't do this without you explicitly asking, same as any
    other publish-facing action.
-5. **Stage 4.5 (demo app)** blocks the rest of Stage 7 (`deploy.yml`, HF Spaces) — there's
+6. **Stage 4.5 (demo app)** blocks the rest of Stage 7 (`deploy.yml`, HF Spaces) — there's
    nothing to deploy until it exists.
-6. **A cloud-account decision for the rest of Stage 7.** S3 + GitHub OIDC are designed but
+7. **A cloud-account decision for the rest of Stage 7.** S3 + GitHub OIDC are designed but
    not built (no cloud account exists today, `storage.s3.enabled: false` throughout) —
    decide whether this demonstrator stays local-only (defensible on its own terms) or is
    worth standing up real infrastructure for.
-7. **Stages 5, 6, 8** — classification/risk ranking, a full scale rehearsal (the ~60-defect,
+8. **Stages 5, 6, 8** — classification/risk ranking, a full scale rehearsal (the ~60-defect,
    5-line corpus above is a step in that direction, not the Stage 6 rehearsal itself — both
    Stage 3 and 4's CIs are still wide enough to be worth narrowing further), and
    growth/remaining-life/monitoring. Not started.
@@ -356,6 +367,76 @@ still hold up against it.
 
 **Answers:** "how realistic is your synthetic data, and where does it flatter you?" — which
 is the question this whole section exists to have a worked answer for.
+
+---
+
+## Stage 2.75 — EDA on the feature store  *(built 2026-07-30)*
+
+Not a pipeline stage — a one-off, reproducible analysis (`scripts/eda_features.py`, no
+`feature_version`, no CLI subcommand) run before trusting the 48-feature set Stage 3 models
+on. Prompted directly by "do we really have EDA, and is it industry-acceptable?" — the
+answer before this was no: two ad hoc dev plotting scripts and 14 DQ gates that check known
+invariants, nothing that explores the feature space itself. This is that missing piece:
+class balance, per-feature distributions, correlation/redundancy, and per-feature
+separability, over the real 5-line/15-survey corpus (58,800 clean rows).
+
+**Class balance:** defect 3.67%, interference 4.81%, background 91.52%.
+
+**Missingness is not uniform across classes, and it's informative, not a bug:** the five
+shape features (`fwhm_m`, `peak_asymmetry`, `decay_exponent`, `peak_prominence_nt`,
+`peak_distance_m`) are NaN on 91.3% of background rows (no nearby peak to describe), 17–17.7%
+of interference rows, and only 0.5% of defect rows. `anomaly.py` fills these with 0.0 before
+scoring — which means "shape feature present vs zero-filled" is itself a real, physically
+meaningful signal (a peak exists nearby or it doesn't), not leakage, but worth stating
+explicitly since a model doesn't know the difference between "genuinely zero" and "filled".
+
+**Redundancy: confirmed and worse than assumed.** 35 feature pairs (of 1,128 possible) have
+`|r| ≥ 0.9`. Two pairs are **exact duplicates under the current config** (`r = 1.000`):
+`r_mag_nt` / `r_mag_norm_nt_m3`, and `peak_prominence_nt` / `peak_prominence_norm_nt_m3` —
+because standoff-normalisation divides by `depth_m³`, and `depth_m` is a single global
+config value, not a per-row measurement, so it's a constant scalar multiply, not new
+information. The rest of the redundant block is the window-statistic family
+(`w2m`/`w5m`/`w10m`/`w25m` × `mean`/`std`/`max`/`ptp`/`energy`) — expected, since they're all
+computed from the same underlying residual at overlapping window lengths, but the
+correlation heatmap (`docs/img/eda_feature_correlation.png`) makes the size of that block
+visible for the first time: roughly 20–24 of the 48 features move together as one cluster.
+
+**Separability (per-feature PR-AUC, diagnostic only — no CV, no model, just "does this one
+feature carry signal") is the finding that matters most for Stage 3's open question.** The
+big correlated amplitude block (`w5m_mean_nt` 0.968, `w5m_energy_nt2` 0.959, `w5m_std_nt`
+0.930, …) separates defect from background almost perfectly on its own — but those same
+features only separate **interference** from background at 0.72–0.80, because interference
+genuinely produces amplitude too (by design — it's the false-positive trap). Defect vs
+background is not the hard problem; **defect vs interference is**, and the amplitude block
+is mediocre at it (most under 0.55). The features that actually separate defect from
+interference are a small, different set: `w25m_kurt` (**0.985**), `w25m_zcr` (0.786),
+`w10m_kurt` (0.680), `g_mag_nt_per_m` (0.638) — wide-window shape descriptors, exactly the
+"width/decay-shape separates interference far better than amplitude alone" physical claim
+this project has stated since Stage 0, now measured rather than asserted
+(`docs/img/eda_bottom_separating_features.png` shows `w25m_zcr`'s clean three-way spread).
+
+**This upgrades a hypothesis in `interview-drills.md` from a guess to an evidence-backed
+mechanism.** That doc previously speculated IsolationForest's loss to MAD "might" be because
+48 unweighted, near-duplicate features dilute the forest. EDA now shows concretely *which*
+features are redundant (the ~20-feature amplitude block, plus two literal duplicates) and
+*which* 1–3 features actually carry the defect-vs-interference signal (`w25m_kurt` above
+all). An isolation forest splitting roughly uniformly across 48 dimensions, ~20 of which are
+mutually correlated and redundant, has much more opportunity to isolate on the dominant
+amplitude cluster than on the one or two shape features that would correctly reject
+interference — consistent with Stage 3's own finding that IsolationForest's recall loss
+shows up specifically at the tight dig-budget cutoff via extra interference let through.
+
+**Not yet done, and the obvious next step if this is worth pursuing:** actually test it —
+drop the two exact duplicates and/or re-weight/select features so `w25m_kurt` and its shape
+neighbours aren't drowned out, then re-run Stage 3 to see whether the recall gap closes. That
+is a modelling change, not an EDA one, and needs a decision before touching `anomaly.py`.
+
+**Outputs:** `scripts/eda_features.py` (reproducible), `docs/img/eda_feature_correlation.png`,
+`docs/img/eda_top_separating_features.png`, `docs/img/eda_bottom_separating_features.png`,
+`docs/img/eda_feature_stats.csv`, `docs/img/eda_separability.csv`.
+
+**Answers:** "do you actually do EDA, or just validation gates and modelling?" — and gives
+Stage 3's open mechanism question an evidenced answer instead of a shrug.
 
 ---
 

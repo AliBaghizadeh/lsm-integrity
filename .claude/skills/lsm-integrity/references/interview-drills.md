@@ -112,8 +112,22 @@ until it passed; I reported the negative result instead, because that's what the
 is consistently *better* than MAD's (0.43 vs 0.35 on the second run), and the model's own
 interference-attribution check doesn't cleanly explain the gap either. The loss is
 localized to the tight dig-budget cutoff, which reads as a feature-interaction / calibration
-question, not a "wrong algorithm" or "not enough data" one — and I say that as an open
-question, not a hedge.
+question, not a "wrong algorithm" or "not enough data" one.
+
+I went further and ran a real EDA over the 48-feature set (Stage 2.75) to stop guessing at
+that mechanism. It found the model is fit on ~20 mutually-correlated amplitude features
+(the window-statistic family, plus two features that are *exact* duplicates under the
+current config — normalising by `depth_m` is a constant scalar multiply when `depth_m` isn't
+per-row) that separate defect from background almost perfectly (PR-AUC up to 0.97) but are
+mediocre at defect-vs-interference specifically (mostly under 0.55), because interference
+genuinely produces amplitude too by design. The features that actually separate defect from
+interference are a different, smaller set — wide-window shape descriptors like `w25m_kurt`
+(PR-AUC 0.985). An isolation forest splitting roughly uniformly across 48 dimensions, a
+third of which are redundant amplitude features, has more chances to isolate on that
+dominant cluster than on the one or two shape features that would correctly reject
+interference. That's a specific, evidenced mechanism now, not a hedge — and a concrete next
+experiment (drop the duplicates, re-weight toward the shape features, re-run) rather than an
+open question with no next step.
 
 **"Why two stages?"** Because the unit of decision is an **indication**, not a 0.5 m
 sample. Row-level scoring, then peak clustering into indications, then per-indication
