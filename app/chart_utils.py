@@ -15,6 +15,15 @@ import altair as alt
 import numpy as np
 import pandas as pd
 
+# These are single-survey demo datasets (thousands of rows, not millions) --
+# Altair's default 5000-row cap (aimed at genuinely huge datasets) was
+# silently rejecting the 3-line raw components chart (4000 rows x 3 axes =
+# 12,000 melted rows), which rendered as an EMPTY chart with only the truth-
+# marker rule layer visible, not an error. Disabling it here is safe at this
+# bounded scale; a real "millions of rows" dataset (Stage 6) would need
+# server-side aggregation before plotting, not this.
+alt.data_transformers.disable_max_rows()
+
 TRUE_DEFECT_COLOR = "#dc5028"
 TRUE_INTERFERENCE_COLOR = "#828282"
 
@@ -78,28 +87,31 @@ def raw_components_chart(raw: pd.DataFrame) -> alt.Chart:
             color=alt.Color("axis:N", legend=alt.Legend(title=None)),
         )
     )
-    return alt.layer(lines, truth_rule_layer(raw)).properties(height=320)
+    return alt.layer(lines, truth_rule_layer(raw)).properties(height=320).interactive()
 
 
-def deviation_log_chart(raw: pd.DataFrame) -> alt.Chart:
-    """|r_mag - median(r_mag)| on a log y-axis. The raw field is signed and
-    centred on a huge background, so a literal log-scale of bx/by/bz doesn't
-    mean anything -- but the ABSOLUTE deviation from the survey's own median
-    does, and on a log axis it's the one view where the anomaly stops being
-    invisible. This is the direct answer to "I need log scale to see
-    anomalies"."""
+def deviation_chart(raw: pd.DataFrame, log_scale: bool = True) -> alt.Chart:
+    """|r_mag - median(r_mag)| vs chainage, switchable between a log and a
+    linear y-axis. The raw field is signed and centred on a huge background,
+    so a literal log-scale of bx/by/bz doesn't mean anything -- but the
+    ABSOLUTE deviation from the survey's own median does, and on a log axis
+    it's the one view where the anomaly stops being invisible. This is the
+    direct answer to "I need log scale to see anomalies" -- `log_scale` is a
+    real switch, not a one-way toggle to show/hide the chart."""
     r_mag = np.sqrt(raw["bx_nt"] ** 2 + raw["by_nt"] ** 2 + raw["bz_nt"] ** 2)
     dev = (r_mag - r_mag.median()).abs().clip(lower=1e-3)
     df = pd.DataFrame({"chainage_m": raw["chainage_m"], "deviation_nT": dev})
+    scale = alt.Scale(type="log") if log_scale else alt.Scale(type="linear")
+    y_title = "|deviation| from median |B| (nT" + (", log scale)" if log_scale else ")")
     line = (
         alt.Chart(df)
         .mark_line(color="#2878dc")
         .encode(
             x=alt.X("chainage_m:Q", title="chainage (m)"),
-            y=alt.Y("deviation_nT:Q", title="|deviation| from median |B| (nT, log scale)", scale=alt.Scale(type="log")),
+            y=alt.Y("deviation_nT:Q", title=y_title, scale=scale),
         )
     )
-    return alt.layer(line, truth_rule_layer(raw)).properties(height=320)
+    return alt.layer(line, truth_rule_layer(raw)).properties(height=320).interactive()
 
 
 def residual_gradient_chart(features: pd.DataFrame, raw: pd.DataFrame) -> alt.Chart:
@@ -122,4 +134,4 @@ def residual_gradient_chart(features: pd.DataFrame, raw: pd.DataFrame) -> alt.Ch
         combined = alt.layer(residual, gradient).resolve_scale(y="independent")
     else:
         combined = residual
-    return alt.layer(combined, truth_rule_layer(raw)).properties(height=320)
+    return alt.layer(combined, truth_rule_layer(raw)).properties(height=320).interactive()

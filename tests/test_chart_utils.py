@@ -46,9 +46,25 @@ def test_raw_components_chart_builds_without_error():
     assert chart is not None
 
 
-def test_deviation_log_chart_builds_without_error():
-    chart = chart_utils.deviation_log_chart(_toy_raw())
-    assert chart is not None
+def test_raw_components_chart_does_not_hit_altairs_row_limit_on_a_real_size_survey():
+    """Regression: a 4000-row survey melted into 3 axes is 12,000 rows,
+    over Altair's default 5000-row cap -- previously an EMPTY chart (only
+    the truth-marker layer rendered), not a visible error."""
+    raw = _toy_raw(n=4000)
+    chart = chart_utils.raw_components_chart(raw)
+    spec = chart.to_dict()  # raises MaxRowsError if the row cap isn't disabled
+    assert spec is not None
+
+
+def test_deviation_chart_switches_between_log_and_linear_scale():
+    log_chart = chart_utils.deviation_chart(_toy_raw(), log_scale=True)
+    linear_chart = chart_utils.deviation_chart(_toy_raw(), log_scale=False)
+    log_spec = log_chart.to_dict()
+    linear_spec = linear_chart.to_dict()
+    log_scale_type = log_spec["layer"][0]["encoding"]["y"]["scale"]["type"]
+    linear_scale_type = linear_spec["layer"][0]["encoding"]["y"]["scale"]["type"]
+    assert log_scale_type == "log"
+    assert linear_scale_type == "linear"
 
 
 def test_residual_gradient_chart_with_and_without_gradient_column():

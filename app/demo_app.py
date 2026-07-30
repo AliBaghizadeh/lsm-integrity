@@ -72,12 +72,20 @@ with top[0]:
     mode = st.segmented_control(
         "Mode", ["demo", "live"], default=os.environ.get("APP_MODE", "demo"), key="app_mode",
         help="demo: precomputed results, zero compute. live: re-runs the real pipeline now, ~1s.",
+        required=True,  # a segmented_control click can otherwise DESELECT and return None
     )
 with top[1]:
     labels = [s["label"] for s in scenarios]
-    selected_label = st.segmented_control("Scenario", labels, default=labels[0], key="scenario_label")
+    selected_label = st.segmented_control(
+        "Scenario", labels, default=labels[0], key="scenario_label", required=True,
+    )
 
-scenario = next(s for s in scenarios if s["label"] == selected_label)
+# Defensive even with required=True: st.segmented_control CAN return None if
+# clicked on its already-selected option (single-select "toggle off" is the
+# default widget behaviour) -- this crashed with StopIteration on `next(...)`
+# before `required=True` was added. Fall back to the first scenario rather
+# than ever hard-crash the whole app on a widget edge case.
+scenario = next((s for s in scenarios if s["label"] == selected_label), scenarios[0])
 survey_id = scenario["survey_id"]
 st.caption(f"Scenario: **{scenario['label']}** -- survey_id `{survey_id}`, mode `{mode}`")
 
@@ -125,20 +133,28 @@ beat1, beat2, beat3, beat4 = st.tabs([
 with beat1:
     st.subheader("The raw field, full range")
     st.caption(
-        "bx/by/bz per axis against the ~45,000 nT background. Dashed lines mark where the "
-        "true defects (orange) and interference sources (grey) actually are -- if the "
-        "anomaly were visible here, background removal wouldn't be the hard part of this "
-        "project."
+        "bx/by/bz per axis against the ~45,000 nT background. Dashed orange lines mark true "
+        "defects, dashed grey lines mark true interference sources -- if the anomaly were "
+        "visible here, background removal wouldn't be the hard part of this project. "
+        "Scroll/drag to zoom and pan."
     )
     st.altair_chart(chart_utils.raw_components_chart(raw), width="stretch")
 
-    if st.checkbox(
-        "Show |B| deviation from its own median, log scale",
-        key="beat1_log",
-        help="Proof the anomaly is genuinely there, just buried -- the log-scale deviation "
-             "view is where it stops being invisible.",
-    ):
-        st.altair_chart(chart_utils.deviation_log_chart(raw), width="stretch")
+    st.markdown("**|B| deviation from its own median** -- the same signal, one transform closer to visible")
+    scale_choice = st.radio(
+        "Y-axis", ["Log", "Linear"], index=0, horizontal=True, key="beat1_scale",
+        help="Log scale is the direct answer to 'I need log scale to see anomalies' -- raw "
+             "bx/by/bz are signed and can't be log-scaled directly, but this deviation can.",
+    )
+    st.caption(
+        "Some peaks here won't line up with a dashed marker -- expected, not a bug: this is "
+        "the RAW, un-detrended view, so slow background drift (not a discrete source, often "
+        "worst near the survey's own start/end) can also produce a large deviation from the "
+        "median. Beat 2's detrended residual is the fair comparison."
+    )
+    st.altair_chart(
+        chart_utils.deviation_chart(raw, log_scale=(scale_choice == "Log")), width="stretch"
+    )
 
 with beat2:
     st.subheader("Background removed")
@@ -158,8 +174,10 @@ with beat3:
         st.info("No indications for this scenario.")
     else:
         length_km = max(float(raw["chainage_m"].max()) / 1000.0, 0.001)
-        budget_choice = st.segmented_control("Dig budget (per km)", ["3", "5", "10"], default="5", key="dig_budget")
-        budget_n = max(1, round(int(budget_choice) * length_km))
+        budget_choice = st.segmented_control(
+            "Dig budget (per km)", ["3", "5", "10"], default="5", key="dig_budget", required=True,
+        )
+        budget_n = max(1, round(int(budget_choice or 5) * length_km))
         ranked = indications.sort_values("anomaly_score", ascending=False)
         dug = ranked.head(budget_n)
 

@@ -206,6 +206,22 @@ front end.
   session's own *consecutive reruns* onto different worker threads from its internal thread
   pool, which trips sqlite3's same-thread guard even though only one rerun ever executes at
   a time. A false-positive guard, not a real one — but it still raises unless disabled.
+- **Any charting library with a "big data" safety cap (Altair/Vega-Lite's default 5000-row
+  limit is the common one) fails SILENTLY on real but modest data, not loudly.** Melting a
+  few thousand rows into several series (e.g. 3 axes of a sensor reading) multiplies the row
+  count past the cap fast, and the failure mode is an empty or partially-rendered chart, not
+  a visible error — reproduce the exact chart-building call directly (`chart.to_dict()`) when
+  a chart looks wrong before assuming the data or the logic is broken. If the true row count
+  is bounded and modest (thousands, not millions), it's legitimate to disable the cap
+  rather than pre-aggregate; say explicitly in code why the scale is bounded, so a future
+  genuinely-huge dataset doesn't inherit the same "just disable the check" fix.
+- **A segmented/toggle-style single-select widget (`st.segmented_control` and equivalents)
+  can return `None` when clicked on its own already-selected option** (default "toggle off"
+  behaviour) — code that assumes the return value always matches one of the offered options
+  (`next(x for x in options if x == value)`) will crash on exactly that click. Prevent it at
+  the widget (a `required=True`-style flag, if the widget offers one) AND defend in the
+  code that consumes the value (`next((...), fallback)`), since a widget's deselection
+  behaviour is framework/version detail, not something to rely on staying fixed.
 - **Headless verification means `streamlit.testing.v1.AppTest`, not a hand-written mirror
   script and not just unit-testing the functions the app calls.** `AppTest` runs the actual
   script through Streamlit's real `ScriptRunner` and catches exactly the class of bug pure

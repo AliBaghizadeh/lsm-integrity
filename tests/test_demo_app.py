@@ -36,6 +36,31 @@ def test_demo_mode_corrupted_scenario_shows_the_refusal():
     assert any("Refused to score" in e.value for e in at.error)
 
 
+def test_scenario_widget_returning_none_does_not_crash_the_app():
+    """Ali's actual crash: `st.segmented_control` returns None if clicked on
+    its own already-selected option (the default single-select "toggle off"
+    behaviour), and the original code did `next(s for s in scenarios if
+    s["label"] == selected_label)` with no fallback -- StopIteration,
+    unhandled, killed the whole app. Fixed with `required=True` on the widget
+    AND a defensive `next(..., scenarios[0])` fallback; this test forces the
+    None case directly (AppTest.set_value doesn't simulate the real
+    click-to-deselect gesture) to prove the fallback path itself works.
+    """
+    at = AppTest.from_file(APP_PATH, default_timeout=60)
+    at.run()
+    at.session_state["scenario_label"] = None
+    at.run()
+    assert not at.exception
+
+
+def test_beat1_deviation_scale_toggle_switches_without_error():
+    at = AppTest.from_file(APP_PATH, default_timeout=60)
+    at.run()
+    assert at.radio(key="beat1_scale").value == "Log"
+    at.radio(key="beat1_scale").set_value("Linear").run()
+    assert not at.exception
+
+
 def test_live_mode_survives_two_consecutive_reruns_on_different_scenarios():
     """The exact sequence that broke without check_same_thread=False: switch
     into live mode, run a clean scenario, then rerun on a DIFFERENT scenario
