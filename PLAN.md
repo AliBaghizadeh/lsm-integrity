@@ -78,12 +78,9 @@ pushed anywhere** (no remote configured).
      across the two re-runs, both inside [0.87, 0.93], up from 0.727 on the 12-defect
      corpus) — the same extra data that sharpened Stage 3 gave conformal calibration enough
      held-out points to hit its target band.
-2. **`README.md` — currently doesn't exist.** If this gets published to showcase
-   production readiness, this is the first thing anyone sees on the repo homepage, and
-   right now there isn't one. `PLAN.md` and `LSM_PROJECT.md` are internal planning
-   documents, not a README.
-3. **`LICENSE` — currently doesn't exist.** Standard for a public repo; pick one before
-   pushing.
+2. **`README.md` — done (2026-07-30).** Quickstart, the honest Stage 3/4 result summary,
+   repo layout, testing instructions.
+3. **`LICENSE` — done (2026-07-30).** MIT.
 4. **Push to GitHub.** Repo is local-only. Needs a GitHub repo created and a remote added —
    your call on timing, and I won't do this without you explicitly asking, same as any
    other publish-facing action.
