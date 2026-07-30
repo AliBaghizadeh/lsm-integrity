@@ -169,6 +169,8 @@ def _run_grouped_cv(
             contamination=cfg.base.model.anomaly["contamination"],
             n_estimators=cfg.base.model.anomaly["n_estimators"],
             seed=seed,
+            emphasize_features=cfg.base.model.anomaly.get("emphasize_features"),
+            emphasis_repeats=cfg.base.model.anomaly.get("emphasis_repeats", 1),
         ).fit(train)
 
         mad_thresholds.append(calibrated_threshold(mad.score(train), cfg.base.model.anomaly["contamination"]))
@@ -594,6 +596,8 @@ def _log_and_persist(
             contamination=cfg.base.model.anomaly["contamination"],
             n_estimators=cfg.base.model.anomaly["n_estimators"],
             seed=cfg.seed,
+            emphasize_features=cfg.base.model.anomaly.get("emphasize_features"),
+            emphasis_repeats=cfg.base.model.anomaly.get("emphasis_repeats", 1),
         ).fit(corpus)
 
         model_dir = Path(cfg.env.storage.model_dir)

@@ -99,7 +99,6 @@ class FeaturesConfig(BaseModel):
     detrend: DetrendConfig
     windows_m: list[float]
     peak: PeakConfig = PeakConfig()
-    standoff_normalise: bool
     edge_policy: Literal["flag", "drop"]
 
 

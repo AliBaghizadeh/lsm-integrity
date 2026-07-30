@@ -130,7 +130,7 @@ def test_detrend_removes_any_polynomial_of_degree_three(coefs):
     fcfg = FeaturesConfig(
         version=1,
         detrend=DetrendConfig(method="robust_poly", degree=3, window_m=0.0),
-        windows_m=[5.0], peak=PeakConfig(), standoff_normalise=False, edge_policy="flag",
+        windows_m=[5.0], peak=PeakConfig(), edge_policy="flag",
     )
     s = np.arange(400) * 0.5
     y = np.polyval(coefs, (s - s.mean()) / max(1.0, s.std()))
@@ -381,7 +381,7 @@ def test_feature_version_bump_invalidates_the_cache_and_isolates_the_store(cfg, 
         make_survey(), ctx, v1, tmp_path, "same_content", cfg.config_sha256
     )
     v2 = v1.model_copy(deep=True)
-    v2.version = 2
+    v2.version = v1.version + 1
     outcome_v2, dir_v2 = compute_and_store(
         make_survey(), ctx, v2, tmp_path, "same_content", cfg.config_sha256
     )
@@ -389,7 +389,7 @@ def test_feature_version_bump_invalidates_the_cache_and_isolates_the_store(cfg, 
     assert outcome_v1 == "computed" and outcome_v2 == "computed"
     assert dir_v1 != dir_v2, "each feature_version gets its own directory"
     assert dir_v1.exists() and dir_v2.exists(), "a bump must not overwrite the old features"
-    assert "fv=1" in str(dir_v1) and "fv=2" in str(dir_v2)
+    assert f"fv={v1.version}" in str(dir_v1) and f"fv={v2.version}" in str(dir_v2)
 
 
 def test_feature_store_path_carries_the_version(cfg, tmp_path):

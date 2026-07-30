@@ -71,16 +71,18 @@ pushed anywhere** (no remote configured).
    (coverage 0.905 ∈ [0.87, 0.93], up from 0.727 on the 12-defect corpus) — the same extra
    data that sharpened Stage 3 also gave conformal calibration enough held-out points to hit
    its target band.
-2. **EDA (Stage 2.75, done 2026-07-30) found a concrete, testable lead on Stage 3's
-   remaining gap, not yet acted on.** Per-feature separability shows the ~20-feature
-   amplitude block (that IsolationForest is fit on unweighted) is mediocre at defect-vs-
-   interference specifically (mostly PR-AUC < 0.55), while a small, different set of wide-
-   window shape features (`w25m_kurt` = 0.985, `w25m_zcr` = 0.786) does the actual
-   discriminating. That's a plausible mechanism for the interference let through at the
-   tight dig-budget cutoff. Untested next step: drop the two exact-duplicate features
-   (`r_mag_nt`/`r_mag_norm_nt_m3`, `peak_prominence_nt`/`peak_prominence_norm_nt_m3`) and/or
-   re-weight so `w25m_kurt` isn't drowned out, then re-run Stage 3 to see if the recall gap
-   closes. A modelling change, needs a decision before touching `anomaly.py`.
+2. **EDA (Stage 2.75) found a concrete lead on Stage 3's remaining gap, now implemented,
+   not yet run for real.** Per-feature separability shows the ~20-feature amplitude block
+   (that IsolationForest is fit on unweighted) is mediocre at defect-vs-interference
+   specifically (mostly PR-AUC < 0.55), while a small, different set of wide-window shape
+   features (`w25m_kurt` = 0.985, `w25m_zcr` = 0.786) does the actual discriminating — a
+   plausible mechanism for the interference let through at the tight dig-budget cutoff.
+   Implemented 2026-07-30: the two exact-duplicate features are gone (`feature_version`
+   1 → 2), and `IsolationForestAnomalyModel` gained a config-driven `emphasize_features`/
+   `emphasis_repeats` knob that raises `w25m_kurt`/`w25m_zcr`/`w10m_kurt`'s selection
+   probability in the forest without touching the bundle's `feature_cols` contract. **Needs
+   a real `lsm train` run on the 5-line corpus to see if the recall gap actually closes** —
+   that's the untested part.
 3. **`README.md` — currently doesn't exist.** If this gets published to showcase
    production readiness, this is the first thing anyone sees on the repo homepage, and
    right now there isn't one. `PLAN.md` and `LSM_PROJECT.md` are internal planning
@@ -390,12 +392,16 @@ scoring — which means "shape feature present vs zero-filled" is itself a real,
 meaningful signal (a peak exists nearby or it doesn't), not leakage, but worth stating
 explicitly since a model doesn't know the difference between "genuinely zero" and "filled".
 
-**Redundancy: confirmed and worse than assumed.** 35 feature pairs (of 1,128 possible) have
-`|r| ≥ 0.9`. Two pairs are **exact duplicates under the current config** (`r = 1.000`):
+**Redundancy: confirmed and worse than assumed.** 35 feature pairs (of 1,128 possible) had
+`|r| ≥ 0.9`. Two pairs were **exact duplicates under the current config** (`r = 1.000`):
 `r_mag_nt` / `r_mag_norm_nt_m3`, and `peak_prominence_nt` / `peak_prominence_norm_nt_m3` —
 because standoff-normalisation divides by `depth_m³`, and `depth_m` is a single global
 config value, not a per-row measurement, so it's a constant scalar multiply, not new
-information. The rest of the redundant block is the window-statistic family
+information. **Acted on, not just noted:** `feature_columns()` no longer includes them, and
+`compute_survey_features()` no longer computes them at all (`feature_version` 1 → 2,
+regenerated the real feature store — 46 features now, not 48; redundant pairs ≥0.9 dropped
+35 → 27). Reintroduce them, with another version bump, once a future stage makes stand-off a
+genuine per-row measurement. The rest of the redundant block is the window-statistic family
 (`w2m`/`w5m`/`w10m`/`w25m` × `mean`/`std`/`max`/`ptp`/`energy`) — expected, since they're all
 computed from the same underlying residual at overlapping window lengths, but the
 correlation heatmap (`docs/img/eda_feature_correlation.png`) makes the size of that block
@@ -426,10 +432,21 @@ amplitude cluster than on the one or two shape features that would correctly rej
 interference — consistent with Stage 3's own finding that IsolationForest's recall loss
 shows up specifically at the tight dig-budget cutoff via extra interference let through.
 
-**Not yet done, and the obvious next step if this is worth pursuing:** actually test it —
-drop the two exact duplicates and/or re-weight/select features so `w25m_kurt` and its shape
-neighbours aren't drowned out, then re-run Stage 3 to see whether the recall gap closes. That
-is a modelling change, not an EDA one, and needs a decision before touching `anomaly.py`.
+**Implemented 2026-07-30, same day, not yet run for real.** Two changes, both config-
+reversible, neither touching what MAD or the severity model see:
+1. The two exact duplicates dropped from the model entirely (`feature_version` 1 → 2, above).
+2. `IsolationForestAnomalyModel` gained `emphasize_features` / `emphasis_repeats`
+   (`models/anomaly.py`): sklearn's IsolationForest picks a feature *uniformly at random* at
+   every split, so repeating `w25m_kurt`/`w25m_zcr`/`w10m_kurt` in the fitted/scored matrix
+   (`config/base.yaml`: `emphasis_repeats: 5`) raises their selection probability without
+   changing what they mean or touching the bundle-pinned `feature_cols` contract. Set
+   `emphasis_repeats: 1` (or `emphasize_features: []`) to fall back to the original,
+   unweighted behaviour — this is a knob, not a rewrite. New unit tests pin the matrix-
+   widening behaviour, the no-op-at-repeats=1 case, and a loud `ValueError` on a config typo
+   naming a column outside `feature_cols`.
+
+**Needs a real `lsm train` re-run to know if it actually closes the recall gap** — that's
+the test this was built for, not yet executed.
 
 **Outputs:** `scripts/eda_features.py` (reproducible), `docs/img/eda_feature_correlation.png`,
 `docs/img/eda_top_separating_features.png`, `docs/img/eda_bottom_separating_features.png`,

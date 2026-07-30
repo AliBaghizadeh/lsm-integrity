@@ -432,6 +432,17 @@ def feature_columns(cfg: FeaturesConfig, with_gradiometer: bool) -> list[str]:
     columns a DataFrame happened to end up with -- is what makes that check
     meaningful, and it also fixes column ORDER, which matters the moment anything
     downstream indexes by position.
+
+    `r_mag_norm_nt_m3` / `peak_prominence_norm_nt_m3` (stand-off-normalised
+    amplitude, feature_version 1) were removed entirely in feature_version 2:
+    EDA (Stage 2.75, see PLAN.md) measured them as EXACT duplicates (r=1.000)
+    of `r_mag_nt` / `peak_prominence_nt`, because `depth_m` is one global
+    config value, not measured per row, so dividing by `depth_m**3` is a
+    constant scalar multiply, not new information -- two dead dimensions in a
+    model that already has too many redundant ones. Reintroduce them (with
+    another feature_version bump) once a future stage makes stand-off a
+    genuine per-row measurement and they diverge from their un-normalised
+    counterparts again.
     """
     cols = [
         "rx_nt", "ry_nt", "rz_nt", "r_mag_nt",
@@ -446,8 +457,6 @@ def feature_columns(cfg: FeaturesConfig, with_gradiometer: bool) -> list[str]:
                  f"{p}_kurt", f"{p}_zcr", f"{p}_energy_nt2"]
     cols += ["fwhm_m", "peak_asymmetry", "decay_exponent",
              "peak_prominence_nt", "peak_distance_m"]
-    if cfg.standoff_normalise:
-        cols += ["r_mag_norm_nt_m3", "peak_prominence_norm_nt_m3"]
     return cols
 
 
@@ -533,18 +542,15 @@ def compute_survey_features(
 
     out |= _peak_shape(r_mag, step_m, cfg)
 
-    # -- stand-off normalisation --------------------------------------------
-    if cfg.standoff_normalise:
-        # 1/r^3 falloff: an anomaly of the same physical size measured from twice
-        # the stand-off reads an eighth as strong. Multiplying by h^3 puts surveys
-        # flown at different heights on one amplitude scale.
-        #
-        # Honest caveat: within a single survey the stand-off is constant, so this
-        # is a constant rescale and buys a tree model exactly nothing. It earns its
-        # place across surveys and across lines, which is Stage 6.
-        h3 = float(ctx.standoff_m) ** 3
-        out["r_mag_norm_nt_m3"] = r_mag * h3
-        out["peak_prominence_norm_nt_m3"] = out["peak_prominence_nt"] * h3
+    # Stand-off normalisation (1/r^3: multiplying by depth_m^3 puts surveys flown
+    # at different heights on one amplitude scale) was removed here (feature_version
+    # 1 -> 2): EDA (Stage 2.75, PLAN.md) measured r_mag_norm_nt_m3 / peak_prominence_
+    # norm_nt_m3 as EXACT duplicates (r=1.000) of r_mag_nt / peak_prominence_nt,
+    # because depth_m is one global config value, not measured per row -- a constant
+    # scalar multiply within any survey, confirming what this code already suspected
+    # ("buys a tree model exactly nothing"). It earns its place once stand-off is a
+    # genuine per-row measurement across surveys/lines, which is Stage 6 -- reintroduce
+    # it there, not before.
 
     # -- assemble, flag edges, cast to storage precision ---------------------
     feat = pd.DataFrame(out, index=df.index)

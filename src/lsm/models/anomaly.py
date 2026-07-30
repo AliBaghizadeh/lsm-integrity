@@ -66,10 +66,37 @@ class IsolationForestAnomalyModel:
     with no peak nearby -- IsolationForest has no native missing-value support,
     so they are filled with 0.0 ("no local peak structure"), fit and applied
     identically at score time.
+
+    `emphasize_features` / `emphasis_repeats`: sklearn's IsolationForest picks a
+    feature UNIFORMLY at random at every split. EDA (Stage 2.75, PLAN.md) found
+    that ~20 of `feature_cols` are a mutually-correlated amplitude block that
+    separates defect from background almost perfectly but is mediocre at
+    defect-vs-interference specifically (PR-AUC < 0.55), while a small,
+    different set of wide-window shape features (`w25m_kurt` PR-AUC 0.985,
+    `w25m_zcr` 0.786) does the actual defect-vs-interference discriminating.
+    With one column per feature, an isolation path is far more likely to hit
+    the dominant amplitude block than one of those two or three columns.
+    Repeating the named columns `emphasis_repeats` times in the fitted/scored
+    matrix raises their selection probability without changing what they mean
+    or touching `feature_cols` (still the bundle-pinned, feature-store-facing
+    contract) -- a no-op when `emphasis_repeats <= 1` or the list is empty.
     """
 
-    def __init__(self, feature_cols: list[str], contamination: float, n_estimators: int, seed: int):
+    def __init__(
+        self,
+        feature_cols: list[str],
+        contamination: float,
+        n_estimators: int,
+        seed: int,
+        emphasize_features: list[str] | None = None,
+        emphasis_repeats: int = 1,
+    ):
         self.feature_cols = feature_cols
+        self.emphasize_features = list(emphasize_features or [])
+        self.emphasis_repeats = emphasis_repeats
+        unknown = set(self.emphasize_features) - set(feature_cols)
+        if unknown:
+            raise ValueError(f"emphasize_features not in feature_cols: {sorted(unknown)}")
         self.model = IsolationForest(
             contamination=contamination,
             n_estimators=n_estimators,
@@ -78,7 +105,12 @@ class IsolationForestAnomalyModel:
         )
 
     def _matrix(self, X: pd.DataFrame) -> np.ndarray:
-        return X[self.feature_cols].fillna(0.0).to_numpy(dtype=np.float64)
+        base = X[self.feature_cols].fillna(0.0).to_numpy(dtype=np.float64)
+        extra_copies = self.emphasis_repeats - 1
+        if not self.emphasize_features or extra_copies <= 0:
+            return base
+        emphasis = X[self.emphasize_features].fillna(0.0).to_numpy(dtype=np.float64)
+        return np.hstack([base, np.tile(emphasis, (1, extra_copies))])
 
     def fit(self, X: pd.DataFrame) -> "IsolationForestAnomalyModel":
         self.model.fit(self._matrix(X))

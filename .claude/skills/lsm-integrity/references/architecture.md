@@ -84,11 +84,10 @@ validate:
   field_range_nT: [-80000.0, 80000.0]
 
 features:
-  version: 1             # feature_version: bump on ANY behaviour change in features.py
+  version: 2             # feature_version: bump on ANY behaviour change in features.py
   detrend: {method: robust_poly, degree: 3, window_m: 40.0}   # poly, then rolling-median high-pass
   windows_m: [2.0, 5.0, 10.0, 25.0]
   peak: {prominence_mad: 4.0, flank_fit_span: [0.5, 3.0], assign_radius_fwhm: 2.0}
-  standoff_normalise: true
   edge_policy: flag      # flag|drop -- see data-contract.md §5
 
 model:

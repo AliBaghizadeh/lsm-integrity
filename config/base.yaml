@@ -104,7 +104,12 @@ validate:
   overlap_correlation_threshold: 0.9
 
 features:
-  version: 1
+  # Bumped 1 -> 2 on 2026-07-30: r_mag_norm_nt_m3 / peak_prominence_norm_nt_m3
+  # removed from feature_columns() (and from being computed at all) -- EDA
+  # (Stage 2.75) measured them as EXACT duplicates of r_mag_nt /
+  # peak_prominence_nt under a single global depth_m. See features.py's
+  # feature_columns() docstring and PLAN.md.
+  version: 2
   detrend:
     # Two stages: a global robust polynomial removes the drift, then a rolling-median
     # high-pass of window_m removes whatever long-wavelength structure the polynomial
@@ -118,7 +123,6 @@ features:
     prominence_mad: 4.0        # peak detection threshold, in robust sigmas of |r|
     flank_fit_span: [0.5, 3.0] # decay-exponent fit range, in FWHM from the peak
     assign_radius_fwhm: 2.0    # rows within this many FWHM inherit the peak's shape
-  standoff_normalise: true
   edge_policy: flag
 
 model:
@@ -136,6 +140,21 @@ model:
   anomaly:
     contamination: 0.03
     n_estimators: 300
+    # EDA (Stage 2.75, 2026-07-30) found the ~20-feature amplitude block
+    # (window mean/std/max/ptp/energy) separates defect from background
+    # almost perfectly (PR-AUC up to 0.97) but is mediocre at
+    # defect-vs-interference specifically (mostly < 0.55) -- interference
+    # genuinely produces amplitude too, by design. The features that actually
+    # separate defect from interference are different and few: w25m_kurt
+    # (PR-AUC 0.985), w25m_zcr (0.786), w10m_kurt (0.680). IsolationForest
+    # picks a feature uniformly at random per split, so with the amplitude
+    # block outnumbering these ~7:1, an isolation path rarely uses them.
+    # Untested candidate fix: repeat them in the fitted matrix to raise their
+    # selection probability -- see models/anomaly.py's docstring. Set
+    # emphasis_repeats: 1 (or emphasize_features: []) to fall back to the
+    # original, unweighted behaviour.
+    emphasize_features: [w25m_kurt, w25m_zcr, w10m_kurt]
+    emphasis_repeats: 5
   severity:
     quantiles: [0.05, 0.5, 0.95]
     conformal_alpha: 0.10
