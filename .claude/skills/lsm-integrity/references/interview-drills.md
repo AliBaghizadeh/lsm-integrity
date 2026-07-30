@@ -95,9 +95,19 @@ is a genuine business argument, not a research nicety.
 
 ## Modelling
 
-**"Why not just threshold?"** I do — MAD threshold is the baseline, and it must be beaten
-by a stated margin. It fails specifically because of interference, which is exactly why
-interference is in the generator.
+**"Why not just threshold?"** I do — MAD threshold is the baseline, and IsolationForest has
+to beat it by a stated margin, on the confidence interval, not the point estimate. When I
+actually ran it: **it didn't.** Recall gap was -0.056 with a CI of [-0.167, 0.056] — dead
+straddling zero on a 12-defect corpus. I could have quietly re-tuned it until it passed; I
+reported it as the honest result instead, because that's what the gate is *for*. My working
+hypothesis for why: IsolationForest was fit on all 48 features unweighted, several of which
+are near-duplicate window statistics on the same underlying residual, which can dilute a
+forest's ability to isolate on the dimensions that actually matter — versus MAD's single,
+deliberately-chosen amplitude signal. That's a tuning/feature-selection gap, not a physics
+failure, and with only 12 defects the comparison doesn't have much power either way. If
+asked "so was IsolationForest the wrong choice?" — the honest answer is I don't know yet;
+what I know is that unweighted, untuned isolation forest over a large feature set doesn't
+automatically win against a good baseline, and that's worth knowing before scaling anything.
 
 **"Why two stages?"** Because the unit of decision is an **indication**, not a 0.5 m
 sample. Row-level scoring, then peak clustering into indications, then per-indication
@@ -118,7 +128,19 @@ That maps directly onto what an integrity engineer is optimising.
 **"Uncertainty?"** LightGBM quantile regression for the shape, wrapped in split conformal
 for a distribution-free 90% interval with a finite-sample coverage guarantee — under
 exchangeability. A new line or a new scanner breaks exchangeability, which is why coverage
-is monitored in production and re-fit on new calibration data rather than assumed.
+is monitored in production and re-fit on new calibration data rather than assumed. Measured
+coverage on the real corpus was 0.727 against the 0.87-0.93 target band — below it, though
+the CI is [0.485, 0.939], which actually contains the target, so the honest statement is
+"can't confirm calibration is good, can't rule it out either" at n=11 matched defects, not
+"calibration is broken". I also found a real bug in my own conformal code from that first
+run: I'd used a plain (1-alpha) quantile for the calibration margin instead of the
+finite-sample-corrected level the theory (Romano et al. 2019) actually specifies, which
+systematically undercovers on small calibration sets. Fixed it, verified with unit tests
+that hand-check the correction against a naive quantile, and the fix visibly widened the
+intervals as expected — it just wasn't enough to move the point estimate on this little
+data. That sequence — ship it, get a suspicious number, go re-derive the theory, find I'd
+cut a corner, fix it, verify the fix moved the right thing — is exactly the kind of thing
+I'd want a reviewer to see, not hide.
 
 **"Deep learning?"** A 1-D CNN over the residual window is a reasonable next step and I have
 it planned, but gradient boosting on well-designed physics features is the right first
@@ -218,6 +240,44 @@ background regime shift (median field and drift slope vs that line's history). P
 measured conformal coverage as verification results arrive. The failure I would most
 expect is a new scanner unit or recalibration shifting the background — a data problem that
 looks exactly like a model problem if you are not monitoring the inputs.
+
+## Process, honesty, and what was new to you
+
+Questions in this section aren't about the domain — they're about how you actually worked,
+and in a lot of interviews they matter more than the domain answers because they're the ones
+that transfer to a role that isn't this exact project. Answer with your own true specifics,
+not a generic "I learned a lot about MLOps" — name the actual thing.
+
+**"Tell me about something in this project you hadn't used before."** Be concrete: which
+technique, when you ran into needing it, what you did to get up to speed (read the original
+paper, worked a toy example by hand, implemented it and tested it against a naive baseline
+before trusting it), and what surprised you once you had it running. Naming a specific gap
+and how you closed it is a stronger answer than implying you walked in knowing everything —
+this project genuinely has two candidates for this: IsolationForest, and split conformal
+prediction (CQR). If either was new to you, say so plainly and say what studying it involved.
+
+**"Walk me through something that didn't work."** Two real ones, fully reportable without
+hedging:
+1. IsolationForest vs the MAD baseline (Stage 3) — didn't beat it; recall gap -0.056 with a
+   CI of [-0.167, 0.056], reported as the actual result rather than tuned until it passed.
+2. Split-conformal undercoverage (Stage 4) — traced to a real bug in my own code (a naive
+   quantile where the theory calls for a finite-sample-corrected one), fixed it, and the
+   result *still* didn't clear the gate on this little data. The story worth telling isn't
+   "and then I fixed it and it worked" — it's "here's what I found, here's what I changed,
+   here's what still isn't resolved, and here's why that's the right place to leave it given
+   the data I actually have," not a manufactured happy ending.
+
+**"How do you know your negative results aren't just bugs?"** Because each one got checked
+before being accepted, not just shrugged at: the conformal undercoverage was traced to a
+specific formula error and confirmed by hand-computing the correction on a small example and
+by inspecting per-defect coverage row by row, not by assumption. A suspicious number deserves
+inspection; a genuinely small sample size, once you've ruled out a bug, is a real finding,
+not an excuse.
+
+**"What would you do next with more time or data?"** Stage 6 (the scale rehearsal — ~40
+lines, ~10⁷ rows) is the designed answer: it's specifically there because 12 defects can't
+give a stable estimate of anything, and that's a known, stated limitation rather than
+something the project pretends not to have.
 
 ## Questions to ask them
 
