@@ -29,6 +29,55 @@ Use the cut lines.
 
 ---
 
+## Current status (as of 2026-07-30)
+
+| Stage | Status |
+|---|---|
+| 0 — Skeleton and reproducibility | Done |
+| 1 — Ingest and validation | Done |
+| 1.5 — Orchestration and backfill | Done |
+| 2 — Features, gradiometer | Done |
+| 2.5 — Data fidelity | Done, all 3 items |
+| 3 — Detection (MAD vs IsolationForest) | Built, **run for real — gate did not pass** |
+| 4 — Severity (LightGBM CQR + conformal) | Built, **run for real — gate did not pass** |
+| 4.5 — Demo app | Not started |
+| 5 — Classification and risk ranking | Not started |
+| 6 — Scale rehearsal | Not started |
+| 7 — CI/CD and release gate | Partially built (`ci.yml` + `train.yml`; `deploy.yml`/S3/rollback deferred, see Stage 7) |
+| 8 — Growth, remaining life, monitoring | Not started |
+
+146/146 tests pass, ruff + mypy clean. Git repo: 6 commits, clean working tree, **not yet
+pushed anywhere** (no remote configured).
+
+**What's needed next, roughly in order of what unblocks the most:**
+
+1. **A decision on Stage 3's negative result.** IsolationForest doesn't beat the MAD
+   baseline on the real corpus (recall gap -0.056, CI [-0.167, 0.056]) — reported honestly,
+   not a bug. Options: investigate/tune (feature selection, hyperparameters) before going
+   further, or accept it as the honest Stage 3 finding and move on with MAD as the more
+   defensible detector for now. Stage 4's severity numbers are conditional on whichever
+   detector's indications feed it, so this decision has downstream effects.
+2. **`README.md` — currently doesn't exist.** If this gets published to showcase
+   production readiness, this is the first thing anyone sees on the repo homepage, and
+   right now there isn't one. `PLAN.md` and `LSM_PROJECT.md` are internal planning
+   documents, not a README.
+3. **`LICENSE` — currently doesn't exist.** Standard for a public repo; pick one before
+   pushing.
+4. **Push to GitHub.** Repo is local-only. Needs a GitHub repo created and a remote added —
+   your call on timing, and I won't do this without you explicitly asking, same as any
+   other publish-facing action.
+5. **Stage 4.5 (demo app)** blocks the rest of Stage 7 (`deploy.yml`, HF Spaces) — there's
+   nothing to deploy until it exists.
+6. **A cloud-account decision for the rest of Stage 7.** S3 + GitHub OIDC are designed but
+   not built (no cloud account exists today, `storage.s3.enabled: false` throughout) —
+   decide whether this demonstrator stays local-only (defensible on its own terms) or is
+   worth standing up real infrastructure for.
+7. **Stages 5, 6, 8** — classification/risk ranking, the scale rehearsal (also the fix for
+   "12 defects is too few for a stable estimate," the root cause behind both Stage 3 and
+   4's wide CIs), and growth/remaining-life/monitoring. Not started.
+
+---
+
 ## Two corrections baked into this plan
 
 **1. There is no gradiometry in the current data.** The brief says "compute 3-sensor
