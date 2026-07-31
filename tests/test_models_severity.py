@@ -105,6 +105,58 @@ def test_severity_model_tracks_the_correlated_feature():
     assert med[high_idx] > med[low_idx]
 
 
+def test_severity_model_respects_configured_capacity():
+    """Stage 6 regression guard: n_estimators/num_leaves used to be hardcoded
+    (50/7) inside SeverityModel, a demo-scale accommodation never revisited
+    for larger data volumes (see docs/stage6-scale-rehearsal.md). Now
+    config-driven -- pin that a non-default value actually reaches the
+    underlying LGBMRegressor.
+    """
+    X, y = _synthetic_severity_data()
+    X_train, y_train = X.iloc[:30], y[:30]
+    X_calib, y_calib = X.iloc[30:], y[30:]
+
+    model = SeverityModel(
+        feature_cols=["amplitude"], quantiles=(0.05, 0.5, 0.95),
+        conformal_alpha=0.10, seed=0, lgbm_cfg=LGBM_CFG,
+        min_child_samples=5, n_estimators=77, num_leaves=15,
+    ).fit(X_train, y_train, X_calib, y_calib)
+
+    for q in (0.05, 0.5, 0.95):
+        assert model.models[q].n_estimators == 77
+        assert model.models[q].num_leaves == 15
+        assert model.models[q].min_child_samples == 5
+
+
+def test_severity_model_drops_nan_calibration_rows_instead_of_poisoning_the_margin(capsys):
+    """Real bug found via Stage 6 at scale (docs/stage6-scale-rehearsal.md):
+    generate.py initialises severity_smys to NaN off-defect, and a detector's
+    peak occasionally lands just outside a defect's label window while still
+    within the looser dig-matching tolerance -- so a small fraction of
+    matched defects get a NaN true severity. A single NaN y_calib used to
+    silently NaN conformal_margin_ (np.quantile propagates NaN), which then
+    NaNs every future prediction's interval -- not just that one row's.
+    train.py's _build_severity_training_frame now filters these upstream;
+    this pins the belt-and-braces defence directly in SeverityModel.fit.
+    """
+    X, y = _synthetic_severity_data(n=40, seed=1)
+    X_train, y_train = X.iloc[:30], y[:30]
+    X_calib, y_calib = X.iloc[30:].copy(), y[30:].copy()
+    y_calib[0] = np.nan
+
+    model = SeverityModel(
+        feature_cols=["amplitude"], quantiles=(0.05, 0.5, 0.95),
+        conformal_alpha=0.10, seed=0, lgbm_cfg=LGBM_CFG,
+    ).fit(X_train, y_train, X_calib, y_calib)
+
+    assert model.conformal_margin_ is not None
+    assert not np.isnan(model.conformal_margin_)
+    med, lo, hi = model.predict(X)
+    assert not np.isnan(lo).any()
+    assert not np.isnan(hi).any()
+    assert "dropping 1 calibration row" in capsys.readouterr().out
+
+
 def test_severity_model_predict_before_fit_raises():
     model = SeverityModel(
         feature_cols=["amplitude"], quantiles=(0.05, 0.5, 0.95),

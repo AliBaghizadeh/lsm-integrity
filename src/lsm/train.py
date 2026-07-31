@@ -171,16 +171,20 @@ def _run_grouped_cv(
     """Fit both models fold-by-fold, train on the other folds, score the held-out
     one -- returns `corpus` with two new out-of-fold score columns,
     `score_mad` / `score_if`, covering every row exactly once.
+
+    `corpus` must already carry a `fold` column (assigned by the caller via
+    `add_fold_column` or, for Stage 6's whole-line holdout, `add_fold_column_
+    by_line` -- see `scale_eval.run_whole_line_cv`); `n_folds` is derived from
+    the data (`corpus["fold"].max() + 1`), the same pattern `_run_severity_cv`/
+    `_run_classify_cv` already use, so this function works identically
+    regardless of which grouping scheme assigned `fold`.
     """
-    split_cfg = cfg.base.model.split
-    corpus = add_fold_column(
-        corpus, "line_id", "chainage_m", block_m=split_cfg.fallback_block_m, n_folds=split_cfg.n_folds
-    )
+    n_folds = int(corpus["fold"].max()) + 1
     corpus["score_mad"] = np.nan
     corpus["score_if"] = np.nan
     mad_thresholds = []
 
-    for k in range(split_cfg.n_folds):
+    for k in range(n_folds):
         train_mask = corpus["fold"] != k
         test_mask = corpus["fold"] == k
         if not test_mask.any():
@@ -293,7 +297,27 @@ def _build_severity_training_frame(
 
     # fold: whichever fold the peak row belongs to (assigned in _run_grouped_cv).
     fold_lookup = corpus[["survey_id", "chainage_m", "fold"]].rename(columns={"chainage_m": "chainage_peak_m"})
-    return with_features.merge(fold_lookup, on=["survey_id", "chainage_peak_m"], how="left")
+    with_features = with_features.merge(fold_lookup, on=["survey_id", "chainage_peak_m"], how="left")
+
+    # generate.py initialises severity_smys to NaN off-defect (row outside
+    # every defect's label window), not 0 -- a real, longstanding discrepancy
+    # from this project's own documented "0 off-defect" convention, found via
+    # Stage 6 at scale (2026-07-31): a detector's PEAK occasionally lands just
+    # outside a defect's exact label-window half-width while still within the
+    # looser MATCH_TOLERANCE_M dig-matching radius, so match_dug_indications
+    # still credits it as matched, but its OWN row's severity_smys is NaN, not
+    # the defect's true value. ~0.4% of matched defects at 9,600-defect scale
+    # (0 at demo scale, apparently never sampled). A single NaN y_true reaching
+    # SeverityModel.fit's conformal calibration silently NaNs the WHOLE fold's
+    # margin (np.quantile propagates NaN), collapsing pooled OOF coverage to
+    # 0% -- drop these rows here, loudly, rather than let that cascade.
+    n_nan_y_true = int(with_features["y_true"].isna().sum())
+    if n_nan_y_true > 0:
+        print(f"_build_severity_training_frame: dropping {n_nan_y_true} matched indication(s) "
+              "whose peak row has a NaN severity_smys (peak landed outside the true label "
+              "window while still within the dig-matching tolerance) -- see train.py's comment.")
+        with_features = with_features[with_features["y_true"].notna()]
+    return with_features
 
 
 def _build_classify_training_frame(
@@ -361,6 +385,9 @@ def _run_severity_cv(
         model = SeverityModel(
             feature_cols=feature_cols, quantiles=quantiles, conformal_alpha=conformal_alpha,
             seed=seed, lgbm_cfg=lgbm_cfg,
+            min_child_samples=sev_cfg.get("min_child_samples", 3),
+            n_estimators=sev_cfg.get("n_estimators", 50),
+            num_leaves=sev_cfg.get("num_leaves", 7),
         ).fit(train, train["y_true"].to_numpy(), calib, calib["y_true"].to_numpy())
         med, lo, hi = model.predict(test)
 
@@ -430,7 +457,11 @@ def _run_classify_cv(
     """
     n_folds = int(classify_frame["fold"].max()) + 1 if len(classify_frame) else 0
     classify_cfg = cfg.base.model.classify
-    lgbm_cfg = cfg.base.model.lightgbm.model_dump()
+    lgbm_cfg = {
+        **cfg.base.model.lightgbm.model_dump(),
+        "n_estimators": classify_cfg.get("n_estimators", 50),
+        "num_leaves": classify_cfg.get("num_leaves", 7),
+    }
     rng = np.random.default_rng(seed)
 
     model_rows, baseline_rows = [], []
@@ -573,38 +604,26 @@ def _bootstrap_metrics(
     }, hit_rates, false_digs, interference_fracs
 
 
-def run_train(cfg: Config, conn) -> dict:
-    """Orchestrates the whole Stage 3 training + evaluation + logging path.
-    Returns the metrics dict actually printed/logged, for tests to assert on.
+def _evaluate_corpus(
+    corpus: pd.DataFrame,
+    feature_cols: list[str],
+    cfg: Config,
+    seed: int,
+    registry: pd.DataFrame,
+    run_line_id: dict[str, str],
+    survey_ids: list[str],
+) -> tuple[pd.DataFrame, dict, pd.DataFrame, pd.DataFrame, "IsotonicRegression | None"]:
+    """Stage 3+4+5 evaluation over an already-fold-assigned `corpus` (caller
+    must have already called `add_fold_column`/`add_fold_column_by_line`).
+    Returns (corpus_with_scores, result, severity_frame, classify_frame,
+    defect_calibrator) -- exactly what `_log_and_persist`/`_print_report`
+    need. Factored out of `run_train` so Stage 6's whole-line-holdout
+    rehearsal (`scale_eval.run_whole_line_cv`) gets identical metrics
+    computation with a differently-assigned `fold` column, without
+    duplicating this body. `run_train`'s own default (block) CV path calls
+    this too -- see below -- so this is a pure extraction, not new logic.
     """
-    feature_version = cfg.base.features.version
-    as_of = dt.datetime.now(dt.timezone.utc).isoformat()
-
-    corpus = load_feature_corpus(cfg.env.storage.feature_dir, feature_version, as_of=as_of)
-    if len(corpus) == 0:
-        raise RuntimeError("empty feature corpus -- run `lsm features` first")
-
-    survey_ids = sorted(corpus["survey_id"].unique())
-    truth = _load_truth_and_geometry(conn, survey_ids)
-    corpus = corpus.merge(truth, on=["survey_id", "sample_idx"], how="left", validate="one_to_one")
-
-    has_grad = "g_mag_nt_per_m" in corpus.columns and corpus["g_mag_nt_per_m"].notna().any()
-    feature_cols = feature_columns(cfg.base.features, with_gradiometer=has_grad)
-
-    # One reference run per line builds that line's truth registry -- defect/
-    # interference position is fixed across a line's runs (generate.py), so any
-    # one run's labels describe the whole line.
-    line_ids = sorted(corpus["line_id"].unique())
-    registries = []
-    for line_id in line_ids:
-        ref_survey_id = sorted(corpus.loc[corpus["line_id"] == line_id, "survey_id"].unique())[0]
-        ref_rows = corpus[corpus["survey_id"] == ref_survey_id]
-        registries.append(build_truth_registry(ref_rows, line_id))
-    registry = pd.concat(registries, ignore_index=True)
-
-    run_line_id = corpus.drop_duplicates("survey_id").set_index("survey_id")["line_id"].to_dict()
-
-    corpus = _run_grouped_cv(corpus, feature_cols, cfg, seed=cfg.seed)
+    corpus = _run_grouped_cv(corpus, feature_cols, cfg, seed=seed)
     mad_threshold = corpus.attrs["mad_threshold"]
 
     matched_mad = _dig_and_match(corpus, "score_mad", mad_threshold, registry, cfg)
@@ -627,10 +646,10 @@ def run_train(cfg: Config, conn) -> dict:
         [hit_rates_mad[d] for d in defect_ids],
         boot_cfg.n_resamples,
         boot_cfg.level,
-        cfg.seed + 10,
+        seed + 10,
     )
     interference_gap = paired_bootstrap_ci(
-        interference_mad, interference_if, boot_cfg.n_resamples, boot_cfg.level, cfg.seed + 11
+        interference_mad, interference_if, boot_cfg.n_resamples, boot_cfg.level, seed + 11
     )
 
     gate_passed = recall_gap[1] >= GATE_RECALL_MARGIN  # lower CI bound, not the point estimate
@@ -663,11 +682,11 @@ def run_train(cfg: Config, conn) -> dict:
     result["n_severity_samples"] = len(severity_frame)
     if len(severity_frame) >= 4 and severity_frame["matched_source_id"].nunique() >= 2:
         oof_model, oof_baseline = _run_severity_cv(
-            severity_frame, [*feature_cols, "extent_m"], cfg, seed=cfg.seed
+            severity_frame, [*feature_cols, "extent_m"], cfg, seed=seed
         )
         if len(oof_model) > 0:
-            sev_metrics = _severity_bootstrap_metrics(oof_model, cfg, seed=cfg.seed + 20)
-            base_metrics = _severity_bootstrap_metrics(oof_baseline, cfg, seed=cfg.seed + 30)
+            sev_metrics = _severity_bootstrap_metrics(oof_model, cfg, seed=seed + 20)
+            base_metrics = _severity_bootstrap_metrics(oof_baseline, cfg, seed=seed + 30)
             severity_gate_passed = (
                 GATE_SEVERITY_COVERAGE_RANGE[0] <= sev_metrics["coverage"][0] <= GATE_SEVERITY_COVERAGE_RANGE[1]
             )
@@ -700,11 +719,11 @@ def run_train(cfg: Config, conn) -> dict:
     result["n_classify_samples"] = len(classify_frame)
     if len(classify_frame) >= 8 and classify_frame["defect_type"].nunique() >= 3:
         oof_classify, oof_classify_baseline = _run_classify_cv(
-            classify_frame, [*feature_cols, "extent_m"], cfg, seed=cfg.seed
+            classify_frame, [*feature_cols, "extent_m"], cfg, seed=seed
         )
         if len(oof_classify) > 0:
-            classify_metrics = _classify_bootstrap_metrics(oof_classify, cfg, seed=cfg.seed + 40)
-            classify_baseline_metrics = _classify_bootstrap_metrics(oof_classify_baseline, cfg, seed=cfg.seed + 50)
+            classify_metrics = _classify_bootstrap_metrics(oof_classify, cfg, seed=seed + 40)
+            classify_baseline_metrics = _classify_bootstrap_metrics(oof_classify_baseline, cfg, seed=seed + 50)
             scc_recall_ci = classify_metrics["per_class_recall"].get("scc", (float("nan"),) * 3)
             scc_gate_passed = scc_recall_ci[1] >= GATE_SCC_RECALL  # lower CI bound, not the point estimate
             result["classify"] = classify_metrics
@@ -714,6 +733,49 @@ def run_train(cfg: Config, conn) -> dict:
                 oof_classify["pred_conf"].to_numpy(),
                 (oof_classify["pred_type"] == oof_classify["true_class"]).to_numpy(),
             ).to_dict(orient="list")
+
+    return corpus, result, severity_frame, classify_frame, defect_calibrator
+
+
+def run_train(cfg: Config, conn) -> dict:
+    """Orchestrates the whole Stage 3 training + evaluation + logging path.
+    Returns the metrics dict actually printed/logged, for tests to assert on.
+    """
+    feature_version = cfg.base.features.version
+    as_of = dt.datetime.now(dt.timezone.utc).isoformat()
+
+    corpus = load_feature_corpus(cfg.env.storage.feature_dir, feature_version, as_of=as_of)
+    if len(corpus) == 0:
+        raise RuntimeError("empty feature corpus -- run `lsm features` first")
+
+    survey_ids = sorted(corpus["survey_id"].unique())
+    truth = _load_truth_and_geometry(conn, survey_ids)
+    corpus = corpus.merge(truth, on=["survey_id", "sample_idx"], how="left", validate="one_to_one")
+
+    has_grad = "g_mag_nt_per_m" in corpus.columns and corpus["g_mag_nt_per_m"].notna().any()
+    feature_cols = feature_columns(cfg.base.features, with_gradiometer=has_grad)
+
+    # One reference run per line builds that line's truth registry -- defect/
+    # interference position is fixed across a line's runs (generate.py), so any
+    # one run's labels describe the whole line.
+    line_ids = sorted(corpus["line_id"].unique())
+    registries = []
+    for line_id in line_ids:
+        ref_survey_id = sorted(corpus.loc[corpus["line_id"] == line_id, "survey_id"].unique())[0]
+        ref_rows = corpus[corpus["survey_id"] == ref_survey_id]
+        registries.append(build_truth_registry(ref_rows, line_id))
+    registry = pd.concat(registries, ignore_index=True)
+
+    run_line_id = corpus.drop_duplicates("survey_id").set_index("survey_id")["line_id"].to_dict()
+
+    split_cfg = cfg.base.model.split
+    corpus = add_fold_column(
+        corpus, "line_id", "chainage_m", block_m=split_cfg.fallback_block_m, n_folds=split_cfg.n_folds
+    )
+    corpus, result, severity_frame, classify_frame, defect_calibrator = _evaluate_corpus(
+        corpus, feature_cols, cfg, cfg.seed, registry, run_line_id, survey_ids
+    )
+    mad_threshold = corpus.attrs["mad_threshold"]
 
     _log_and_persist(
         cfg, conn, corpus, feature_cols, registry, survey_ids, result, mad_threshold,
@@ -747,6 +809,9 @@ def _fit_final_severity_model(
     model = SeverityModel(
         feature_cols=feature_cols, quantiles=tuple(sev_cfg["quantiles"]), conformal_alpha=sev_cfg["conformal_alpha"],
         seed=seed, lgbm_cfg=cfg.base.model.lightgbm.model_dump(),
+        min_child_samples=sev_cfg.get("min_child_samples", 3),
+        n_estimators=sev_cfg.get("n_estimators", 50),
+        num_leaves=sev_cfg.get("num_leaves", 7),
     ).fit(train, train["y_true"].to_numpy(), calib, calib["y_true"].to_numpy())
     baseline = GlobalMeanSeverityBaseline(conformal_alpha=sev_cfg["conformal_alpha"]).fit(
         train["y_true"].to_numpy(), calib["y_true"].to_numpy()
@@ -777,7 +842,11 @@ def _fit_final_classify_model(
 
     model = ClassifyModel(
         feature_cols=feature_cols, classes=CLASSIFY_CLASSES, seed=seed,
-        lgbm_cfg=cfg.base.model.lightgbm.model_dump(),
+        lgbm_cfg={
+            **cfg.base.model.lightgbm.model_dump(),
+            "n_estimators": classify_cfg.get("n_estimators", 50),
+            "num_leaves": classify_cfg.get("num_leaves", 7),
+        },
         class_weight=classify_cfg.get("class_weight", "balanced"),
         min_child_samples=classify_cfg.get("min_child_samples", 3),
     ).fit(train, train["defect_type"].to_numpy(), calib, calib["defect_type"].to_numpy())

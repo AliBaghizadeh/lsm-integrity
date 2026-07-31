@@ -97,28 +97,30 @@ def load_readings(conn: sqlite3.Connection, survey_id: str, df: pd.DataFrame) ->
     confirmed there is no duplicate_sample_idx violation -- this will raise
     sqlite3.IntegrityError otherwise, by design (it should never be called on
     data that validation has flagged).
+
+    Vectorized NaN->None + dtype-cast, not a per-row/per-cell Python loop --
+    measured 235,982 rows/sec on the old itertuples()+float()-per-cell version
+    at 80,000 rows (Stage 6 scale rehearsal), the real bottleneck this project's
+    row-by-row conversion was; see docs/stage6-scale-rehearsal.md for the
+    measured before/after.
     """
+    cols = ["sample_idx", "lat", "lon", "bx_nt", "by_nt", "bz_nt", "bx2_nt", "by2_nt", "bz2_nt"]
+    grad_cols = ["bx2_nt", "by2_nt", "bz2_nt"]
+    prepared = df[cols].copy()
+    # numpy.int64 is not a Python `int` subclass (unlike numpy.float64/`float`),
+    # so sample_idx needs an explicit vectorized cast -- sqlite3 rejects it
+    # silently-wrong otherwise on some driver/dtype combinations.
+    prepared["sample_idx"] = prepared["sample_idx"].astype(int)
+    prepared[grad_cols] = prepared[grad_cols].astype(object).where(prepared[grad_cols].notna(), None)
+    rows = [(survey_id, *row) for row in prepared.to_numpy(dtype=object).tolist()]
+
     conn.executemany(
         """
         INSERT INTO reading (survey_id, sample_idx, lat, lon, bx_nt, by_nt, bz_nt,
                               bx2_nt, by2_nt, bz2_nt)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        [
-            (
-                survey_id,
-                int(r.sample_idx),
-                float(r.lat),
-                float(r.lon),
-                float(r.bx_nt),
-                float(r.by_nt),
-                float(r.bz_nt),
-                None if pd.isna(r.bx2_nt) else float(r.bx2_nt),
-                None if pd.isna(r.by2_nt) else float(r.by2_nt),
-                None if pd.isna(r.bz2_nt) else float(r.bz2_nt),
-            )
-            for r in df.itertuples(index=False)
-        ],
+        rows,
     )
     conn.commit()
     log.info("readings loaded", extra={"survey_id": survey_id})

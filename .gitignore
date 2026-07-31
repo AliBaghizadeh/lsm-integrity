@@ -10,6 +10,10 @@ data/reports/
 data/lsm.db
 mlruns/
 mlruns.db
+# Stage 6 scale rehearsal: ~2-4 GB, regenerated locally, never committed.
+data_scale/
+mlruns_scale/
+mlruns_scale.db
 .venv/
 __pycache__/
 *.pyc

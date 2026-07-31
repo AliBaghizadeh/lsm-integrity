@@ -24,7 +24,13 @@ from lsm.generate import generate_all
 from lsm.models.classify import ClassifyModel
 from lsm.pipeline import run_feature_pipeline, run_survey_pipeline
 from lsm.schemas import CLASSIFY_CLASSES
-from lsm.train import CLASSIFY_DENYLIST, _lightgbm_shap_importance, run_train
+from lsm.train import (
+    CLASSIFY_DENYLIST,
+    _build_severity_training_frame,
+    _fit_final_classify_model,
+    _lightgbm_shap_importance,
+    run_train,
+)
 
 _LGBM_CFG = {"deterministic": True, "force_row_wise": True, "num_threads": 1}
 
@@ -194,6 +200,70 @@ def test_train_exercises_the_severity_cv_path(cfg, tmp_path):
     assert release_classify_version == classify_lgbm_row[0]
 
     assert "## Classification" in card_text
+
+
+def test_build_severity_training_frame_drops_rows_with_nan_severity_smys(capsys):
+    """Real bug found via Stage 6 at scale (docs/stage6-scale-rehearsal.md):
+    generate.py initialises severity_smys to NaN off-defect, and a detector's
+    peak occasionally lands just outside a defect's label window while still
+    within the looser dig-matching tolerance -- so its OWN row's severity_smys
+    is NaN, not the defect's true value (~0.4% of matched defects at 9,600-
+    defect scale). A single such NaN y_true reaching SeverityModel.fit's
+    calibration used to silently NaN the whole fold's conformal margin,
+    collapsing pooled OOF coverage to 0%. Must be dropped upstream, loudly.
+    """
+    corpus = pd.DataFrame({
+        "survey_id": ["S1", "S1", "S1"],
+        "chainage_m": [10.0, 20.0, 30.0],
+        "severity_smys": [50.0, np.nan, 60.0],
+        "fold": [0, 0, 1],
+        "feat_a": [1.0, 2.0, 3.0],
+    })
+    matched = pd.DataFrame({
+        "indication_id": ["I1", "I2"],
+        "survey_id": ["S1", "S1"],
+        "chainage_peak_m": [10.0, 20.0],
+        "chainage_start_m": [9.0, 19.0],
+        "chainage_end_m": [11.0, 21.0],
+        "matched_kind": ["defect", "defect"],
+        "matched_source_id": ["D1", "D2"],
+    })
+
+    result = _build_severity_training_frame(matched, corpus, ["feat_a"])
+
+    assert len(result) == 1
+    assert result.iloc[0]["matched_source_id"] == "D1"
+    assert not result["y_true"].isna().any()
+    assert "dropping 1 matched indication" in capsys.readouterr().out
+
+
+def test_fit_final_classify_model_respects_configured_capacity(cfg):
+    """Stage 6 regression guard: config/base.yaml's model.classify.n_estimators/
+    num_leaves used to be silently dead -- train.py never threaded them from
+    config into ClassifyModel's lgbm_cfg, so editing them had NO effect (found
+    via the same scale rehearsal that found severity's capacity bug; see
+    docs/stage6-scale-rehearsal.md). Pin that a non-default value actually
+    reaches the underlying LGBMClassifier.
+    """
+    cfg.base.model.classify["n_estimators"] = 77
+    cfg.base.model.classify["num_leaves"] = 15
+
+    rng = np.random.default_rng(0)
+    n = 60
+    a = rng.uniform(-1, 1, size=n)
+    defect_type = np.select([a > 0.3, a < -0.3], ["scc", "weld"], default="corrosion")
+    classify_frame = pd.DataFrame({
+        "matched_source_id": [f"D{i}" for i in range(n)],
+        "defect_type": defect_type,
+        "a": a,
+    })
+
+    model, baseline = _fit_final_classify_model(classify_frame, ["a"], cfg, seed=0)
+
+    assert model is not None
+    assert model.model is not None
+    assert model.model.n_estimators == 77
+    assert model.model.num_leaves == 15
 
 
 def test_shap_check_catches_a_deliberately_leaky_chainage_feature():

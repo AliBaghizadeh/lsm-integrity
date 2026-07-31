@@ -1,30 +1,36 @@
-# Code config: hyperparameters, feature specs, gate thresholds.
-# This file (and only this file) is hashed into config_sha256 for every run.
-# Environment config (bucket, DB URI, concurrency) lives in dev.yaml / prod.yaml.
+# Stage 6 scale rehearsal config -- NOT the demo config. A genuinely separate
+# base.yaml (own config_sha256), not an environment overlay: `data.*` here
+# describes a different corpus, which is a code-config decision, not an infra
+# one (SKILL.md invariant #13). Loaded via
+# `load_config("dev", config_dir=CONFIG_DIR / "scale")`. See
+# docs/stage6-scale-rehearsal.md and PLAN.md's Stage 6 section.
+#
+# Exactly four scalars differ from the real config/base.yaml, chosen to reach
+# ~10^7 rows while keeping defect/interference density at the
+# already-validated-safe 6/km, 2/km ratio (today's demo corpus is 12
+# defects / 2000 m, 4 interference / 2000 m -- a past experiment packing 60
+# defects onto one 2000 m line, 30/km, measured to degrade the Stage 2
+# background-contrast gate from 3.19x to ~2.7x, so density is scaled via
+# MORE/LONGER lines, never denser packing, exactly like the n_lines 1->5 bump
+# earlier in this project's history):
+#   n_lines:        5     -> 40      (40 independent lines)
+#   length_m:    2000.0   -> 40000.0 (40 km/line -- a realistic full-segment
+#                                      survey length, not a demo snippet)
+#   n_defects:     12     -> 240     (240/40km = 6/km, same density as today)
+#   n_interference: 4     -> 80      (80/40km = 2/km, same density as today)
+# 40 x (40000/0.5) x 3 = 9,600,000 rows =~ 10^7, matching both PLAN.md's
+# "~10^7" and its own "n_lines: 40" figure.
 seed: 42
 
 data:
-  # Bumped from 1 on 2026-07-30 to test whether Stage 3's negative result
-  # (IsolationForest doesn't beat MAD) is a real small effect the CI is just
-  # too wide to resolve, or a real effect -- more INDEPENDENT lines narrows the
-  # bootstrap CI (~2.2x, sqrt(60/12) physical defects) without changing WHICH
-  # conclusion is true. Deliberately more lines, not more defects on this one
-  # line: n_defects=60 on a single 2000 m line was tried first and measured to
-  # degrade the Stage 2 background-contrast gate (3.19x -> ~2.7-3.0x, noisy,
-  # sometimes failing) -- denser packing means background rows increasingly
-  # sit near an unlabelled neighbour's 1/r^3 field tail. Separate lines don't
-  # share a background at all, so this is the same statistical-power gain with
-  # none of that cost -- see PLAN.md Stage 6, which reaches the same
-  # conclusion for the same reason ("~40 lines", not "~40x the defects on one
-  # line").
-  n_lines: 5
-  length_m: 2000.0
+  n_lines: 40
+  length_m: 40000.0
   step_m: 0.5
   depth_m: 1.5
   background_nT: [19000.0, 1000.0, 45000.0]
   noise_nT: 5.0
-  n_defects: 12
-  n_interference: 4
+  n_defects: 240
+  n_interference: 80
   # Interference sources are large steel objects, not defects. Their moment is
   # scaled so that at a typical 3-8 m lateral offset they arrive at roughly
   # defect-comparable amplitude -- (5.5/1.5)^3 ~ 50 for the 1/r^3 falloff. Set
@@ -158,31 +164,24 @@ model:
   severity:
     quantiles: [0.05, 0.5, 0.95]
     conformal_alpha: 0.10
-    # Small-sample accommodation for the demo's ~12-60 physical defects --
-    # LightGBM's own min_child_samples=20 default would refuse to split at
-    # all here. Confirmed NOT a production default (Stage 6 scale rehearsal,
-    # 2026-07-31): applied unchanged at ~9,600 defects / ~19,000 severity
-    # samples, num_leaves=7 caps the quantile trees to 7 leaves total
-    # regardless of data volume, collapsing conformal coverage to 0% -- see
-    # config/scale/base.yaml for the production-sized values this was
-    # measured against.
-    min_child_samples: 3
-    n_estimators: 50
-    num_leaves: 7
+    # Production-sized capacity, NOT the demo's small-sample accommodation
+    # (config/base.yaml's min_child_samples=3/num_leaves=7) -- confirmed
+    # necessary empirically: applied unchanged at Stage 6 scale (~9,600
+    # defects / ~19,000 severity samples), the demo's num_leaves=7 caps the
+    # quantile trees to 7 leaves total regardless of data volume, collapsing
+    # conformal coverage to 0%. These are LightGBM's own sane defaults for
+    # this data volume, not re-tuned.
+    min_child_samples: 20
+    n_estimators: 100
+    num_leaves: 31
   classify:
     calibration: isotonic
     class_weight: balanced
-    # Small-sample accommodation, same reasoning as severity's -- with as few
-    # as a dozen SCC instances total in the real corpus, LightGBM's own
-    # min_child_samples=20 default would refuse to split at all.
-    # (n_estimators/num_leaves were silently dead here until Stage 6, 2026-
-    # 07-31 -- train.py never threaded them from this config into
-    # ClassifyModel's lgbm_cfg, so editing these two lines previously had NO
-    # effect. Found via the same scale rehearsal that found severity's
-    # capacity bug. Fixed; now actually wired.)
-    n_estimators: 50
-    num_leaves: 7
-    min_child_samples: 3
+    # Production-sized capacity -- see model.severity's comment above for the
+    # same reasoning, empirically confirmed necessary at this data volume.
+    n_estimators: 100
+    num_leaves: 31
+    min_child_samples: 20
     # Fraction of each fold's dev-set defects held out for isotonic
     # calibration, allocated per class (not a bare shuffle) -- see
     # train.py's _stratified_defect_calib_split.
@@ -209,6 +208,6 @@ model:
   dig_budget_per_km: 5
 
 mlflow:
-  experiment: lsm-integrity
+  experiment: lsm-integrity-scale
 
 schema_version: 2

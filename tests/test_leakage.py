@@ -11,7 +11,13 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from lsm.evaluate import add_fold_column, assign_fold, assign_group
+from lsm.evaluate import (
+    add_fold_column,
+    add_fold_column_by_line,
+    assign_fold,
+    assign_fold_by_line,
+    assign_group,
+)
 
 
 def test_same_group_key_always_gets_the_same_fold():
@@ -71,6 +77,55 @@ def test_folds_are_reasonably_balanced():
     """
     keys = [f"LINE000::{i}" for i in range(200)]
     folds = [assign_fold(k, n_folds=5) for k in keys]
+    counts = pd.Series(folds).value_counts()
+    assert counts.min() > 0
+    assert counts.max() / counts.min() < 3.0
+
+
+# Stage 6: whole-line holdout ("the real generalisation test", PLAN.md) -- an
+# entire physical line lands in one fold, deliberately NOT wired into the
+# default Stage 3-5 path (see evaluate.py's docstrings) -- only exercised by
+# scale_eval.run_whole_line_cv.
+
+
+def test_assign_fold_by_line_is_stable():
+    lines = [f"LINE{i:03d}" for i in range(50)]
+    folds = {line: assign_fold_by_line(line, n_folds=5) for line in lines}
+    for line in lines:
+        assert assign_fold_by_line(line, n_folds=5) == folds[line]
+
+
+def test_add_fold_column_by_line_ignores_chainage_and_run_id():
+    """The whole point of whole-line grouping: varying chainage_m/run_id for
+    the SAME line must never change its fold -- unlike the block scheme,
+    which explicitly groups by chainage.
+    """
+    rows = []
+    for run_id in range(3):
+        for chainage_m in (0.0, 500.0, 1999.5):
+            rows.append({"line_id": "LINE000", "run_id": run_id, "chainage_m": chainage_m})
+    df = pd.DataFrame(rows)
+
+    out = add_fold_column_by_line(df, "line_id", n_folds=5)
+    assert out["fold"].nunique() == 1
+
+
+def test_whole_line_never_split_across_folds():
+    line_ids = [f"LINE{i:03d}" for i in range(10)]
+    rows = []
+    for line_id in line_ids:
+        for run_id in range(3):
+            for chainage_m in (0.0, 100.0, 200.0, 300.0):
+                rows.append({"line_id": line_id, "run_id": run_id, "chainage_m": chainage_m})
+    df = pd.DataFrame(rows)
+
+    out = add_fold_column_by_line(df, "line_id", n_folds=5)
+    assert (out.groupby("line_id")["fold"].nunique() == 1).all()
+
+
+def test_whole_line_folds_are_reasonably_balanced():
+    lines = [f"LINE{i:03d}" for i in range(40)]
+    folds = [assign_fold_by_line(line, n_folds=5) for line in lines]
     counts = pd.Series(folds).value_counts()
     assert counts.min() > 0
     assert counts.max() / counts.min() < 3.0

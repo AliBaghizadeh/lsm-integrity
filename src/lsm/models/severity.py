@@ -9,13 +9,17 @@ reproduce that constant and report a flattering, meaningless MAE). Feature
 vectors come from `indications.attach_indication_features` -- the peak row's
 own residual/shape features plus `extent_m`.
 
-With ~12 physical defects on today's single line, this training set is tiny --
+With ~12 physical defects on the demo corpus, this training set is tiny --
 LightGBM's own defaults (`min_child_samples=20`) would refuse to split at all
 and degenerate into predicting a single constant per quantile, which is exactly
-what the GLOBAL-MEAN BASELINE already does. `min_child_samples` is set low here
-specifically to let *some* feature-driven learning happen on a training set this
-small; this is a small-sample accommodation, not a production default (Stage 6's
-scale rehearsal would need to revisit it).
+what the GLOBAL-MEAN BASELINE already does. `min_child_samples`/`n_estimators`/
+`num_leaves` are config-driven (`config/base.yaml`'s `model.severity`) rather
+than hardcoded, specifically so Stage 6's scale config can use production-sized
+capacity instead of the demo's small-sample accommodation -- confirmed
+necessary empirically: at ~19,000 severity-labelled indications, the demo's
+`min_child_samples=3`/`num_leaves=7` degenerate the quantile models into
+near-constant, badly-calibrated predictions (0% conformal coverage), not a
+theoretical concern.
 """
 
 from __future__ import annotations
@@ -84,6 +88,8 @@ class SeverityModel:
         seed: int,
         lgbm_cfg: dict,
         min_child_samples: int = 3,
+        n_estimators: int = 50,
+        num_leaves: int = 7,
     ):
         self.feature_cols = feature_cols
         self.q_lo, self.q_med, self.q_hi = quantiles
@@ -91,6 +97,8 @@ class SeverityModel:
         self.seed = seed
         self.lgbm_cfg = lgbm_cfg
         self.min_child_samples = min_child_samples
+        self.n_estimators = n_estimators
+        self.num_leaves = num_leaves
         self.models: dict[float, LGBMRegressor] = {}
         self.conformal_margin_: float | None = None
 
@@ -98,8 +106,8 @@ class SeverityModel:
         return LGBMRegressor(
             objective="quantile",
             alpha=alpha,
-            n_estimators=50,
-            num_leaves=7,
+            n_estimators=self.n_estimators,
+            num_leaves=self.num_leaves,
             min_child_samples=self.min_child_samples,
             deterministic=self.lgbm_cfg.get("deterministic", True),
             force_row_wise=self.lgbm_cfg.get("force_row_wise", True),
@@ -116,6 +124,19 @@ class SeverityModel:
             model = self._make_model(q)
             model.fit(X_train_mat, y_train)
             self.models[q] = model
+
+        # A NaN y_calib would otherwise silently NaN the WHOLE conformal margin
+        # (np.quantile propagates NaN) -- and therefore every future
+        # prediction's interval, for every defect, not just this one row.
+        # Callers are expected to have already filtered NaN truth upstream
+        # (see train.py's _build_severity_training_frame); this is a loud
+        # defence-in-depth guard, not the primary fix.
+        calib_valid = ~np.isnan(y_calib)
+        if len(y_calib) > 0 and not calib_valid.all():
+            print(f"SeverityModel.fit: dropping {int((~calib_valid).sum())} calibration row(s) "
+                  "with NaN y_calib -- a NaN score would otherwise silently NaN the whole "
+                  "conformal margin.")
+            X_calib, y_calib = X_calib[calib_valid], y_calib[calib_valid]
 
         if len(X_calib) > 0:
             lo_pred = self.models[self.q_lo].predict(X_calib[self.feature_cols].fillna(0.0))

@@ -51,6 +51,33 @@ def add_fold_column(
     return out
 
 
+def assign_fold_by_line(line_id: str, n_folds: int) -> int:
+    """Stage 6: hash on `line_id` ALONE, no chainage block -- an entire
+    physical line lands in one fold, the whole-line holdout PLAN.md Stage 6
+    asks for ("the real generalisation test": today's default `assign_fold`
+    scatters one line's 100 m blocks across ~all folds, so a model can see
+    part of a line in training and be scored on another part of the SAME
+    line -- this is a stronger, disjoint-line test). Same sha256(...) %
+    n_folds scheme as `assign_fold`, for the same "growing the corpus later
+    does not reshuffle existing folds" property. Deliberately NOT wired into
+    `add_fold_column`/the default Stage 3-5 path -- see `scale_eval.py`.
+    """
+    digest = hashlib.sha256(line_id.encode("utf-8")).hexdigest()
+    return int(digest, 16) % n_folds
+
+
+def add_fold_column_by_line(df: pd.DataFrame, line_id_col: str, n_folds: int) -> pd.DataFrame:
+    """Returns a copy of `df` with `group_key` (== line_id) and `fold` columns
+    -- same two-column contract as `add_fold_column`, so downstream consumers
+    (`train._run_grouped_cv`, the severity/classify fold merges) don't need to
+    know which grouping scheme produced `fold`.
+    """
+    out = df.copy()
+    out["group_key"] = out[line_id_col]
+    out["fold"] = [assign_fold_by_line(g, n_folds) for g in out["group_key"]]
+    return out
+
+
 def match_dug_indications(
     dug: pd.DataFrame, registry: pd.DataFrame, tolerance_m: float
 ) -> pd.DataFrame:

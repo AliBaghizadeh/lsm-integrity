@@ -18,6 +18,8 @@ dependencies = [
     "streamlit",
     "matplotlib",
     "pydeck",
+    "duckdb",
+    "psutil",
 ]
 
 [project.optional-dependencies]
