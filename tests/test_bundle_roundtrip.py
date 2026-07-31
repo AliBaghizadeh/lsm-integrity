@@ -104,7 +104,7 @@ def test_load_bundle_raises_file_not_found_with_a_helpful_message(tmp_path):
 
 def test_training_feature_summary_reports_mean_std_min_max():
     corpus = pd.DataFrame({"a": [1.0, 2.0, 3.0, 4.0, 5.0]})
-    summary = training_feature_summary(corpus, ["a"])
+    summary = training_feature_summary(corpus, ["a"], seed=0)
     assert summary["a"]["mean"] == 3.0
     assert summary["a"]["min"] == 1.0
     assert summary["a"]["max"] == 5.0
@@ -112,8 +112,36 @@ def test_training_feature_summary_reports_mean_std_min_max():
 
 def test_training_feature_summary_handles_all_nan_column():
     corpus = pd.DataFrame({"a": [np.nan, np.nan]})
-    summary = training_feature_summary(corpus, ["a"])
+    summary = training_feature_summary(corpus, ["a"], seed=0)
     assert np.isnan(summary["a"]["mean"])
+    assert summary["a"]["bin_edges"] == []
+    assert summary["a"]["sample"] == []
+
+
+def test_training_feature_summary_stores_bin_edges_and_a_bounded_sample():
+    corpus = pd.DataFrame({"a": np.arange(100, dtype=float)})
+    summary = training_feature_summary(corpus, ["a"], seed=0, n_bins=10, sample_size=20)
+    assert len(summary["a"]["bin_edges"]) == 11
+    assert summary["a"]["bin_edges"][0] == 0.0
+    assert summary["a"]["bin_edges"][-1] == 99.0
+    assert len(summary["a"]["sample"]) == 20
+
+
+def test_training_feature_summary_sample_is_deterministic_given_the_same_seed():
+    corpus = pd.DataFrame({"a": np.arange(100, dtype=float)})
+    s1 = training_feature_summary(corpus, ["a"], seed=42, sample_size=10)
+    s2 = training_feature_summary(corpus, ["a"], seed=42, sample_size=10)
+    assert s1["a"]["sample"] == s2["a"]["sample"]
+
+
+def test_training_prediction_reference_reports_rate_and_bounded_sample():
+    from lsm.bundle import training_prediction_reference
+
+    ref = training_prediction_reference(
+        indications_per_km=4.2, p_defect_cal_sample=np.linspace(0, 1, 50), seed=0, sample_size=10,
+    )
+    assert ref["indications_per_km"] == 4.2
+    assert len(ref["p_defect_cal_sample"]) == 10
 
 
 _LGBM_CFG = {"deterministic": True, "force_row_wise": True, "num_threads": 1}

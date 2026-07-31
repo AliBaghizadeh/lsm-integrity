@@ -7,12 +7,16 @@ import pandas as pd
 import pytest
 
 from lsm.evaluate import (
+    background_regime_shift,
     bootstrap_ci,
     brier_by_group,
+    coverage_vs_nominal,
     defect_hit_rates,
     false_dig_rate_per_run,
+    feature_drift_report,
     interference_dig_fraction_per_run,
     interference_precision_units,
+    ks_drift,
     localisation_errors_m,
     mae_by_severity_decile,
     match_dug_indications,
@@ -21,6 +25,8 @@ from lsm.evaluate import (
     per_class_recall_units,
     per_group_severity_metrics,
     pr_auc,
+    prediction_drift_report,
+    psi,
     reliability_curve,
     shap_denylist_check,
 )
@@ -332,3 +338,109 @@ def test_shap_denylist_check_fails_when_a_denylisted_feature_ranks_in_top_k():
     result = shap_denylist_check(importance, denylist=["chainage_m", "sample_idx"], top_k=2)
     assert result["passed"] is False
     assert result["leaked_denylist_features"] == ["chainage_m"]
+
+
+# -- Stage 8: drift monitoring -----------------------------------------------
+
+
+def test_psi_is_near_zero_on_identical_distributions():
+    rng = np.random.default_rng(0)
+    ref = rng.normal(0, 1, 5000)
+    same = rng.normal(0, 1, 500)
+    edges = np.quantile(ref, np.linspace(0, 1, 11))
+    assert psi(ref, same, edges) < 0.05
+
+
+def test_psi_flags_a_shifted_distribution():
+    rng = np.random.default_rng(0)
+    ref = rng.normal(0, 1, 5000)
+    shifted = rng.normal(3, 1, 500)
+    edges = np.quantile(ref, np.linspace(0, 1, 11))
+    assert psi(ref, shifted, edges) > 0.3
+
+
+def test_psi_is_zero_on_empty_input():
+    edges = np.linspace(0, 1, 11)
+    assert psi(np.array([]), np.array([1.0]), edges) == 0.0
+    assert psi(np.array([1.0]), np.array([]), edges) == 0.0
+
+
+def test_ks_drift_detects_a_shift():
+    rng = np.random.default_rng(0)
+    ref = rng.normal(0, 1, 1000)
+    same = rng.normal(0, 1, 200)
+    shifted = rng.normal(3, 1, 200)
+    stat_same, p_same = ks_drift(ref, same)
+    stat_shifted, p_shifted = ks_drift(ref, shifted)
+    assert stat_shifted > stat_same
+    assert p_shifted < 0.01
+    assert p_same > 0.01
+
+
+def test_ks_drift_on_empty_input_is_nan():
+    stat, pvalue = ks_drift(np.array([]), np.array([1.0]))
+    assert np.isnan(stat) and np.isnan(pvalue)
+
+
+def test_feature_drift_report_flags_a_shifted_feature():
+    rng = np.random.default_rng(0)
+    ref_sample = rng.normal(0, 1, 2000)
+    reference = {"a": {"bin_edges": np.quantile(ref_sample, np.linspace(0, 1, 11)).tolist(), "sample": ref_sample.tolist()}}
+    current = pd.DataFrame({"a": rng.normal(5, 1, 200)})
+    report = feature_drift_report(reference, current, ["a"], psi_warn=0.2, psi_block=0.3)
+    assert report.iloc[0]["status"] == "block"
+
+
+def test_feature_drift_report_skips_a_feature_missing_from_the_reference():
+    report = feature_drift_report({}, pd.DataFrame({"a": [1.0, 2.0]}), ["a"], psi_warn=0.2, psi_block=0.3)
+    assert len(report) == 0
+
+
+def test_prediction_drift_report_flags_an_indications_per_km_spike():
+    rng = np.random.default_rng(0)
+    reference = {"indications_per_km": 5.0, "p_defect_cal_sample": rng.uniform(0, 1, 1000).tolist()}
+    report = prediction_drift_report(reference, rng.uniform(0, 1, 100), current_indications_per_km=20.0, ratio_warn=3.0)
+    assert report["flagged"] is True
+    assert report["indications_per_km_ratio"] == pytest.approx(4.0)
+
+
+def test_prediction_drift_report_does_not_flag_a_normal_rate():
+    rng = np.random.default_rng(0)
+    reference = {"indications_per_km": 5.0, "p_defect_cal_sample": rng.uniform(0, 1, 1000).tolist()}
+    report = prediction_drift_report(reference, rng.uniform(0, 1, 100), current_indications_per_km=5.5, ratio_warn=3.0)
+    assert report["flagged"] is False
+
+
+def test_background_regime_shift_flags_an_outlier_axis():
+    history = pd.DataFrame({"bx_nt": [1.0, 2.0, 1.5], "by_nt": [0.0, 0.0, 0.0], "bz_nt": [10.0, 11.0, 10.5]})
+    current = pd.Series({"bx_nt": 100.0, "by_nt": 0.0, "bz_nt": 10.5})
+    result = background_regime_shift(current, history, z_threshold=3.0)
+    assert result["n_bad"] == 1
+    assert result["z_scores"]["bx_nt"] > 3.0
+
+
+def test_background_regime_shift_matches_check_background_regime():
+    """Cross-check: validate.py's check_background_regime was refactored to
+    call this function -- the still-passing tests/test_validate.py proves
+    the extraction is behavior-preserving; this pins the same math directly.
+    """
+    history = pd.DataFrame({"bx_nt": [19000.0, 19005.0], "by_nt": [1000.0, 1002.0], "bz_nt": [45000.0, 45010.0]})
+    current = pd.Series({"bx_nt": 19002.0, "by_nt": 1001.0, "bz_nt": 45005.0})
+    result = background_regime_shift(current, history, z_threshold=3.0)
+    assert result["n_bad"] == 0
+
+
+def test_coverage_vs_nominal_matches_a_hand_computed_value():
+    y_true = np.array([1.0, 2.0, 3.0, 4.0])
+    lo = np.array([0.0, 0.0, 0.0, 10.0])
+    hi = np.array([5.0, 5.0, 5.0, 20.0])
+    result = coverage_vs_nominal(y_true, lo, hi, nominal=0.9)
+    assert result["empirical"] == 0.75
+    assert result["n"] == 4
+    assert result["below_nominal"] is True
+
+
+def test_coverage_vs_nominal_on_empty_input():
+    result = coverage_vs_nominal(np.array([]), np.array([]), np.array([]), nominal=0.9)
+    assert result["n"] == 0
+    assert np.isnan(result["empirical"])

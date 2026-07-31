@@ -22,6 +22,7 @@ from typing import Callable
 
 import numpy as np
 import pandas as pd
+import scipy.stats
 from sklearn.metrics import average_precision_score
 
 
@@ -379,3 +380,128 @@ def shap_denylist_check(shap_importance: pd.Series, denylist: list[str], top_k: 
     top_features = ranked.index[:top_k].tolist()
     leaked = [f for f in top_features if f in denylist]
     return {"top_features": top_features, "leaked_denylist_features": leaked, "passed": len(leaked) == 0}
+
+
+# -- Stage 8: drift monitoring (validation-and-trust.md Layer 4) -------------
+
+
+def psi(reference: np.ndarray, current: np.ndarray, bin_edges: np.ndarray) -> float:
+    """Population Stability Index: bins `current` into the REFERENCE's OWN
+    bin edges (never re-derived from `current` -- that would compare a
+    distribution to a rebinning of itself). Values outside the reference's
+    original range are clipped into the extreme bin rather than silently
+    dropped by `np.histogram` -- a distribution that has moved entirely past
+    the old boundary is exactly the case this check exists to catch, not an
+    edge case to discard. 0.0 if either sample is empty (nothing to compare).
+    PSI > 0.2 warns, > 0.3 blocks (validation-and-trust.md Layer 4).
+    """
+    reference = np.asarray(reference, dtype=float)
+    current = np.asarray(current, dtype=float)
+    bin_edges = np.asarray(bin_edges, dtype=float)
+    if len(reference) == 0 or len(current) == 0 or len(bin_edges) < 2:
+        return 0.0
+    ref_clipped = np.clip(reference, bin_edges[0], bin_edges[-1])
+    cur_clipped = np.clip(current, bin_edges[0], bin_edges[-1])
+    ref_counts, _ = np.histogram(ref_clipped, bins=bin_edges)
+    cur_counts, _ = np.histogram(cur_clipped, bins=bin_edges)
+    eps = 1e-6
+    ref_pct = np.clip(ref_counts / max(1, ref_counts.sum()), eps, None)
+    cur_pct = np.clip(cur_counts / max(1, cur_counts.sum()), eps, None)
+    return float(np.sum((cur_pct - ref_pct) * np.log(cur_pct / ref_pct)))
+
+
+def ks_drift(reference: np.ndarray, current: np.ndarray) -> tuple[float, float]:
+    """Two-sample Kolmogorov-Smirnov test -- (statistic, p_value). (nan, nan)
+    if either sample is empty, an honest "no data" answer, not an error.
+    """
+    reference = np.asarray(reference, dtype=float)
+    current = np.asarray(current, dtype=float)
+    if len(reference) == 0 or len(current) == 0:
+        return float("nan"), float("nan")
+    result = scipy.stats.ks_2samp(reference, current)
+    return float(result.statistic), float(result.pvalue)
+
+
+def feature_drift_report(
+    reference: dict[str, dict], current: pd.DataFrame, feature_cols: list[str],
+    psi_warn: float, psi_block: float,
+) -> pd.DataFrame:
+    """One row per feature: psi, ks_stat, ks_pvalue, status ('ok'|'warn'|
+    'block'). `reference` is a bundle's `training_feature_summary` dict
+    (per-feature `bin_edges`/`sample`, plus mean/std/min/max unused here).
+    A feature missing from `reference` (e.g. a stale bundle) is skipped, not
+    an error -- the caller sees fewer rows, not a crash.
+    """
+    rows = []
+    for col in feature_cols:
+        if col not in reference:
+            continue
+        ref = reference[col]
+        ref_sample = np.asarray(ref.get("sample", []), dtype=float)
+        bin_edges = np.asarray(ref.get("bin_edges", []), dtype=float)
+        cur_values = current[col].dropna().to_numpy(dtype=float) if col in current.columns else np.array([])
+        psi_val = psi(ref_sample, cur_values, bin_edges)
+        ks_stat, ks_pvalue = ks_drift(ref_sample, cur_values)
+        status = "block" if psi_val >= psi_block else "warn" if psi_val >= psi_warn else "ok"
+        rows.append({"feature": col, "psi": psi_val, "ks_stat": ks_stat, "ks_pvalue": ks_pvalue, "status": status})
+    return pd.DataFrame(rows, columns=["feature", "psi", "ks_stat", "ks_pvalue", "status"])
+
+
+def prediction_drift_report(
+    reference: dict, current_p_defect_cal: np.ndarray, current_indications_per_km: float, ratio_warn: float,
+) -> dict:
+    """KS of the current survey's calibrated P(defect) against the training
+    reference sample, plus the indications-per-km ratio vs the training
+    rate. "A survey suddenly producing 3x the usual indications is a sensor
+    or background problem until proven otherwise" (Layer 4) -- flagged when
+    the ratio falls outside [1/ratio_warn, ratio_warn].
+    """
+    ref_sample = np.asarray(reference.get("p_defect_cal_sample", []), dtype=float)
+    ks_stat, ks_pvalue = ks_drift(ref_sample, np.asarray(current_p_defect_cal, dtype=float))
+    ref_rate = reference.get("indications_per_km", 0.0)
+    ratio = current_indications_per_km / ref_rate if ref_rate and ref_rate > 0 else float("nan")
+    flagged = not np.isnan(ratio) and not (1.0 / ratio_warn <= ratio <= ratio_warn)
+    return {
+        "p_defect_cal_ks_stat": ks_stat,
+        "p_defect_cal_ks_pvalue": ks_pvalue,
+        "indications_per_km_current": current_indications_per_km,
+        "indications_per_km_reference": ref_rate,
+        "indications_per_km_ratio": ratio,
+        "flagged": flagged,
+    }
+
+
+def background_regime_shift(
+    current_median: pd.Series, history_medians: pd.DataFrame, z_threshold: float = 3.0
+) -> dict:
+    """Per-axis (bx/by/bz) z-score of `current_median` against
+    `history_medians`' own mean/std -- "catches recalibration, a different
+    scanner unit, or a seasonal geomagnetic excursion" (Layer 4). Extracted
+    from `validate.py::check_background_regime`'s exact math so there is ONE
+    implementation, reused by both the ingest-time DQ gate (comparing a new
+    survey against other already-ingested surveys of the same line) and the
+    Stage 8 monitor (comparing against a released pipeline's history) --
+    not two copies that can silently diverge.
+    """
+    hist_mean, hist_std = history_medians.mean(), history_medians.std().replace(0, np.nan)
+    z = ((current_median - hist_mean) / hist_std).abs()
+    n_bad = int((z > z_threshold).fillna(False).sum())
+    return {"z_scores": z.to_dict(), "n_bad": n_bad}
+
+
+def coverage_vs_nominal(y_true: np.ndarray, lo: np.ndarray, hi: np.ndarray, nominal: float) -> dict:
+    """Empirical coverage of `[lo, hi]` vs `nominal`. The Stage 8 coverage-
+    tracking check: as `truth_observation` rows accumulate from the
+    dig-feedback loop, re-run this; if empirical coverage drifts below
+    nominal, re-fit the conformal quantiles before touching the model
+    (Layer 4). `n=0` is an honest "nothing verified yet" answer, not a
+    failure.
+    """
+    y_true = np.asarray(y_true, dtype=float)
+    lo = np.asarray(lo, dtype=float)
+    hi = np.asarray(hi, dtype=float)
+    n = len(y_true)
+    if n == 0:
+        return {"empirical": float("nan"), "nominal": nominal, "n": 0, "below_nominal": False}
+    empirical = float(np.mean((lo <= y_true) & (y_true <= hi)))
+    return {"empirical": empirical, "nominal": nominal, "n": n, "below_nominal": empirical < nominal}

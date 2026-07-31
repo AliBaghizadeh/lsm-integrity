@@ -1028,6 +1028,45 @@ has gone stale?"
 
 ---
 
+**Built and run for real 2026-07-31 (backend; app panel deferred).** `lsm forecast` and
+`lsm monitor` are real commands (plus a new `lsm verify`, not in this stage's original named
+list, needed to close the dig-feedback loop). 268/268 tests, ruff+mypy clean.
+
+- **Cross-survey defect identity was already solved, for free**: `truth.build_truth_registry`
+  builds one per-line registry (position fixed across a line's runs), and `train._match_all_
+  indications` already matches every run against it, so a defect's `matched_source_id` is
+  already stable across runs. `match_dug_indications` already returns `distance_m` (the match
+  residual this stage asks to record). No new spatial-alignment logic was needed.
+- **Growth-rate estimation is closed-form empirical-Bayes shrinkage** (per-defect OLS
+  log-linear slope, inverse-variance-weighted pooling toward a population rate) — no PyMC/
+  Stan, matching this project's practice throughout (bootstrap CIs, split conformal,
+  isotonic calibration). On the real corpus's `1.15` growth law, the fitted population rate
+  recovered **0.1398**, matching `ln(1.15)` to 4 decimal places, confirmed via the actual CLI,
+  not just synthetic unit tests.
+- **The gate passed on the first real run**: model MAE well below the no-growth baseline's,
+  CI lower bound of the gap positive by a wide margin (a genuinely easy statistical target,
+  since the growth law is deterministic-plus-noise, unlike Stage 3's real detection problem).
+- **`truth_as_of` finally gets exercised end-to-end** for the first time anywhere in this
+  project — a `--as-of` flag on `forecast` threads into `features.load_feature_corpus`'s
+  already-existing (but, until now, always-"now") point-in-time filter.
+- **`monitor` correctly flagged real drift** on a later run of the same line, on exactly the
+  features tied to defect shape/amplitude (`fwhm_m`, `peak_asymmetry`, `decay_exponent`,
+  `peak_prominence_nt`) — because severity genuinely grows across runs by construction, so a
+  later run's feature distribution legitimately differs from the pooled training reference.
+  The monitor doing its job, not a false alarm.
+- **No schema change for the dig-feedback loop.** `indication.created_at` and
+  `truth_defect.verified_at` already existed; "median days from indication to verification"
+  is computed by a chainage-proximity join between them at query time, not a new table —
+  deliberately avoiding a `schema_version` bump, which would have hard-invalidated every
+  already-trained bundle (`bundle.load_bundle`'s own version check) for a metric that didn't
+  need one.
+- **App panel deliberately NOT built this pass.** `app/demo_lib.py` is single-survey-scoped
+  throughout; a growth/monitoring panel needs a genuinely new per-line, multi-run loading
+  layer plus new baked `serving/` artifacts — a distinct piece of work from the backend, not
+  a thin UI wrapper around it. Same honest-scoping treatment as Stage 7's infra gaps.
+
+---
+
 ## Stretch, in value order
 
 1. **Real geomagnetic background** from a BGS/NOAA observatory trace — lets you say the

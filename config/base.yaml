@@ -206,6 +206,41 @@ model:
       dent: 0.5
       weld: 0.4
       interference: 0.0
+  growth:
+    # Stage 8: assumes generate.py's own geometric growth law,
+    # severity_smys(run_id) = severity(run_id=0) * data.growth**run_id
+    # (data.growth: 1.15 above) -- so a correctly-implemented pooled
+    # log-linear rate estimator should recover a population rate close to
+    # ln(1.15) ~= 0.1398. Checked directly in tests/test_growth.py.
+    limit_state_smys: 100.0
+    # STATED ENGINEERING JUDGMENT, not derived from data (same treatment as
+    # classify.consequence_proxy) -- generate.py's generate_all() stamps
+    # every run of one call with the SAME wall-clock surveyed_at, so this
+    # synthetic corpus has no real calendar spread between a line's runs.
+    # Remaining life in YEARS is expressed via this stated constant rather
+    # than derived from surveyed_at deltas, which carry no real signal here.
+    assumed_interval_years: 5.0
+    # A defect with fewer observations than this is fully shrunk to the
+    # population rate -- there is no "own" rate to partially trust at n=1.
+    min_observations_for_own_rate: 2
+    # The gate PLAN.md asks for: fit on these runs, project forward, compare
+    # against the actual severity at test_run_id. Mirrors Stage 6's
+    # scale_eval.run_temporal_holdout split shape (same corpus, same reason:
+    # the latest run is the only honest held-out future this demonstrator has).
+    train_run_ids: [0, 1]
+    test_run_id: 2
+  monitor:
+    # validation-and-trust.md Layer 4's own stated thresholds -- implemented
+    # here, not re-derived.
+    psi_warn: 0.2
+    psi_block: 0.3
+    n_bins: 10
+    reference_sample_size: 2000
+    # A survey producing indications/km outside [1/ratio, ratio] x the
+    # training rate is "a sensor or background problem until proven
+    # otherwise" (Layer 4).
+    indications_per_km_ratio_warn: 3.0
+    background_regime_z_threshold: 3.0
   dig_budget_per_km: 5
 
 mlflow:

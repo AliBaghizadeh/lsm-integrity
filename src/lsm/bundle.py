@@ -48,23 +48,52 @@ def library_versions() -> dict[str, str]:
     }
 
 
-def training_feature_summary(corpus: pd.DataFrame, feature_cols: list[str]) -> dict[str, dict[str, float]]:
-    """Per-feature mean/std/min/max on the training corpus -- the Stage 8 drift
-    reference. PSI/KS there compares against THIS stored snapshot, not a
-    statistic re-derived later that could itself have drifted.
+def training_feature_summary(
+    corpus: pd.DataFrame, feature_cols: list[str], seed: int, n_bins: int = 10, sample_size: int = 2000,
+) -> dict[str, dict]:
+    """Per-feature mean/std/min/max PLUS quantile bin edges (n_bins+1 edges)
+    and a bounded, seeded raw sample -- the Stage 8 drift reference. PSI
+    (evaluate.psi) bins a comparison survey's values into THESE edges, never
+    re-derived from the comparison survey; KS (evaluate.ks_drift) needs a
+    raw sample, not a summary statistic (`scipy.stats.ks_2samp` takes two
+    samples of values, not four numbers).
     """
-    summary = {}
+    rng = np.random.default_rng(seed)
+    summary: dict[str, dict] = {}
     for col in feature_cols:
         x = corpus[col].to_numpy(dtype=float)
         x = x[np.isfinite(x)]
         if len(x) == 0:
-            summary[col] = {"mean": float("nan"), "std": float("nan"), "min": float("nan"), "max": float("nan")}
+            summary[col] = {
+                "mean": float("nan"), "std": float("nan"), "min": float("nan"), "max": float("nan"),
+                "bin_edges": [], "sample": [],
+            }
             continue
+        sample = x if len(x) <= sample_size else rng.choice(x, size=sample_size, replace=False)
         summary[col] = {
             "mean": float(np.mean(x)), "std": float(np.std(x)),
             "min": float(np.min(x)), "max": float(np.max(x)),
+            "bin_edges": np.quantile(x, np.linspace(0.0, 1.0, n_bins + 1)).tolist(),
+            "sample": sample.tolist(),
         }
     return summary
+
+
+def training_prediction_reference(
+    indications_per_km: float, p_defect_cal_sample: np.ndarray, seed: int, sample_size: int = 2000,
+) -> dict:
+    """{'indications_per_km': float, 'p_defect_cal_sample': list[float]} --
+    the Stage 8 prediction-drift reference (validation-and-trust.md Layer 4:
+    "distribution of p_defect_cal and indications-per-km vs the training-set
+    rate"). Not per-feature, so it doesn't belong inside
+    `training_feature_summary` -- stored once per training run, reused
+    across bundles exactly like that function's output already is.
+    """
+    rng = np.random.default_rng(seed)
+    x = np.asarray(p_defect_cal_sample, dtype=float)
+    x = x[np.isfinite(x)]
+    sample = x if len(x) <= sample_size else rng.choice(x, size=sample_size, replace=False)
+    return {"indications_per_km": float(indications_per_km), "p_defect_cal_sample": sample.tolist()}
 
 
 def save_bundle(path: str | Path, bundle: dict) -> None:

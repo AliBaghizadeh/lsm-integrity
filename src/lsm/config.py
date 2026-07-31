@@ -126,6 +126,8 @@ class ModelConfig(BaseModel):
     anomaly: dict
     severity: dict
     classify: dict
+    growth: dict
+    monitor: dict
     dig_budget_per_km: int
 
 

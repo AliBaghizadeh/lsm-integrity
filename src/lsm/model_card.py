@@ -8,6 +8,7 @@ artifact an auditor or a customer's integrity engineer actually asks for").
 from __future__ import annotations
 
 import datetime as dt
+import math
 from pathlib import Path
 
 
@@ -155,3 +156,63 @@ def write_model_card(path: str | Path, provenance: dict, result: dict) -> None:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def append_growth_section(path: str | Path, provenance: dict, result: dict) -> None:
+    """Stage 8: appends a growth/remaining-life section to an ALREADY-WRITTEN
+    model card (from `write_model_card`, run at `lsm train` time), inserted
+    before "## Known limitations" if present, else at the end. `forecast` is
+    a separate command run after `train` -- this avoids `run_forecast`
+    needing to reconstruct anomaly/severity/classify's own result dicts just
+    to call `write_model_card` again. `result` needs: `growth`,
+    `growth_baseline` (each `{"mae": (point, lo, hi)}`),
+    `growth_gap_baseline_minus_model`, `growth_gate_passed`,
+    `growth_population_log_rate`, `n_growth_samples`, `n_defects_evaluated`,
+    `median_days_to_verification`. `provenance` needs `limit_state_smys`,
+    `assumed_interval_years`, and optionally `synthetic_growth_rate` (the
+    generator's own `data.growth`, for the honest ln(rate) comparison).
+    """
+    growth, base = result["growth"], result["growth_baseline"]
+    days = result.get("median_days_to_verification")
+    days_text = f"{days:.1f}" if days is not None else "n/a -- no excavations recorded yet"
+
+    rate_comparison = ""
+    if "synthetic_growth_rate" in provenance:
+        rate_comparison = f" (synthetic ground truth: ln({provenance['synthetic_growth_rate']}) = {math.log(provenance['synthetic_growth_rate']):.4f})"
+
+    lines = [
+        "## Growth & remaining life (Stage 8): partially-pooled log-linear growth vs 'no growth' baseline",
+        "",
+        f"- population log-growth-rate: {result['growth_population_log_rate']:.4f}{rate_comparison}",
+        f"- one-step-ahead severity MAE at the held-out run: model {_fmt_ci(growth['mae'])}, "
+        f"no-growth baseline {_fmt_ci(base['mae'])}",
+        f"- gap (baseline - model): {_fmt_ci(result['growth_gap_baseline_minus_model'])}",
+        f"- **gate (model beats the no-growth baseline at the CI lower bound): "
+        f"{'PASSED' if result['growth_gate_passed'] else 'DID NOT PASS'}**",
+        f"- n defects evaluated: {result['n_defects_evaluated']} (of {result['n_growth_samples']} "
+        "matched, multi-run severity observations)",
+        f"- assumed limit state: {provenance.get('limit_state_smys')} %SMYS, assumed survey interval: "
+        f"{provenance.get('assumed_interval_years')} years -- STATED ENGINEERING JUDGMENT, not derived "
+        "from data: `surveyed_at` carries no real elapsed calendar time between a line's runs in this "
+        "synthetic generator (see config/base.yaml's model.growth comment).",
+        "- **honest scope statement: with as few as 3 observations per defect, per-defect growth "
+        "rates are almost entirely population-shrunk, not independently fitted -- the method is "
+        "right for this sample size, but every remaining-life number here is provisional, not a "
+        "calibrated forecast.**",
+        "- growth-rate ESTIMATION uncertainty is not propagated into the remaining-life interval -- "
+        "only the current severity's own conformal interval is (a stated, deliberate scope limit, "
+        "not an oversight).",
+        f"- median days from indication to verification: {days_text} (the dig-feedback loop's own "
+        "number -- bounds how fast this system can learn anything at all).",
+        "",
+    ]
+
+    path = Path(path)
+    existing = path.read_text(encoding="utf-8")
+    marker = "## Known limitations"
+    if marker in existing:
+        head, sep, tail = existing.partition(marker)
+        new_text = head + "\n".join(lines) + "\n" + sep + tail
+    else:
+        new_text = existing.rstrip("\n") + "\n\n" + "\n".join(lines) + "\n"
+    path.write_text(new_text, encoding="utf-8")

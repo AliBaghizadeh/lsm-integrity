@@ -205,6 +205,19 @@ model:
       dent: 0.5
       weld: 0.4
       interference: 0.0
+  growth:
+    limit_state_smys: 100.0
+    assumed_interval_years: 5.0
+    min_observations_for_own_rate: 2
+    train_run_ids: [0, 1]
+    test_run_id: 2
+  monitor:
+    psi_warn: 0.2
+    psi_block: 0.3
+    n_bins: 10
+    reference_sample_size: 2000
+    indications_per_km_ratio_warn: 3.0
+    background_regime_z_threshold: 3.0
   dig_budget_per_km: 5
 
 mlflow:

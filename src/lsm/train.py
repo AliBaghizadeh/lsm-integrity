@@ -28,7 +28,7 @@ import pandas as pd
 from sklearn.isotonic import IsotonicRegression
 from sklearn.metrics import precision_recall_curve
 
-from lsm.bundle import save_bundle, training_feature_summary
+from lsm.bundle import save_bundle, training_feature_summary, training_prediction_reference
 from lsm.config import Config
 from lsm.evaluate import (
     add_fold_column,
@@ -712,6 +712,17 @@ def _evaluate_corpus(
             matched_all["anomaly_score"].to_numpy(), is_defect
         )
 
+    # Stage 8: prediction-drift reference material -- the training corpus's
+    # own indications-per-km rate and calibrated P(defect) distribution,
+    # captured here (not re-derived at monitor time, which could itself have
+    # drifted). Stashed on `result` so _log_and_persist can bundle it.
+    total_km = corpus.groupby("survey_id")["chainage_m"].agg(lambda s: s.max() - s.min()).sum() / 1000.0
+    result["indications_per_km"] = len(all_indications) / total_km if total_km > 0 else 0.0
+    result["p_defect_cal_sample"] = (
+        defect_calibrator.predict(matched_all["anomaly_score"].to_numpy())
+        if defect_calibrator is not None else np.array([])
+    )
+
     # Stage 5: classification, conditional on enough matched, multi-class
     # data to fit and evaluate at all (mirrors severity's own sample-size
     # guard, widened to also require class diversity).
@@ -987,7 +998,10 @@ def _log_and_persist(
         mad_version = f"anomaly-mad-{date_tag}-{short_sha}"
         if_version = f"anomaly-if-{date_tag}-{short_sha}"
         truth_as_of = now.isoformat()
-        feature_summary = training_feature_summary(corpus, feature_cols)
+        feature_summary = training_feature_summary(corpus, feature_cols, seed=cfg.seed)
+        prediction_reference = training_prediction_reference(
+            result["indications_per_km"], result["p_defect_cal_sample"], seed=cfg.seed,
+        )
 
         for model_version, model_obj, model_kind, threshold in (
             (mad_version, mad_final, "mad", mad_final_threshold),
@@ -1010,6 +1024,7 @@ def _log_and_persist(
                     "data_sha256": corpus_data_sha256,
                     "truth_as_of": truth_as_of,
                     "training_feature_summary": feature_summary,
+                    "training_prediction_reference": prediction_reference,
                 },
             )
             metrics_for_model = result["mad" if model_kind == "mad" else "isolation_forest"]
@@ -1049,6 +1064,7 @@ def _log_and_persist(
                     "data_sha256": corpus_data_sha256,
                     "truth_as_of": truth_as_of,
                     "training_feature_summary": feature_summary,
+                    "training_prediction_reference": prediction_reference,
                 },
             )
             conn.execute(
@@ -1130,6 +1146,7 @@ def _log_and_persist(
                     "data_sha256": corpus_data_sha256,
                     "truth_as_of": truth_as_of,
                     "training_feature_summary": feature_summary,
+                    "training_prediction_reference": prediction_reference,
                 },
             )
             conn.execute(

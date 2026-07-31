@@ -26,6 +26,7 @@ import numpy as np
 import pandas as pd
 
 from lsm.config import ValidateConfig
+from lsm.evaluate import background_regime_shift
 from lsm.logging_utils import get_logger
 from lsm.schemas import validate_reading_schema, SchemaValidationError
 
@@ -287,11 +288,10 @@ def check_background_regime(
         )
     hist = pd.DataFrame(medians)
     cur_median = df[["bx_nt", "by_nt", "bz_nt"]].median()
-    hist_mean, hist_std = hist.mean(), hist.std().replace(0, np.nan)
-    z = ((cur_median - hist_mean) / hist_std).abs()
-    n_bad = int((z > 3).fillna(False).sum())
+    shift = background_regime_shift(cur_median, hist, z_threshold=3.0)
     return DQCheckResult(
-        "background_regime", _gate_status(n_bad > 0, gate), n_bad, {"z_scores": z.to_dict()}
+        "background_regime", _gate_status(shift["n_bad"] > 0, gate), shift["n_bad"],
+        {"z_scores": shift["z_scores"]},
     )
 
 

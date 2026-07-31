@@ -181,17 +181,65 @@ def predict(env: str = "dev", survey_id: str = typer.Argument(..., help="e.g. LI
 
 
 @app.command()
-def forecast(env: str = "dev") -> None:
-    """[Stage 8] Per-defect growth -> remaining life."""
-    typer.echo("forecast: not yet implemented (Stage 8)")
-    raise typer.Exit(code=2)
+def forecast(
+    env: str = "dev",
+    as_of: str = typer.Option(None, help="ISO date -- reconstruct what was knowable on this date; defaults to now"),
+) -> None:
+    """[Stage 8] Per-defect growth -> remaining life.
+
+    Fits a partially-pooled log-linear growth rate per physical defect
+    (shrunk toward the population rate), projects each toward the
+    configured limit state, and gates on beating a "no growth" baseline at
+    a held-out run. Requires a released pipeline (`lsm train` first).
+    """
+    from lsm.db import connect
+    from lsm.growth import run_forecast
+
+    cfg = load_config(env)
+    conn = connect(cfg.env.storage.sqlite_path)
+    result = run_forecast(cfg, conn, as_of=as_of)
+    typer.echo(
+        f"population log-growth-rate: {result['growth_population_log_rate']:.4f} "
+        f"(n={result['n_defects_evaluated']} defects evaluated)"
+    )
+    typer.echo(f"gate (beats no-growth baseline): {'PASSED' if result['growth_gate_passed'] else 'DID NOT PASS'}")
+    if not result["growth_gate_passed"]:
+        raise typer.Exit(code=1)
 
 
 @app.command()
-def monitor(env: str = "dev") -> None:
+def monitor(env: str = "dev", survey_id: str = typer.Argument(..., help="an already-`lsm predict`-ed survey")) -> None:
     """[Stage 8] Drift: PSI/KS vs bundle reference, indications/km, regime shift."""
-    typer.echo("monitor: not yet implemented (Stage 8)")
-    raise typer.Exit(code=2)
+    from lsm.db import connect
+    from lsm.monitor import monitor_report_to_text, monitor_survey
+
+    cfg = load_config(env)
+    conn = connect(cfg.env.storage.sqlite_path)
+    report = monitor_survey(conn, survey_id, cfg)
+    typer.echo(monitor_report_to_text(report))
+    if report["status"] == "block":
+        raise typer.Exit(code=1)
+
+
+@app.command()
+def verify(
+    env: str = "dev",
+    indication_id: str = typer.Argument(..., help="the indication being verified by an excavation"),
+    severity_smys: float = typer.Argument(..., help="as-found severity (%SMYS) at the dig"),
+    defect_type: str = typer.Option(None, help="verified defect type, if reclassified at the dig"),
+) -> None:
+    """[Stage 8] Record an excavation's ground truth -- writes `source=
+    'excavation'` truth rows, closing the dig-feedback loop
+    (validation-and-trust.md Layer 5). Not part of PLAN.md's original named
+    command list, but the loop needs an entry point to close.
+    """
+    from lsm.db import connect
+    from lsm.dig_feedback import record_excavation
+
+    cfg = load_config(env)
+    conn = connect(cfg.env.storage.sqlite_path)
+    defect_id = record_excavation(conn, indication_id, severity_smys, verified_defect_type=defect_type)
+    typer.echo(f"{indication_id}: verified as {defect_id}")
 
 
 @app.command()

@@ -20,6 +20,7 @@ dependencies = [
     "pydeck",
     "duckdb",
     "psutil",
+    "scipy",
 ]
 
 [project.optional-dependencies]
