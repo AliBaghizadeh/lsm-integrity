@@ -49,20 +49,23 @@ if "entered" not in st.session_state:
 
 if not st.session_state["entered"]:
     st.write("")
-    hero_text, hero_img = st.columns([1.5, 1], gap="large")
-    with hero_text:
-        st.markdown("# AI in Action")
-        st.markdown("### Inspecting pipelines before they fail")
+    _, hero_center, _ = st.columns([1, 2, 1])
+    with hero_center:
+        st.markdown("<h1 style='text-align:center'>AI in Action</h1>", unsafe_allow_html=True)
+        st.markdown(
+            "<h3 style='text-align:center;font-weight:400'>Inspecting pipelines before they fail</h3>",
+            unsafe_allow_html=True,
+        )
         st.write(
             "A live walkthrough of an LSM pipeline-integrity pipeline -- from a raw "
             "45,000 nT magnetometer signal to a risk-ranked dig list, scored end to end "
             "by real, trained models."
         )
-        if st.button("Launch the demo  →", type="primary"):
-            st.session_state["entered"] = True
-            st.rerun()
-    with hero_img:
-        st.image(str(Path(__file__).resolve().parent / "ROSEN_inspection.jpeg"), width="stretch")
+        _, button_center, _ = st.columns([1, 1, 1])
+        with button_center:
+            if st.button("Launch the demo  →", type="primary", width="stretch"):
+                st.session_state["entered"] = True
+                st.rerun()
     st.stop()
 
 
