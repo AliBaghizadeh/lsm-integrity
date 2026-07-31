@@ -315,7 +315,7 @@ def test_reliability_curve_bins_by_confidence_and_reports_empirical_accuracy():
     correct = np.array([1, 1, 0, 1, 0, 0])
     curve = reliability_curve(confidences, correct, n_bins=2)
     assert len(curve) == 2
-    assert set(curve["n"]) == {3, 3}
+    assert set(curve["n"]) == {3}
     assert sorted(curve["bin_accuracy"]) == pytest.approx([1 / 3, 2 / 3])
 
 

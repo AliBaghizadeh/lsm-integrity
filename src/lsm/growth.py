@@ -27,9 +27,8 @@ import numpy as np
 import pandas as pd
 
 from lsm import bundle as bundle_module
-from lsm import dig_feedback
+from lsm import dig_feedback, train
 from lsm import predict as predict_module
-from lsm import train
 from lsm.config import Config
 from lsm.evaluate import bootstrap_ci, paired_bootstrap_ci
 from lsm.hashing import data_sha256
@@ -313,7 +312,7 @@ def run_forecast(cfg: Config, conn, as_of: str | None = None) -> dict:
     point-in-time plumbing for real, for the first time anywhere in this
     project (every other call site always passes "now").
     """
-    now = dt.datetime.now(dt.timezone.utc)
+    now = dt.datetime.now(dt.UTC)
     as_of = as_of or now.isoformat()
     feature_version = cfg.base.features.version
 
@@ -330,7 +329,7 @@ def run_forecast(cfg: Config, conn, as_of: str | None = None) -> dict:
     line_ids = sorted(corpus["line_id"].unique())
     registries = []
     for line_id in line_ids:
-        ref_survey_id = sorted(corpus.loc[corpus["line_id"] == line_id, "survey_id"].unique())[0]
+        ref_survey_id = min(corpus.loc[corpus["line_id"] == line_id, "survey_id"].unique())
         ref_rows = corpus[corpus["survey_id"] == ref_survey_id]
         registries.append(train.build_truth_registry(ref_rows, line_id))
     registry = pd.concat(registries, ignore_index=True)

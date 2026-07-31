@@ -5,7 +5,11 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from lsm.models.anomaly import IsolationForestAnomalyModel, MADBaseline, calibrated_threshold
+from lsm.models.anomaly import (
+    IsolationForestAnomalyModel,
+    MADBaseline,
+    calibrated_threshold,
+)
 
 
 def test_mad_baseline_scores_zero_at_the_median():

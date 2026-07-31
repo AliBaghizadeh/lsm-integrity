@@ -48,7 +48,7 @@ def _build_and_train(cfg):
     results = generate_all(cfg.base.data, cfg.env.storage.raw_dir, seed=cfg.seed)
     conn = connect(cfg.env.storage.sqlite_path)
     for sr in results:
-        status, report = run_survey_pipeline(conn, sr, cfg)
+        _status, report = run_survey_pipeline(conn, sr, cfg)
         assert not report.has_fail
     for sr in results:
         outcome, _ = run_feature_pipeline(conn, sr.survey_id, cfg)
@@ -93,7 +93,7 @@ def test_no_growth_baseline_gate(cfg):
     result = run_forecast(cfg, conn)
 
     assert result["growth_gate_passed"] is True
-    point, lo, hi = result["growth_gap_baseline_minus_model"]
+    _point, lo, _hi = result["growth_gap_baseline_minus_model"]
     assert lo > 0.0  # the CI lower bound, not just the point estimate
 
 
@@ -141,7 +141,7 @@ def test_match_residual_is_recorded_and_finite(cfg):
     from lsm.features import load_feature_corpus
     from lsm.predict import latest_pipeline_release
 
-    as_of = dt.datetime.now(dt.timezone.utc).isoformat()
+    as_of = dt.datetime.now(dt.UTC).isoformat()
     corpus = load_feature_corpus(cfg.env.storage.feature_dir, cfg.base.features.version, as_of=as_of)
     survey_ids = sorted(corpus["survey_id"].unique())
     truth = train_module._load_truth_and_geometry(conn, survey_ids)
@@ -149,7 +149,7 @@ def test_match_residual_is_recorded_and_finite(cfg):
     line_ids = sorted(corpus["line_id"].unique())
     registries = []
     for line_id in line_ids:
-        ref_survey_id = sorted(corpus.loc[corpus["line_id"] == line_id, "survey_id"].unique())[0]
+        ref_survey_id = min(corpus.loc[corpus["line_id"] == line_id, "survey_id"].unique())
         ref_rows = corpus[corpus["survey_id"] == ref_survey_id]
         registries.append(train_module.build_truth_registry(ref_rows, line_id))
     registry = pd.concat(registries, ignore_index=True)

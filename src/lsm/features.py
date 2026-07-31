@@ -127,7 +127,7 @@ class FittedTransform(abc.ABC):
     def is_fitted(self) -> bool:
         return self._fitted
 
-    def fit(self, X: pd.DataFrame) -> "FittedTransform":
+    def fit(self, X: pd.DataFrame) -> FittedTransform:
         if self._fitted:
             raise AlreadyFittedError(
                 f"{type(self).__name__} is already fit. Fitted transforms are fit on the "
@@ -278,7 +278,7 @@ def detrend_axis(s_m: np.ndarray, y: np.ndarray, cfg: FeaturesConfig) -> np.ndar
 
 def _odd_window(window_m: float, step_m: float, minimum: int = 3) -> int:
     """Window length in samples, forced odd so `center=True` is symmetric."""
-    n = int(round(window_m / step_m))
+    n = round(window_m / step_m)
     n = max(minimum, n)
     return n if n % 2 == 1 else n + 1
 
@@ -684,7 +684,7 @@ def write_features(
                 "content_sha256": content_sha256,
                 "feature_version": feature_version,
                 "config_sha256": config_sha256,
-                "n_rows": int(len(features)),
+                "n_rows": len(features),
                 "n_edge_rows": int((features["dq_flag"] == "edge").sum()),
                 "columns": list(features.columns),
             },

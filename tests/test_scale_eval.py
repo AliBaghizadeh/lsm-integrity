@@ -20,7 +20,7 @@ from lsm.pipeline import run_feature_pipeline, run_survey_pipeline
 
 
 def _now_iso() -> str:
-    return dt.datetime.now(dt.timezone.utc).isoformat()
+    return dt.datetime.now(dt.UTC).isoformat()
 
 
 def _scale_eval_sized_cfg(cfg):
@@ -42,7 +42,7 @@ def _build_corpus(cfg):
     results = generate_all(cfg.base.data, cfg.env.storage.raw_dir, seed=cfg.seed)
     conn = connect(cfg.env.storage.sqlite_path)
     for sr in results:
-        status, report = run_survey_pipeline(conn, sr, cfg)
+        _status, report = run_survey_pipeline(conn, sr, cfg)
         assert not report.has_fail
     for sr in results:
         outcome, _ = run_feature_pipeline(conn, sr.survey_id, cfg)
@@ -146,7 +146,7 @@ def test_run_temporal_holdout_smoke(cfg):
     line_ids = sorted(corpus["line_id"].unique())
     registries = []
     for line_id in line_ids:
-        ref_survey_id = sorted(corpus.loc[corpus["line_id"] == line_id, "survey_id"].unique())[0]
+        ref_survey_id = min(corpus.loc[corpus["line_id"] == line_id, "survey_id"].unique())
         ref_rows = corpus[corpus["survey_id"] == ref_survey_id]
         registries.append(train.build_truth_registry(ref_rows, line_id))
     registry = pd.concat(registries, ignore_index=True)

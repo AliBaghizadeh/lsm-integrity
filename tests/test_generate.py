@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import itertools
+
 import numpy as np
 import pytest
 
@@ -82,7 +84,7 @@ def test_build_features_never_places_overlapping_label_windows(cfg):
     features = _build_features(cfg.base.data, rng)
 
     windows = _label_windows(cfg.base.data, features)
-    for (_, hi, _), (lo2, _, _) in zip(windows, windows[1:]):
+    for (_, hi, _), (lo2, _, _) in itertools.pairwise(windows):
         assert hi <= lo2, "two label windows overlap"
 
 

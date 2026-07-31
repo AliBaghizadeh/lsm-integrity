@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import ClassVar
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -135,7 +137,7 @@ def test_select_dig_budget_on_empty_indications_returns_empty():
 class _FakeSeverityModel:
     """Deterministic stand-in: predicts feat_a itself as the median, +-1 as the interval."""
 
-    feature_cols = ["feat_a"]
+    feature_cols: ClassVar[list[str]] = ["feat_a"]
 
     def predict(self, X):
         med = X["feat_a"].to_numpy(dtype=float)

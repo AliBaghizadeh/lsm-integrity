@@ -23,7 +23,11 @@ from lsm import train
 from lsm.config import Config
 from lsm.evaluate import add_fold_column_by_line
 from lsm.features import FEATURE_KEY_COLUMNS, assert_point_in_time, read_feature_meta
-from lsm.models.anomaly import IsolationForestAnomalyModel, MADBaseline, calibrated_threshold
+from lsm.models.anomaly import (
+    IsolationForestAnomalyModel,
+    MADBaseline,
+    calibrated_threshold,
+)
 
 
 def load_feature_corpus_duckdb(
@@ -311,7 +315,7 @@ def run_scale_evaluation(cfg: Config, conn: sqlite3.Connection) -> dict:
     line_ids = sorted(corpus["line_id"].unique())
     registries = []
     for line_id in line_ids:
-        ref_survey_id = sorted(corpus.loc[corpus["line_id"] == line_id, "survey_id"].unique())[0]
+        ref_survey_id = min(corpus.loc[corpus["line_id"] == line_id, "survey_id"].unique())
         ref_rows = corpus[corpus["survey_id"] == ref_survey_id]
         registries.append(train.build_truth_registry(ref_rows, line_id))
     registry = pd.concat(registries, ignore_index=True)

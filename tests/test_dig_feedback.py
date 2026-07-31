@@ -10,8 +10,8 @@ from __future__ import annotations
 from lsm.db import connect
 from lsm.dig_feedback import (
     median_days_to_verification,
-    record_excavation,
     recompute_coverage_from_verifications,
+    record_excavation,
 )
 
 

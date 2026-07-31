@@ -35,7 +35,7 @@ def test_range_violation_is_caught(tiny_cfg, tmp_path):
         return df
 
     sr = generate_one_survey(tiny_cfg, tmp_path, mutate=corrupt)
-    conn, status, report = run_pipeline_on(tiny_cfg, sr)
+    conn, _status, report = run_pipeline_on(tiny_cfg, sr)
 
     statuses = _status_by_check(report)
     assert statuses["range"] == "fail"
@@ -81,7 +81,7 @@ def test_saturation_is_caught(tiny_cfg, tmp_path):
         return df
 
     sr = generate_one_survey(tiny_cfg, tmp_path, mutate=corrupt)
-    conn, status, report = run_pipeline_on(tiny_cfg, sr)
+    _conn, _status, report = run_pipeline_on(tiny_cfg, sr)
 
     statuses = _status_by_check(report)
     assert statuses["saturation"] == "fail"
@@ -94,7 +94,7 @@ def test_duplicate_sample_idx_is_caught(tiny_cfg, tmp_path):
         return df
 
     sr = generate_one_survey(tiny_cfg, tmp_path, mutate=corrupt)
-    conn, status, report = run_pipeline_on(tiny_cfg, sr)
+    conn, _status, report = run_pipeline_on(tiny_cfg, sr)
 
     statuses = _status_by_check(report)
     assert statuses["duplicate_sample_idx"] == "fail"
@@ -120,7 +120,7 @@ def test_sample_idx_monotonic_violation_is_caught(tiny_cfg, tmp_path):
         return df
 
     sr = generate_one_survey(tiny_cfg, tmp_path, mutate=corrupt)
-    conn, status, report = run_pipeline_on(tiny_cfg, sr)
+    _conn, _status, report = run_pipeline_on(tiny_cfg, sr)
 
     statuses = _status_by_check(report)
     assert statuses["sample_idx_monotonic"] == "fail"
@@ -134,7 +134,7 @@ def test_gps_jump_is_caught(tiny_cfg, tmp_path):
         return df
 
     sr = generate_one_survey(tiny_cfg, tmp_path, mutate=corrupt)
-    conn, status, report = run_pipeline_on(tiny_cfg, sr)
+    _conn, _status, report = run_pipeline_on(tiny_cfg, sr)
 
     statuses = _status_by_check(report)
     assert statuses["gps_jump"] == "warn"  # configured gate: warn
@@ -147,7 +147,7 @@ def test_schema_violation_is_caught(tiny_cfg, tmp_path):
         return df
 
     sr = generate_one_survey(tiny_cfg, tmp_path, mutate=corrupt)
-    conn, status, report = run_pipeline_on(tiny_cfg, sr)
+    _conn, _status, report = run_pipeline_on(tiny_cfg, sr)
 
     statuses = _status_by_check(report)
     assert statuses["schema"] == "fail"
@@ -180,7 +180,7 @@ def test_duplicate_content_is_caught_on_second_ingest(tiny_cfg, tmp_path):
 
 def test_survey_overlap_flags_near_identical_signal(tiny_cfg, tmp_path):
     sr = generate_one_survey(tiny_cfg, tmp_path)
-    conn, _, report1 = run_pipeline_on(tiny_cfg, sr)
+    _conn, _, report1 = run_pipeline_on(tiny_cfg, sr)
     assert not report1.has_fail
 
     # Same physical acquisition, mislabelled as a different run: content_sha256
@@ -207,7 +207,7 @@ def test_coverage_warns_on_short_survey(tiny_cfg, tmp_path):
         return df.iloc[: len(df) // 2].copy()
 
     sr = generate_one_survey(tiny_cfg, tmp_path, mutate=truncate)
-    conn, status, report = run_pipeline_on(
+    _conn, _status, _report = run_pipeline_on(
         tiny_cfg, sr
     )
     # coverage check needs an expected_length_m to fire; run_survey_pipeline
@@ -229,7 +229,7 @@ def test_noise_floor_and_interference_density_run_without_error(tiny_cfg, tmp_pa
     assert they execute and report a status, not a specific threshold outcome.
     """
     sr = generate_one_survey(tiny_cfg, tmp_path)
-    conn, status, report = run_pipeline_on(tiny_cfg, sr)
+    _conn, _status, report = run_pipeline_on(tiny_cfg, sr)
     statuses = _status_by_check(report)
     assert statuses["noise_floor"] in ("pass", "warn", "fail")
     assert statuses["interference_density"] in ("pass", "warn", "fail")

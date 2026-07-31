@@ -318,7 +318,7 @@ def load_survey_result(path: Path, step_m: float, standoff_m: float) -> SurveyRe
     df = pd.read_parquet(path)
     line_id = str(df["line_id"].iloc[0])
     run_id = int(df["run_id"].iloc[0])
-    surveyed_at = dt.datetime.fromtimestamp(path.stat().st_mtime, tz=dt.timezone.utc).isoformat()
+    surveyed_at = dt.datetime.fromtimestamp(path.stat().st_mtime, tz=dt.UTC).isoformat()
     return SurveyResult(
         survey_id=f"{line_id}_R{run_id}",
         line_id=line_id,
@@ -339,7 +339,7 @@ def generate_all(cfg: DataConfig, raw_dir: Path, seed: int) -> list[SurveyResult
     """Generate cfg.n_lines lines x cfg.n_runs surveys, write one Parquet file each."""
     raw_dir = Path(raw_dir)
     results: list[SurveyResult] = []
-    surveyed_at = dt.datetime.now(dt.timezone.utc).isoformat()
+    surveyed_at = dt.datetime.now(dt.UTC).isoformat()
 
     for line_idx in range(cfg.n_lines):
         line_id = f"LINE{line_idx:03d}"

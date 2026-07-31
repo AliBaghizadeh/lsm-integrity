@@ -33,12 +33,12 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from lsm.config import load_config  # noqa: E402
-from lsm.db import connect  # noqa: E402
-from lsm.features import feature_store_dir  # noqa: E402
-from lsm.hashing import content_sha256, file_sha256  # noqa: E402
-from lsm.pipeline import run_survey_pipeline  # noqa: E402
-from lsm.predict import latest_pipeline_release  # noqa: E402
+from lsm.config import load_config
+from lsm.db import connect
+from lsm.features import feature_store_dir
+from lsm.hashing import content_sha256, file_sha256
+from lsm.pipeline import run_survey_pipeline
+from lsm.predict import latest_pipeline_release
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SERVING_DIR = PROJECT_ROOT / "serving"
@@ -140,8 +140,18 @@ def main() -> None:
     cfg = load_config("dev")
     conn = connect(cfg.env.storage.sqlite_path)
 
-    pipeline_version, anomaly_version, severity_version = latest_pipeline_release(conn)
+    pipeline_version, anomaly_version, severity_version, classify_version = latest_pipeline_release(conn)
     print(f"Baking against pipeline_version={pipeline_version}")
+
+    # latest_pipeline_release() doesn't carry growth_version -- growth is UPDATEd
+    # onto an already-released pipeline (never a new release row, see growth.py),
+    # so pull it directly rather than widening a function three other call sites
+    # already depend on for a value only this script needs before the pr_row
+    # query below.
+    growth_version = conn.execute(
+        "SELECT growth_version FROM pipeline_release WHERE pipeline_version=?",
+        (pipeline_version,),
+    ).fetchone()[0]
 
     if SERVING_DIR.exists():
         shutil.rmtree(SERVING_DIR)
@@ -158,7 +168,7 @@ def main() -> None:
     (SERVING_DIR / "bundles").mkdir(parents=True, exist_ok=True)
     model_dir = Path(cfg.env.storage.model_dir)
     model_run_rows: dict[str, dict] = {}
-    for model_version in (anomaly_version, severity_version):
+    for model_version in (anomaly_version, severity_version, classify_version, growth_version):
         if model_version is None:
             continue
         src_bundle = model_dir / model_version / "bundle.joblib"

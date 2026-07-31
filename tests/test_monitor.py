@@ -31,7 +31,7 @@ def _train_a_pipeline(cfg):
     results = generate_all(cfg.base.data, cfg.env.storage.raw_dir, seed=cfg.seed)
     conn = connect(cfg.env.storage.sqlite_path)
     for sr in results:
-        status, report = run_survey_pipeline(conn, sr, cfg)
+        _status, report = run_survey_pipeline(conn, sr, cfg)
         assert not report.has_fail
     for sr in results:
         outcome, _ = run_feature_pipeline(conn, sr.survey_id, cfg)
@@ -78,7 +78,7 @@ def _write_and_predict_shifted_survey(cfg, conn, line_id="LINE000", run_id=3, bx
     df[write_cols].sort_values("sample_idx").to_parquet(out_path, index=False, compression="zstd")
 
     sr = load_survey_result(out_path, data_cfg.step_m, data_cfg.depth_m)
-    status, report = run_survey_pipeline(conn, sr, cfg)
+    _status, _report = run_survey_pipeline(conn, sr, cfg)
     outcome, _ = run_feature_pipeline(conn, sr.survey_id, cfg)
     assert outcome == "computed"
     predict_survey(conn, sr.survey_id, cfg)

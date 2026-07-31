@@ -173,6 +173,29 @@ method under a genuine small-sample regime, not a coincidence. Still conditional
 3's detector, which doesn't beat baseline — a passing severity gate validates the CQR
 methodology, not the whole pipeline's choice of anomaly model.
 
+**"How do you decide defect type — SCC vs weld vs dent vs corrosion?"** Multiclass LightGBM
+(isotonic-calibrated P(defect), degenerate-fold fallbacks for the small per-class counts, a
+physics-consistency SHAP check that denylists absolute chainage) — that machinery is real and
+built. But the honest number, from my real run: recall is scc 0.125, weld 0.111, dent 0.646,
+corrosion 0.383, versus **interference at 0.778 recall / 0.909 precision**. I didn't just
+report that gap, I checked why. In `generate.py`, each synthetic defect's `type` is assigned
+`rng.choice(["scc","weld","dent","corrosion"])` at generation time, and grepping the file
+confirms that value is read in exactly one place afterward — writing the ground-truth label
+column. It never reaches the dipole model: amplitude, orientation and decay all come from
+`severity`/`orientation`, drawn independently of `type`. So in this synthetic dataset the four
+defect subtypes are **physically indistinguishable in the sensor data by construction** —
+there is no signal in the features for a classifier to find, and scc/weld sitting at or below
+the 25% random-guess floor for a 4-way choice is the model doing exactly what the data
+supports, not underperforming. Interference is a genuinely different physical source (bigger
+magnetic moment, broader/off-pipe geometry — see the interference section above), which is
+why the model separates it well and can't separate the other four. I'd rather say that
+plainly than let a strong interference number imply the subtype numbers are equally real.
+Fixing it for real means extending the generator so each defect type carries a distinguishing
+physical signature (the decay/shape differences a metallurgist would actually expect between
+SCC, a weld anomaly, a dent, and corrosion) — a stated, scoped data gap, not a modelling
+failure, and the same "add its baseline first, report the honest number" discipline as
+everything else in this project.
+
 **"Deep learning?"** A 1-D CNN over the residual window is a reasonable next step and I have
 it planned, but gradient boosting on well-designed physics features is the right first
 model at this data scale, it trains in seconds on 16 cores, and it is far easier to

@@ -51,7 +51,7 @@ def record_excavation(
     logic but is only exercised by a test that seeds a prior
     `truth_defect`/`defect` row itself.
     """
-    verified_at = verified_at or dt.datetime.now(dt.timezone.utc).isoformat()
+    verified_at = verified_at or dt.datetime.now(dt.UTC).isoformat()
 
     row = conn.execute(
         "SELECT survey_id, chainage_peak_m FROM indication WHERE indication_id=?", (indication_id,)

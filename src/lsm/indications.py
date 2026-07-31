@@ -78,7 +78,7 @@ def cluster_indications(
     edges = np.flatnonzero(np.diff(np.concatenate([[0], above.astype(int), [0]])))
     starts, ends = edges[::2], edges[1::2]  # [start, end) row-index pairs, end exclusive
 
-    now = dt.datetime.now(dt.timezone.utc).isoformat()
+    now = dt.datetime.now(dt.UTC).isoformat()
     rows = []
     for a, b in zip(starts, ends):
         run = d.iloc[a:b]

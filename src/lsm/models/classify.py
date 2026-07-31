@@ -34,7 +34,7 @@ class MajorityClassBaseline:
         self.majority_: str | None = None
         self.majority_frac_: float | None = None
 
-    def fit(self, y_train: np.ndarray) -> "MajorityClassBaseline":
+    def fit(self, y_train: np.ndarray) -> MajorityClassBaseline:
         counts = pd.Series(y_train).value_counts()
         self.majority_ = str(counts.idxmax())
         self.majority_frac_ = float(counts.max() / len(y_train))
@@ -104,7 +104,7 @@ class ClassifyModel:
 
     def fit(
         self, X_train: pd.DataFrame, y_train: np.ndarray, X_calib: pd.DataFrame, y_calib: np.ndarray
-    ) -> "ClassifyModel":
+    ) -> ClassifyModel:
         train_classes = set(y_train)
         if len(train_classes) < 2:
             # LightGBM's multiclass objective cannot fit at all with fewer

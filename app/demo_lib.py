@@ -42,6 +42,15 @@ def demo_scenarios() -> list[dict]:
     return load_manifest()["demo_scenarios"]
 
 
+def load_model_card() -> str:
+    """The auto-generated model card (`model_card.py`) baked alongside the
+    bundles -- the real MAD-vs-IsolationForest, severity-vs-baseline and
+    classify-vs-baseline numbers from the training run that produced whatever
+    this app is currently serving. Same file regardless of scenario or mode
+    (demo/live), since it describes the released pipeline, not one survey."""
+    return (SERVING_DIR / "model_card.md").read_text(encoding="utf-8")
+
+
 def load_demo_raw(survey_id: str) -> pd.DataFrame:
     return pd.read_parquet(SERVING_DIR / "demo_surveys" / f"{survey_id}.parquet")
 

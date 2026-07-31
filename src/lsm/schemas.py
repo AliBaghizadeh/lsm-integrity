@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import pandas as pd
 import pandera.pandas as pa
-from pandera.pandas import Column, DataFrameSchema, Check
+from pandera.pandas import Check, Column, DataFrameSchema
 
 # Pinned category order -- serialised into every model bundle. Never let pandas
 # infer this from whatever happened to be in a training frame.

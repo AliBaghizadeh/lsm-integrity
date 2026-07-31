@@ -353,10 +353,10 @@ def test_point_in_time_guard_passes_on_contemporaneous_data():
 def test_feature_cache_hits_on_identical_content_and_version(cfg, tmp_path):
     df = make_survey()
     ctx = ctx_for()
-    args = dict(
-        raw_df=df, ctx=ctx, cfg=cfg.base.features, feature_dir=tmp_path,
-        content_sha256="abc123", config_sha256=cfg.config_sha256,
-    )
+    args = {
+        "raw_df": df, "ctx": ctx, "cfg": cfg.base.features, "feature_dir": tmp_path,
+        "content_sha256": "abc123", "config_sha256": cfg.config_sha256,
+    }
     assert compute_and_store(**args)[0] == "computed"
     assert compute_and_store(**args)[0] == "hit"
     assert compute_and_store(**args, force=True)[0] == "computed"
@@ -364,8 +364,8 @@ def test_feature_cache_hits_on_identical_content_and_version(cfg, tmp_path):
 
 def test_changed_content_invalidates_the_cache(cfg, tmp_path):
     ctx = ctx_for()
-    base = dict(raw_df=make_survey(), ctx=ctx, cfg=cfg.base.features,
-                feature_dir=tmp_path, config_sha256=cfg.config_sha256)
+    base = {"raw_df": make_survey(), "ctx": ctx, "cfg": cfg.base.features,
+                "feature_dir": tmp_path, "config_sha256": cfg.config_sha256}
     assert compute_and_store(**base, content_sha256="hash_one")[0] == "computed"
     assert compute_and_store(**base, content_sha256="hash_two")[0] == "computed"
 
@@ -403,7 +403,7 @@ def test_corpus_loader_applies_the_as_of_cut(cfg, tmp_path):
     unreproducible -- and would look like an improvement, not a bug.
     """
     for run_id, when in [(0, "2026-01-01"), (1, "2026-04-01"), (2, "2026-07-01")]:
-        ctx = SurveyContext("LINE000_R%d" % run_id, "LINE000", run_id, 0.5, 1.5, when, None)
+        ctx = SurveyContext(f"LINE000_R{run_id}", "LINE000", run_id, 0.5, 1.5, when, None)
         compute_and_store(make_survey(n=300), ctx, cfg.base.features, tmp_path,
                           f"content_{run_id}", cfg.config_sha256)
 
@@ -422,8 +422,9 @@ def test_pipeline_refuses_to_featurise_a_quarantined_survey(tiny_cfg, tmp_path):
     Quarantined surveys get no features -- silently featurising them would put
     known-bad data into the training corpus.
     """
-    from lsm.pipeline import SurveyNotFeaturisableError, run_feature_pipeline
     from conftest import generate_one_survey, run_pipeline_on
+
+    from lsm.pipeline import SurveyNotFeaturisableError, run_feature_pipeline
 
     def corrupt(df):
         df.loc[50:60, "bz_nt"] = 42.0  # stuck channel -> saturation gate (hard fail)
@@ -438,8 +439,9 @@ def test_pipeline_refuses_to_featurise_a_quarantined_survey(tiny_cfg, tmp_path):
 
 
 def test_end_to_end_features_from_a_generated_survey(tiny_cfg, tmp_path):
-    from lsm.pipeline import run_feature_pipeline
     from conftest import generate_one_survey, run_pipeline_on
+
+    from lsm.pipeline import run_feature_pipeline
 
     sr = generate_one_survey(tiny_cfg, tmp_path)
     conn, _, report = run_pipeline_on(tiny_cfg, sr)

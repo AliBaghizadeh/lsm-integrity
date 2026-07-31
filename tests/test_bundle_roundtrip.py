@@ -9,7 +9,6 @@ import joblib
 import numpy as np
 import pandas as pd
 import pytest
-
 from sklearn.isotonic import IsotonicRegression
 
 from lsm.bundle import (

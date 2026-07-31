@@ -60,7 +60,7 @@ class GlobalMeanSeverityBaseline:
         self.mean_: float | None = None
         self.margin_: float | None = None
 
-    def fit(self, y_train: np.ndarray, y_calib: np.ndarray) -> "GlobalMeanSeverityBaseline":
+    def fit(self, y_train: np.ndarray, y_calib: np.ndarray) -> GlobalMeanSeverityBaseline:
         self.mean_ = float(np.mean(y_train))
         residuals = np.abs(y_calib - self.mean_)
         self.margin_ = conformal_margin(residuals, self.conformal_alpha)
@@ -118,7 +118,7 @@ class SeverityModel:
 
     def fit(
         self, X_train: pd.DataFrame, y_train: np.ndarray, X_calib: pd.DataFrame, y_calib: np.ndarray
-    ) -> "SeverityModel":
+    ) -> SeverityModel:
         X_train_mat = X_train[self.feature_cols].fillna(0.0)
         for q in (self.q_lo, self.q_med, self.q_hi):
             model = self._make_model(q)

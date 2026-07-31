@@ -7,7 +7,11 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from lsm.models.severity import GlobalMeanSeverityBaseline, SeverityModel, conformal_margin
+from lsm.models.severity import (
+    GlobalMeanSeverityBaseline,
+    SeverityModel,
+    conformal_margin,
+)
 
 LGBM_CFG = {"deterministic": True, "force_row_wise": True, "num_threads": 1}
 
@@ -151,7 +155,7 @@ def test_severity_model_drops_nan_calibration_rows_instead_of_poisoning_the_marg
 
     assert model.conformal_margin_ is not None
     assert not np.isnan(model.conformal_margin_)
-    med, lo, hi = model.predict(X)
+    _med, lo, hi = model.predict(X)
     assert not np.isnan(lo).any()
     assert not np.isnan(hi).any()
     assert "dropping 1 calibration row" in capsys.readouterr().out

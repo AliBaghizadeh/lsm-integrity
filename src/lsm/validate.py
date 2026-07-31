@@ -28,7 +28,7 @@ import pandas as pd
 from lsm.config import ValidateConfig
 from lsm.evaluate import background_regime_shift
 from lsm.logging_utils import get_logger
-from lsm.schemas import validate_reading_schema, SchemaValidationError
+from lsm.schemas import SchemaValidationError, validate_reading_schema
 
 log = get_logger("lsm.validate")
 
@@ -125,7 +125,7 @@ def check_sample_idx_gap(df: pd.DataFrame, step_m: float, max_gap_m: float, gate
     if len(idx) < 2:
         return DQCheckResult("sample_idx_gap", "pass", 0)
     gaps = np.diff(idx)
-    max_gap_steps = max(1, int(round(max_gap_m / step_m)))
+    max_gap_steps = max(1, round(max_gap_m / step_m))
     bad = gaps > max_gap_steps
     n = int(bad.sum())
     missing_m = float(((gaps[bad] - 1) * step_m).sum()) if n else 0.0
@@ -381,7 +381,7 @@ def validate_raw_survey(
     )
     report = DQReport(
         survey_id=survey_id,
-        checked_at=dt.datetime.now(dt.timezone.utc).isoformat(),
+        checked_at=dt.datetime.now(dt.UTC).isoformat(),
         results=results,
     )
 

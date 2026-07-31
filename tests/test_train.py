@@ -14,7 +14,6 @@ import json
 from pathlib import Path
 
 import numpy as np
-
 import pandas as pd
 
 from lsm.bundle import load_bundle
@@ -40,7 +39,7 @@ def test_train_runs_end_to_end_on_a_tiny_survey(tiny_cfg, tmp_path):
 
     conn = connect(tiny_cfg.env.storage.sqlite_path)
     for sr in results:
-        status, report = run_survey_pipeline(conn, sr, tiny_cfg)
+        _status, report = run_survey_pipeline(conn, sr, tiny_cfg)
         assert not report.has_fail
 
     for sr in results:
@@ -52,8 +51,8 @@ def test_train_runs_end_to_end_on_a_tiny_survey(tiny_cfg, tmp_path):
     for model_name in ("mad", "isolation_forest"):
         m = result[model_name]
         for metric in ("recall_at_budget", "false_dig_rate", "interference_dig_fraction", "localisation_error_m"):
-            point, lo, hi = m[metric]
-            assert 0.0 <= point or point != point  # allow nan for localisation error if no hits
+            point, _lo, _hi = m[metric]
+            assert 0.0 <= point or np.isnan(point)  # allow nan for localisation error if no hits
         assert isinstance(m["pr_auc"], float)
 
     # model_run rows exist for both models.
@@ -112,7 +111,7 @@ def test_train_exercises_the_severity_cv_path(cfg, tmp_path):
 
     conn = connect(cfg.env.storage.sqlite_path)
     for sr in results:
-        status, report = run_survey_pipeline(conn, sr, cfg)
+        _status, report = run_survey_pipeline(conn, sr, cfg)
         assert not report.has_fail
     for sr in results:
         outcome, _ = run_feature_pipeline(conn, sr.survey_id, cfg)
@@ -129,7 +128,7 @@ def test_train_exercises_the_severity_cv_path(cfg, tmp_path):
     for model_name in ("severity", "severity_baseline"):
         m = result[model_name]
         for metric in ("coverage", "mae", "interval_width"):
-            point, lo, hi = m[metric]
+            _point, lo, hi = m[metric]
             assert lo <= hi
     assert isinstance(result["severity_gate_passed"], (bool, np.bool_))
 
@@ -168,13 +167,13 @@ def test_train_exercises_the_severity_cv_path(cfg, tmp_path):
     for model_name in ("classify", "classify_baseline"):
         m = result[model_name]
         for triple in m["per_class_recall"].values():
-            point, lo, hi = triple
+            _point, lo, hi = triple
             # a class absent from this tiny fixture's test folds legitimately
             # yields an empty bootstrap sample -- bootstrap_ci's honest "no
             # data" answer is (nan, nan, nan), not an error.
             assert np.isnan(lo) or lo <= hi
         for metric in ("interference_precision", "brier"):
-            point, lo, hi = m[metric]
+            _point, lo, hi = m[metric]
             assert np.isnan(lo) or lo <= hi
     assert isinstance(result["classify_recall_gate_passed"], (bool, np.bool_))
     assert "classify_shap_check" in result
@@ -258,7 +257,7 @@ def test_fit_final_classify_model_respects_configured_capacity(cfg):
         "a": a,
     })
 
-    model, baseline = _fit_final_classify_model(classify_frame, ["a"], cfg, seed=0)
+    model, _baseline = _fit_final_classify_model(classify_frame, ["a"], cfg, seed=0)
 
     assert model is not None
     assert model.model is not None

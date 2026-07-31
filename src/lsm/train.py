@@ -21,14 +21,18 @@ from pathlib import Path
 import matplotlib
 
 matplotlib.use("Agg")  # never needs a GUI backend -- only ever saves figures to MLflow
-import matplotlib.pyplot as plt  # noqa: E402
+import matplotlib.pyplot as plt
 import mlflow
 import numpy as np
 import pandas as pd
 from sklearn.isotonic import IsotonicRegression
 from sklearn.metrics import precision_recall_curve
 
-from lsm.bundle import save_bundle, training_feature_summary, training_prediction_reference
+from lsm.bundle import (
+    save_bundle,
+    training_feature_summary,
+    training_prediction_reference,
+)
 from lsm.config import Config
 from lsm.evaluate import (
     add_fold_column,
@@ -51,14 +55,20 @@ from lsm.evaluate import (
 from lsm.features import feature_columns, load_feature_corpus
 from lsm.hashing import data_sha256
 from lsm.indications import (
+    attach_classification,
     attach_indication_features,
+    attach_severity,
     cluster_indications,
     select_dig_budget,
     write_indications,
 )
 from lsm.logging_utils import get_logger
 from lsm.model_card import write_model_card
-from lsm.models.anomaly import IsolationForestAnomalyModel, MADBaseline, calibrated_threshold
+from lsm.models.anomaly import (
+    IsolationForestAnomalyModel,
+    MADBaseline,
+    calibrated_threshold,
+)
 from lsm.models.classify import ClassifyModel, MajorityClassBaseline
 from lsm.models.severity import GlobalMeanSeverityBaseline, SeverityModel
 from lsm.schemas import CLASSIFY_CLASSES, DEFECT_TYPES
@@ -117,18 +127,20 @@ def _git_sha(cwd: str | Path | None = None) -> str:
     """
     try:
         out = subprocess.run(
-            ["git", "rev-parse", "HEAD"], capture_output=True, text=True, timeout=5, cwd=cwd
+            ["git", "rev-parse", "HEAD"], capture_output=True, text=True, timeout=5, cwd=cwd, check=False,
         )
         sha = out.stdout.strip()
         if out.returncode != 0 or not sha:
             return "uncommitted"
         status = subprocess.run(
-            ["git", "status", "--porcelain"], capture_output=True, text=True, timeout=5, cwd=cwd
+            ["git", "status", "--porcelain"], capture_output=True, text=True, timeout=5, cwd=cwd, check=False,
         )
         if status.returncode == 0 and status.stdout.strip():
             return f"{sha}-dirty"
         return sha
-    except Exception:
+    except Exception:  # noqa: BLE001 -- best-effort provenance helper: git missing, not
+        # a repo, or any other transient failure should all fall back to "uncommitted",
+        # never raise and abort a training run over a provenance nicety.
         return "uncommitted"
 
 
@@ -612,7 +624,7 @@ def _evaluate_corpus(
     registry: pd.DataFrame,
     run_line_id: dict[str, str],
     survey_ids: list[str],
-) -> tuple[pd.DataFrame, dict, pd.DataFrame, pd.DataFrame, "IsotonicRegression | None"]:
+) -> tuple[pd.DataFrame, dict, pd.DataFrame, pd.DataFrame, IsotonicRegression | None]:
     """Stage 3+4+5 evaluation over an already-fold-assigned `corpus` (caller
     must have already called `add_fold_column`/`add_fold_column_by_line`).
     Returns (corpus_with_scores, result, severity_frame, classify_frame,
@@ -629,10 +641,10 @@ def _evaluate_corpus(
     matched_mad = _dig_and_match(corpus, "score_mad", mad_threshold, registry, cfg)
     matched_if = _dig_and_match(corpus, "score_if", 0.0, registry, cfg)
 
-    metrics_mad, hit_rates_mad, false_digs_mad, interference_mad = _bootstrap_metrics(
+    metrics_mad, hit_rates_mad, _false_digs_mad, interference_mad = _bootstrap_metrics(
         matched_mad, registry, run_line_id, cfg
     )
-    metrics_if, hit_rates_if, false_digs_if, interference_if = _bootstrap_metrics(
+    metrics_if, hit_rates_if, _false_digs_if, interference_if = _bootstrap_metrics(
         matched_if, registry, run_line_id, cfg
     )
 
@@ -753,7 +765,7 @@ def run_train(cfg: Config, conn) -> dict:
     Returns the metrics dict actually printed/logged, for tests to assert on.
     """
     feature_version = cfg.base.features.version
-    as_of = dt.datetime.now(dt.timezone.utc).isoformat()
+    as_of = dt.datetime.now(dt.UTC).isoformat()
 
     corpus = load_feature_corpus(cfg.env.storage.feature_dir, feature_version, as_of=as_of)
     if len(corpus) == 0:
@@ -772,7 +784,7 @@ def run_train(cfg: Config, conn) -> dict:
     line_ids = sorted(corpus["line_id"].unique())
     registries = []
     for line_id in line_ids:
-        ref_survey_id = sorted(corpus.loc[corpus["line_id"] == line_id, "survey_id"].unique())[0]
+        ref_survey_id = min(corpus.loc[corpus["line_id"] == line_id, "survey_id"].unique())
         ref_rows = corpus[corpus["survey_id"] == ref_survey_id]
         registries.append(build_truth_registry(ref_rows, line_id))
     registry = pd.concat(registries, ignore_index=True)
@@ -883,7 +895,7 @@ def _log_and_persist(
     _run_grouped_cv exist only to produce honest out-of-fold evaluation scores;
     what actually gets shipped is trained on everything available).
     """
-    now = dt.datetime.now(dt.timezone.utc)
+    now = dt.datetime.now(dt.UTC)
     git_sha = _git_sha()
     content_hashes = [
         row[0]
@@ -1044,7 +1056,7 @@ def _log_and_persist(
         # enough matched, severity-labelled data to do so at all.
         severity_version = None
         sev_feature_cols = [*feature_cols, "extent_m"]
-        sev_final, sev_baseline_final = _fit_final_severity_model(severity_frame, sev_feature_cols, cfg, cfg.seed)
+        sev_final, _sev_baseline_final = _fit_final_severity_model(severity_frame, sev_feature_cols, cfg, cfg.seed)
         if sev_final is not None:
             severity_version = f"severity-lgbm-{date_tag}-{short_sha}"
             baseline_version = f"severity-mean-{date_tag}-{short_sha}"
@@ -1094,7 +1106,7 @@ def _log_and_persist(
         # calibrator, if there was enough matched, multi-class data to do so.
         classify_version = None
         classify_feature_cols = [*feature_cols, "extent_m"]
-        classify_final, classify_baseline_final = _fit_final_classify_model(
+        classify_final, _classify_baseline_final = _fit_final_classify_model(
             classify_frame, classify_feature_cols, cfg, cfg.seed
         )
         if classify_final is not None:
@@ -1204,12 +1216,30 @@ def _log_and_persist(
         # the data) and would silently disagree with what predict.py reloads
         # from the bundle and reproduces on the exact same rows.
         corpus["_final_score"] = iso_final.score(corpus)
+        sev_cfg = cfg.base.model.severity
         all_indications = []
         for survey_id, survey_rows in corpus.groupby("survey_id"):
             survey_rows = survey_rows.sort_values("sample_idx").rename(columns={"_final_score": "_score"})
             indications = cluster_indications(
                 survey_rows, "_score", 0.0, survey_id=str(survey_id), pipeline_version=pipeline_version
             )
+            # Fill Stage 4/5 fields here too, with the SAME final models just
+            # fit above -- not just on a later `lsm predict`. write_indications
+            # is INSERT OR IGNORE on a deterministic indication_id, so once this
+            # loop writes a row, a later `lsm predict` on the same survey +
+            # pipeline_version can never backfill sev_pred/pred_type/risk_score
+            # into it; every survey in the training corpus would otherwise ship
+            # anomaly-only forever.
+            if sev_final is not None:
+                indications = attach_severity(
+                    indications, survey_rows, sev_final, feature_cols,
+                    nominal_coverage=1.0 - sev_cfg["conformal_alpha"],
+                )
+            if classify_final is not None:
+                indications = attach_classification(
+                    indications, survey_rows, classify_final, defect_calibrator,
+                    feature_cols, cfg.base.model.classify["consequence_proxy"],
+                )
             all_indications.append(indications)
         indications_df = pd.concat(all_indications, ignore_index=True) if all_indications else pd.DataFrame()
         n_written = write_indications(conn, indications_df)

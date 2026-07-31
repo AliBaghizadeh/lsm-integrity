@@ -20,18 +20,18 @@ backfill re-materialises what actually changed instead of everything or nothing.
 """
 
 from pathlib import Path
+
 # NOTE: deliberately no `from __future__ import annotations` here. Dagster's
 # @asset decorator checks the `context` parameter's annotation by identity
 # against the real AssetExecutionContext class; PEP 563 postponed evaluation
 # would turn that annotation into the plain string "AssetExecutionContext",
 # which fails the identity check with a confusing error.
-
 import dagster as dg
 import pandas as pd
 from dagster import AssetExecutionContext  # Dagster's context type-check inspects the
+
 # literal annotation text, so `dg.AssetExecutionContext` on a function signature fails
 # even though it is the same class -- the unaliased import is required here.
-
 from lsm.config import load_config
 from lsm.db import connect
 from lsm.generate import find_raw_survey_path, load_survey_result

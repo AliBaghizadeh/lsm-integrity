@@ -135,3 +135,101 @@ def residual_gradient_chart(features: pd.DataFrame, raw: pd.DataFrame) -> alt.Ch
     else:
         combined = residual
     return alt.layer(combined, truth_rule_layer(raw)).properties(height=320).interactive()
+
+
+def indications_chart(dug: pd.DataFrame, raw: pd.DataFrame) -> alt.Chart:
+    """Beat 4's ranked table, made visible: predicted severity (with its 90%
+    conformal interval, if a severity model has been released) vs chainage
+    for the currently dug indications, colored by predicted defect type.
+    Falls back to `anomaly_score` with no error bars pre-Stage-4/5 (no
+    severity model released yet) -- same fallback reasoning as
+    `demo_app.py`'s risk_score dig-ranking.
+    """
+    df = dug.copy()
+    has_severity = "sev_pred" in df.columns and df["sev_pred"].notna().any()
+    y_col = "sev_pred" if has_severity else "anomaly_score"
+    y_title = "predicted severity (%SMYS)" if has_severity else "anomaly score"
+    has_type = "pred_type" in df.columns and df["pred_type"].notna().any()
+
+    color = (
+        alt.Color("pred_type:N", legend=alt.Legend(title="predicted type"))
+        if has_type
+        else alt.value("#2878dc")
+    )
+    tooltip = [
+        c for c in [
+            "chainage_peak_m", "pred_type", "pred_type_conf", "sev_pred",
+            "risk_score", "anomaly_score", "p_defect_cal",
+        ] if c in df.columns
+    ]
+
+    points = (
+        alt.Chart(df)
+        .mark_point(filled=True, size=100)
+        .encode(
+            x=alt.X("chainage_peak_m:Q", title="chainage (m)"),
+            y=alt.Y(f"{y_col}:Q", title=y_title),
+            color=color,
+            tooltip=tooltip,
+        )
+    )
+    layers = [points]
+    if has_severity and "sev_lo" in df.columns and "sev_hi" in df.columns:
+        layers.append(
+            alt.Chart(df)
+            .mark_errorbar()
+            .encode(x="chainage_peak_m:Q", y=alt.Y("sev_lo:Q", title=y_title), y2="sev_hi:Q", color=color)
+        )
+    layers.append(truth_rule_layer(raw))
+    return alt.layer(*layers).properties(height=320).interactive()
+
+
+def indications_rank_chart(dug: pd.DataFrame) -> alt.Chart:
+    """One labeled, sorted horizontal bar per dug indication -- the table
+    below the map read in one glance instead of row by row. Ranked (and
+    valued) by `risk_score` if a classify model has scored these indications,
+    `anomaly_score` otherwise -- same fallback reasoning as `demo_app.py`'s
+    dig-ranking and `indications_chart` above.
+    """
+    df = dug.copy()
+    has_risk = "risk_score" in df.columns and df["risk_score"].notna().any()
+    value_col = "risk_score" if has_risk else "anomaly_score"
+    value_title = "risk score" if has_risk else "anomaly score"
+    has_type = "pred_type" in df.columns and df["pred_type"].notna().any()
+
+    df["label"] = df["chainage_peak_m"].round(0).astype(int).astype(str) + " m"
+    if has_type:
+        df["label"] = df["label"] + " -- " + df["pred_type"].fillna("unclassified")
+
+    color = (
+        alt.Color("pred_type:N", legend=alt.Legend(title="predicted type"))
+        if has_type
+        else alt.value("#2878dc")
+    )
+    tooltip = [
+        c for c in [
+            "chainage_peak_m", "pred_type", "pred_type_conf", "sev_pred",
+            "risk_score", "anomaly_score", "p_defect_cal",
+        ] if c in df.columns
+    ]
+
+    bars = (
+        alt.Chart(df)
+        .mark_bar()
+        .encode(
+            x=alt.X(f"{value_col}:Q", title=value_title),
+            y=alt.Y("label:N", sort="-x", title="indication (chainage -- type)"),
+            color=color,
+            tooltip=tooltip,
+        )
+    )
+    labels = (
+        alt.Chart(df)
+        .mark_text(align="left", dx=3)
+        .encode(
+            x=f"{value_col}:Q",
+            y=alt.Y("label:N", sort="-x"),
+            text=alt.Text(f"{value_col}:Q", format=".2f"),
+        )
+    )
+    return (bars + labels).properties(height=max(120, 32 * len(df)))

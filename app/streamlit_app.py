@@ -23,9 +23,10 @@ import streamlit as st
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from lsm.config import load_config  # noqa: E402
-from lsm.db import connect  # noqa: E402
-from map_utils import build_map  # noqa: E402
+from map_utils import build_map
+
+from lsm.config import load_config
+from lsm.db import connect
 
 st.set_page_config(layout="wide", page_title="LSM Stage 3 -- indications")
 

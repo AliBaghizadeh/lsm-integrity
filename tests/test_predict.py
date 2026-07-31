@@ -103,7 +103,7 @@ def test_predict_survey_attaches_severity_and_writes_geojson(cfg):
         run_feature_pipeline(conn, sr.survey_id, cfg)
     run_train(cfg, conn)
 
-    pipeline_version, _, severity_version, _ = latest_pipeline_release(conn)
+    _pipeline_version, _, severity_version, _ = latest_pipeline_release(conn)
     assert severity_version is not None, "test fixture sized wrong -- no severity model trained"
 
     survey_id = results[0].survey_id
@@ -152,7 +152,7 @@ def test_predict_survey_attaches_classification_and_risk_score(cfg):
         run_feature_pipeline(conn, sr.survey_id, cfg)
     run_train(cfg, conn)
 
-    pipeline_version, _, severity_version, classify_version = latest_pipeline_release(conn)
+    _pipeline_version, _, severity_version, classify_version = latest_pipeline_release(conn)
     assert classify_version is not None, "test fixture sized wrong -- no classify model trained"
     assert severity_version is not None  # risk_score needs sev_pred already attached
 
@@ -181,7 +181,7 @@ def test_predict_survey_without_a_classify_release_leaves_classify_columns_unfil
     classify block is purely additive.
     """
     conn, results = _train_tiny(tiny_cfg)
-    pipeline_version, _, _, classify_version = latest_pipeline_release(conn)
+    _pipeline_version, _, _, classify_version = latest_pipeline_release(conn)
     assert classify_version is None
 
     survey_id = results[0].survey_id

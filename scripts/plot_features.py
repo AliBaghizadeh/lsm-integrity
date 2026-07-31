@@ -29,8 +29,8 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from lsm.config import load_config  # noqa: E402
-from lsm.features import feature_store_dir  # noqa: E402
+from lsm.config import load_config
+from lsm.features import feature_store_dir
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 

@@ -27,9 +27,9 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from lsm.config import load_config  # noqa: E402
-from lsm.features import SurveyContext, compute_survey_features  # noqa: E402
-from lsm.generate import generate_all  # noqa: E402
+from lsm.config import load_config
+from lsm.features import SurveyContext, compute_survey_features
+from lsm.generate import generate_all
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 

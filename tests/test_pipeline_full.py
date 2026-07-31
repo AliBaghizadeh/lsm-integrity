@@ -23,7 +23,7 @@ def _trained_conn_and_a_fresh_unregistered_survey(tiny_cfg):
     line0, line1 = results[0], results[1]
 
     conn = connect(tiny_cfg.env.storage.sqlite_path)
-    status, report = run_survey_pipeline(conn, line0, tiny_cfg)
+    _status, report = run_survey_pipeline(conn, line0, tiny_cfg)
     assert not report.has_fail
     run_feature_pipeline(conn, line0.survey_id, tiny_cfg)
     run_train(tiny_cfg, conn)  # real pipeline_release + bundles predict_survey needs

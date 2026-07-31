@@ -18,7 +18,7 @@ why, since the right resampling unit differs per metric.
 from __future__ import annotations
 
 import hashlib
-from typing import Callable
+from collections.abc import Callable
 
 import numpy as np
 import pandas as pd

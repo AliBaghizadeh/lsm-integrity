@@ -12,23 +12,40 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from streamlit.testing.v1 import AppTest
-
 import demo_lib
+from streamlit.testing.v1 import AppTest
 
 APP_PATH = str(Path(__file__).resolve().parents[1] / "app" / "demo_app.py")
 
 
-def test_demo_mode_boots_with_no_exception():
+def _enter(at: AppTest) -> AppTest:
+    """Click through the client-facing landing screen into the actual app --
+    every test below exercises the app itself, not the splash, and the splash
+    gates the tabs behind `st.stop()` until this button is clicked."""
+    at.button[0].click().run()
+    return at
+
+
+def test_landing_page_shows_with_no_exception_and_gates_the_app():
     at = AppTest.from_file(APP_PATH, default_timeout=60)
     at.run()
     assert not at.exception
-    assert len(at.tabs) == 4
+    assert len(at.tabs) == 0  # gated behind st.stop() until "Launch the demo" is clicked
+    assert len(at.button) == 1
+
+
+def test_launching_the_demo_reveals_the_tabs():
+    at = AppTest.from_file(APP_PATH, default_timeout=60)
+    at.run()
+    _enter(at)
+    assert not at.exception
+    assert len(at.tabs) == 6
 
 
 def test_demo_mode_corrupted_scenario_shows_the_refusal():
     at = AppTest.from_file(APP_PATH, default_timeout=60)
     at.run()
+    _enter(at)
     at.segmented_control(key="scenario_label").set_value(
         "Corrupted survey (bad sensor reading)"
     ).run()
@@ -48,14 +65,29 @@ def test_scenario_widget_returning_none_does_not_crash_the_app():
     """
     at = AppTest.from_file(APP_PATH, default_timeout=60)
     at.run()
+    _enter(at)
     at.session_state["scenario_label"] = None
     at.run()
     assert not at.exception
 
 
+def test_model_performance_tab_renders_the_real_model_card():
+    at = AppTest.from_file(APP_PATH, default_timeout=60)
+    at.run()
+    _enter(at)
+    assert not at.exception
+    card_text = demo_lib.load_model_card()
+    rendered = "\n".join(m.value for m in at.markdown)
+    # spot-check a real Stage 3 number from the baked model card actually
+    # made it into the page, not just that SOME markdown rendered.
+    first_metric_line = next(line for line in card_text.splitlines() if "recall @ dig budget" in line)
+    assert first_metric_line in rendered
+
+
 def test_beat1_deviation_scale_toggle_switches_without_error():
     at = AppTest.from_file(APP_PATH, default_timeout=60)
     at.run()
+    _enter(at)
     assert at.radio(key="beat1_scale").value == "Log"
     at.radio(key="beat1_scale").set_value("Linear").run()
     assert not at.exception
@@ -69,6 +101,7 @@ def test_live_mode_survives_two_consecutive_reruns_on_different_scenarios():
     """
     at = AppTest.from_file(APP_PATH, default_timeout=90)
     at.run()
+    _enter(at)
     at.segmented_control(key="app_mode").set_value("live").run()
     assert not at.exception
 
@@ -85,6 +118,7 @@ def test_live_mode_does_not_rerun_the_pipeline_for_an_unrelated_widget_change():
     """
     at = AppTest.from_file(APP_PATH, default_timeout=90)
     at.run()
+    _enter(at)
     at.segmented_control(key="app_mode").set_value("live").run()
     scenario_label = at.session_state["scenario_label"]
     survey_id = next(
@@ -105,12 +139,32 @@ def test_live_mode_does_not_rerun_the_pipeline_for_an_unrelated_widget_change():
 def test_live_mode_refuses_the_corrupted_scenario_too():
     at = AppTest.from_file(APP_PATH, default_timeout=90)
     at.run()
+    _enter(at)
     at.segmented_control(key="app_mode").set_value("live").run()
     at.segmented_control(key="scenario_label").set_value(
         "Corrupted survey (bad sensor reading)"
     ).run()
     assert not at.exception
     assert any("Refused to score" in e.value for e in at.error)
+
+
+def test_beat3_table_falls_back_to_anomaly_score_when_risk_score_is_all_null():
+    """The currently baked `serving/` predates Stage 5 (no classify model
+    released yet), so every indication's `risk_score` is NULL -- Beat 3 must
+    rank by `anomaly_score` in that case, not silently sort by an all-NULL
+    column. Once a classify model is baked in, this scenario's caption should
+    read `risk_score` instead -- that half isn't reachable with today's data.
+    """
+    at = AppTest.from_file(APP_PATH, default_timeout=60)
+    at.run()
+    _enter(at)
+    assert not at.exception
+    ranked_by = [c.value for c in at.caption if c.value.startswith("Ranked by")]
+    assert ranked_by == ["Ranked by **anomaly_score**."]
+
+    cols = at.dataframe[0].value.columns.tolist()
+    for expected in ["pred_type", "pred_type_conf", "risk_score"]:
+        assert expected in cols
 
 
 def test_streamlit_app_stage3_thin_app_still_boots_with_no_exception():

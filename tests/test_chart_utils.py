@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
+import chart_utils
 import numpy as np
 import pandas as pd
-
-import chart_utils
 
 
 def _toy_raw(n=200):
@@ -77,3 +76,59 @@ def test_residual_gradient_chart_with_and_without_gradient_column():
     features["g_mag_nt_per_m"] = np.random.default_rng(4).normal(0, 0.5, len(raw))
     chart_with_grad = chart_utils.residual_gradient_chart(features, raw)
     assert chart_with_grad is not None
+
+
+def _toy_dug():
+    return pd.DataFrame({
+        "chainage_peak_m": [10.0, 52.0],
+        "anomaly_score": [0.8, 0.6],
+        "p_defect_cal": [0.9, 0.4],
+        "pred_type": ["scc", "interference"],
+        "pred_type_conf": [0.7, 0.95],
+        "sev_pred": [55.0, np.nan],
+        "sev_lo": [40.0, np.nan],
+        "sev_hi": [70.0, np.nan],
+        "risk_score": [0.5, 0.0],
+    })
+
+
+def test_indications_chart_plots_severity_with_interval_when_present():
+    chart = chart_utils.indications_chart(_toy_dug(), _toy_raw())
+    spec = chart.to_dict()
+    y_fields = {layer["encoding"]["y"]["field"] for layer in spec["layer"] if "y" in layer.get("encoding", {})}
+    assert "sev_pred" in y_fields
+    assert "sev_lo" in y_fields  # the error-bar layer
+
+
+def test_indications_chart_falls_back_to_anomaly_score_when_severity_is_all_null():
+    dug = _toy_dug()
+    dug["sev_pred"] = np.nan
+    dug["sev_lo"] = np.nan
+    dug["sev_hi"] = np.nan
+    chart = chart_utils.indications_chart(dug, _toy_raw())
+    spec = chart.to_dict()
+    y_fields = {layer["encoding"]["y"]["field"] for layer in spec["layer"] if "y" in layer.get("encoding", {})}
+    assert y_fields == {"anomaly_score"}  # no error-bar layer, no sev_pred
+
+
+def test_indications_rank_chart_ranks_by_risk_score_when_present():
+    chart = chart_utils.indications_rank_chart(_toy_dug())
+    spec = chart.to_dict()
+    x_fields = {layer["encoding"]["x"]["field"] for layer in spec["layer"]}
+    assert x_fields == {"risk_score"}
+
+
+def test_indications_rank_chart_falls_back_to_anomaly_score_when_risk_is_all_null():
+    dug = _toy_dug()
+    dug["risk_score"] = np.nan
+    chart = chart_utils.indications_rank_chart(dug)
+    spec = chart.to_dict()
+    x_fields = {layer["encoding"]["x"]["field"] for layer in spec["layer"]}
+    assert x_fields == {"anomaly_score"}
+
+
+def test_indications_rank_chart_one_bar_per_row():
+    dug = _toy_dug()
+    spec = chart_utils.indications_rank_chart(dug).to_dict()
+    dataset = next(iter(spec["datasets"].values()))  # Altair hoists inline data by name
+    assert len(dataset) == len(dug)

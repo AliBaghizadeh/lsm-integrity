@@ -12,7 +12,6 @@ import logging
 import sys
 import time
 
-
 # Correlation keys are named rather than discovered: these are the fields every
 # query and dashboard joins on, so they must appear under a stable name even if a
 # caller stops passing one.

@@ -19,7 +19,11 @@ import pandas as pd
 from lsm.bundle import load_bundle
 from lsm.config import Config
 from lsm.dig_feedback import recompute_coverage_from_verifications
-from lsm.evaluate import background_regime_shift, feature_drift_report, prediction_drift_report
+from lsm.evaluate import (
+    background_regime_shift,
+    feature_drift_report,
+    prediction_drift_report,
+)
 from lsm.features import feature_store_dir
 from lsm.predict import latest_pipeline_release
 
@@ -42,7 +46,7 @@ def monitor_survey(conn, survey_id: str, cfg: Config) -> dict:
     ).fetchone()
     if row is None:
         raise ValueError(f"{survey_id} is not registered -- run `lsm ingest` first")
-    line_id, run_id, source_uri, status = row
+    line_id, run_id, _source_uri, status = row
     if status != "accepted":
         raise ValueError(f"{survey_id} has status={status!r}, cannot monitor it")
 

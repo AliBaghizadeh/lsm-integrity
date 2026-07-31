@@ -24,7 +24,12 @@ import pandas as pd
 from lsm.bundle import load_bundle
 from lsm.config import Config
 from lsm.features import feature_store_dir
-from lsm.indications import attach_classification, attach_severity, cluster_indications, write_indications
+from lsm.indications import (
+    attach_classification,
+    attach_severity,
+    cluster_indications,
+    write_indications,
+)
 
 
 class NoReleasedPipelineError(Exception):

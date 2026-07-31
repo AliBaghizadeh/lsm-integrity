@@ -36,7 +36,7 @@ class MADBaseline:
         self.median_: float | None = None
         self.mad_: float | None = None
 
-    def fit(self, X: pd.DataFrame) -> "MADBaseline":
+    def fit(self, X: pd.DataFrame) -> MADBaseline:
         x = X[self.residual_col].to_numpy(dtype=np.float64)
         self.median_ = float(np.median(x))
         mad = float(np.median(np.abs(x - self.median_)))
@@ -112,7 +112,7 @@ class IsolationForestAnomalyModel:
         emphasis = X[self.emphasize_features].fillna(0.0).to_numpy(dtype=np.float64)
         return np.hstack([base, np.tile(emphasis, (1, extra_copies))])
 
-    def fit(self, X: pd.DataFrame) -> "IsolationForestAnomalyModel":
+    def fit(self, X: pd.DataFrame) -> IsolationForestAnomalyModel:
         self.model.fit(self._matrix(X))
         return self
 

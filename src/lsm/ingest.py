@@ -84,7 +84,7 @@ def register_survey(conn: sqlite3.Connection, sr: SurveyResult, schema_version: 
             str(sr.path),
             sr.file_sha256,
             sr.content_sha256,
-            dt.datetime.now(dt.timezone.utc).isoformat(),
+            dt.datetime.now(dt.UTC).isoformat(),
         ),
     )
     conn.commit()

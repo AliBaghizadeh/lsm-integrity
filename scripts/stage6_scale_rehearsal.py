@@ -25,18 +25,22 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-import contextlib  # noqa: E402
-import io  # noqa: E402
+import contextlib
+import io
 
-import pandas as pd  # noqa: E402
+import pandas as pd
 
-from lsm import scale_eval, train  # noqa: E402
-from lsm.config import CONFIG_DIR, load_config  # noqa: E402
-from lsm.db import connect  # noqa: E402
-from lsm.features import load_feature_corpus  # noqa: E402
-from lsm.generate import generate_all  # noqa: E402
-from lsm.perf_utils import PerfResult, format_perf_table, measure  # noqa: E402
-from lsm.pipeline import SurveyNotFeaturisableError, run_feature_pipeline, run_survey_pipeline  # noqa: E402
+from lsm import scale_eval, train
+from lsm.config import CONFIG_DIR, load_config
+from lsm.db import connect
+from lsm.features import load_feature_corpus
+from lsm.generate import generate_all
+from lsm.perf_utils import PerfResult, format_perf_table, measure
+from lsm.pipeline import (
+    SurveyNotFeaturisableError,
+    run_feature_pipeline,
+    run_survey_pipeline,
+)
 
 # Measured once, by hand, against the pre-Stage-6 itertuples()+float()-per-
 # cell load_readings implementation, at the same representative scale (one
@@ -50,7 +54,7 @@ INGEST_BEFORE_N_ROWS = 80_000
 
 
 def _now_iso() -> str:
-    return dt.datetime.now(dt.timezone.utc).isoformat()
+    return dt.datetime.now(dt.UTC).isoformat()
 
 
 def _background_contrast_check(cfg) -> dict:
@@ -109,7 +113,7 @@ def main() -> None:
     n_rows_ingested = 0
     with measure("ingest") as perf_ingest:
         for sr in results:
-            status, report = run_survey_pipeline(conn, sr, cfg)
+            _status, report = run_survey_pipeline(conn, sr, cfg)
             if report.has_fail:
                 fail_detail = "; ".join(
                     f"{r.check_name} (n_affected={r.n_affected})"
@@ -192,21 +196,21 @@ def main() -> None:
     report_lines = [
         f"# Stage 6 scale rehearsal -- {_now_iso()}",
         "",
-        f"Config: `config/scale/base.yaml` -- {cfg.base.data.n_lines} lines x "
+        (f"Config: `config/scale/base.yaml` -- {cfg.base.data.n_lines} lines x "
         f"{cfg.base.data.length_m:.0f} m x {cfg.base.data.n_runs} runs = "
-        f"{expected_rows:,} rows (~10^7). `config_sha256={cfg.config_sha256[:12]}...`",
+        f"{expected_rows:,} rows (~10^7). `config_sha256={cfg.config_sha256[:12]}...`"),
         "",
         "## Wall-clock + peak RSS per step",
         "",
-        "Peak RSS is *sampled* (a polling thread reading `psutil.Process().memory_info"
+        ("Peak RSS is *sampled* (a polling thread reading `psutil.Process().memory_info"
         "().rss` every 50ms), not an exact accounting -- the true peak between samples "
-        "can be missed.",
+        "can be missed."),
         "",
         format_perf_table(perf_results),
         "",
         "## Background-contrast gate re-check",
         "",
-        f"Contrast (defect median / background median) on `LINE000_R0`: **{contrast_result['contrast']:.2f}x** "
+        (f"Contrast (defect median / background median) on `LINE000_R0`: **{contrast_result['contrast']:.2f}x** "
         f"-- **{'PASSED' if contrast_result['passed'] else 'DID NOT PASS'}** the Stage 2 gate (>= 3.0x). "
         f"Background median {contrast_result['background_median']:.2f} nT (essentially unchanged from the "
         "demo corpus's ~7.7-8.1 nT -- the detrend/high-pass is NOT degrading at 40 km), but defect median "
@@ -217,11 +221,11 @@ def main() -> None:
         "detrending degrades at this length. Density-per-km is unchanged from the demo corpus (6 defects/km, "
         "2 interference/km), ruling out a packing-density explanation. This is a real, measured gate miss, "
         "reported honestly rather than adjusted away -- revisiting it (e.g. a larger single-survey sample "
-        "for the Stage 2 gate check itself) is future work, out of Stage 6's scope.",
+        "for the Stage 2 gate check itself) is future work, out of Stage 6's scope."),
         "",
         "## A real bug found at scale: NaN severity_smys poisoning conformal coverage",
         "",
-        "`generate.py` initialises `severity_smys` to NaN off-defect (not 0, contradicting this project's "
+        ("`generate.py` initialises `severity_smys` to NaN off-defect (not 0, contradicting this project's "
         "own documented \"0 off-defect\" convention). A detector's peak occasionally lands just outside a "
         "defect's exact label-window half-width while still within the looser `MATCH_TOLERANCE_M` "
         "dig-matching radius, so `match_dug_indications` still credits it as matched, but that row's own "
@@ -232,17 +236,17 @@ def main() -> None:
         "cascading a 0.4%-incidence data issue into an initial 0% pooled coverage across the entire OOF "
         "result, not a gradual degradation. Fixed in `train.py::_build_severity_training_frame` (drop "
         "NaN-`y_true` rows upstream, loudly) plus a belt-and-braces guard in `SeverityModel.fit` itself. "
-        "Confirmed working below: Stage 4's gate now PASSES at this scale.",
+        "Confirmed working below: Stage 4's gate now PASSES at this scale."),
         "",
         "## A real bug found at scale: classify's n_estimators/num_leaves were dead config",
         "",
-        "`config/base.yaml`'s `model.classify.n_estimators`/`num_leaves` looked tunable but were never "
+        ("`config/base.yaml`'s `model.classify.n_estimators`/`num_leaves` looked tunable but were never "
         "threaded from config into `ClassifyModel`'s `lgbm_cfg` in `train.py` -- editing them had NO "
         "effect, silently, since they coincidentally matched `ClassifyModel`'s own hardcoded fallback "
         "defaults (50/7). Found while investigating why `config/scale/base.yaml`'s larger capacity values "
         "weren't visibly changing classify's behaviour. Fixed by merging `classify_cfg`'s values into the "
         "`lgbm_cfg` dict at both call sites. Confirmed working: SCC recall improved from a first, "
-        "capacity-starved run (0.50 block-CV / 0.39 whole-line) to the numbers reported below.",
+        "capacity-starved run (0.50 block-CV / 0.39 whole-line) to the numbers reported below."),
         "",
         "## A real DQ finding at scale: survey_overlap quarantines",
         "",
@@ -254,7 +258,7 @@ def main() -> None:
             "None -- every survey passed `check_survey_overlap` at this scale."
         ),
         "",
-        "`check_survey_overlap` (validate.py) takes the MAX correlation across ALL prior "
+        ("`check_survey_overlap` (validate.py) takes the MAX correlation across ALL prior "
         "same-line surveys, not just the immediately preceding one -- so as more runs of a "
         "line accumulate, this max is an order statistic over a growing number of comparisons "
         "and trends upward even if each individual run-pair's correlation distribution is "
@@ -269,45 +273,45 @@ def main() -> None:
         "scale-driven finding, not a generator bug: the DQ layer did exactly what it's "
         "designed to do (quarantine, not crash), and the affected surveys were correctly "
         "excluded from the training corpus below. Revisiting the threshold for long-line, "
-        "many-run deployments is future work, out of Stage 6's scope.",
+        "many-run deployments is future work, out of Stage 6's scope."),
         "",
         "## Where SQLite stopped being the right tool",
         "",
-        f"- Before (pre-Stage-6, per-row `itertuples()`+`float()`-per-cell "
+        (f"- Before (pre-Stage-6, per-row `itertuples()`+`float()`-per-cell "
         f"`load_readings`, measured once by hand at {INGEST_BEFORE_N_ROWS:,} rows): "
-        f"**{INGEST_BEFORE_ROWS_PER_SEC:,} rows/sec**, peak RSS {INGEST_BEFORE_PEAK_RSS_MB:.1f} MB.",
-        f"- After (vectorized NaN->None + dtype-cast, this rehearsal, "
+        f"**{INGEST_BEFORE_ROWS_PER_SEC:,} rows/sec**, peak RSS {INGEST_BEFORE_PEAK_RSS_MB:.1f} MB."),
+        (f"- After (vectorized NaN->None + dtype-cast, this rehearsal, "
         f"{expected_rows:,} rows): **{ingest_after_rate:,.0f} rows/sec**, "
-        f"peak RSS {perf_ingest.peak_rss_mb:,.1f} MB ({speedup:.2f}x).",
-        "- Conclusion: the naive Python-level row conversion was a real, measurable cost, "
+        f"peak RSS {perf_ingest.peak_rss_mb:,.1f} MB ({speedup:.2f}x)."),
+        ("- Conclusion: the naive Python-level row conversion was a real, measurable cost, "
         "but not the dominant one -- SQLite's own `executemany` insert path is the majority "
         "of the remaining cost at this row count. This matches "
         "`.claude/skills/lsm-integrity/references/architecture.md`'s own claim that SQLite "
         "\"comfortably handles 10^7 rows read-mostly\" -- it stops being the right tool at "
         "concurrent multi-writer ingest, not at this data volume, which this demonstrator "
-        "never has.",
+        "never has."),
         "",
         "## Bulk-read path: pandas-concat vs DuckDB",
         "",
-        f"- `features.load_feature_corpus` (per-file glob + `pd.concat`): "
-        f"{perf_pd_read.wall_seconds:.2f}s for {len(corpus_pd):,} rows.",
-        f"- `scale_eval.load_feature_corpus_duckdb` (one DuckDB glob read): "
-        f"{perf_dk_read.wall_seconds:.2f}s for {len(corpus_dk):,} rows.",
+        (f"- `features.load_feature_corpus` (per-file glob + `pd.concat`): "
+        f"{perf_pd_read.wall_seconds:.2f}s for {len(corpus_pd):,} rows."),
+        (f"- `scale_eval.load_feature_corpus_duckdb` (one DuckDB glob read): "
+        f"{perf_dk_read.wall_seconds:.2f}s for {len(corpus_dk):,} rows."),
         "",
         "## Small-files problem",
         "",
-        f"{n_feature_files} feature-store files at this scale ({cfg.base.data.n_lines} lines x "
+        (f"{n_feature_files} feature-store files at this scale ({cfg.base.data.n_lines} lines x "
         f"{cfg.base.data.n_runs} runs) -- PLAN.md's own \"120 tiny per-survey Parquet files is "
         "fine\" example, not the 10^5-file failure case. This rehearsal does not hit that "
         "failure mode -- the documented production answer (periodic compaction to line-level "
-        "Parquet files) is noted here, not artificially triggered.",
+        "Parquet files) is noted here, not artificially triggered."),
         "",
         "## float32 arithmetic",
         "",
-        "The feature store is float32 throughout (`features.py`'s `STORAGE_DTYPE`). Severity's "
+        ("The feature store is float32 throughout (`features.py`'s `STORAGE_DTYPE`). Severity's "
         "quantile regression and classify's LightGBM training both ran to completion against "
         "these float32-stored features with no dtype errors (LightGBM upconverts internally as "
-        "needed) -- see the block-CV report below for the resulting metrics.",
+        "needed) -- see the block-CV report below for the resulting metrics."),
         "",
         "## Default 5-fold block CV (the real gate, `run_train`, unchanged)",
         "",
@@ -317,9 +321,9 @@ def main() -> None:
         "",
         "## Whole-line-holdout CV (Stage 6: \"the real generalisation test\")",
         "",
-        "An entire physical line held out per fold (5 folds, ~8 lines/fold), instead of "
+        ("An entire physical line held out per fold (5 folds, ~8 lines/fold), instead of "
         "today's default (line, 100 m block) hash grouping, which scatters one line's blocks "
-        "across ~all folds.",
+        "across ~all folds."),
         "",
         "```",
         whole_line_buf.getvalue().strip(),
