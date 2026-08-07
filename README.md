@@ -15,15 +15,14 @@ proprietary, so every dataset, model, and reported number here runs on a physics
 nothing in this project is cherry-picked.
 
 **Rig-v2 (2026-08-06):** the generator, registration, and feature layers were rebuilt around
-the *real* ROSEN instrument after a second-round developer interview revealed it — a rod
-carrying three **scalar** total-field heads (never x/y/z), carried by a human walker with GPS
-dropout, not the single 3-axis vector head on a fixed grid this project originally assumed.
-Every existing gate was re-measured honestly against the rebuilt corpus, and a new 6-arm
-**ablation ladder** (`scripts/ablation_ladder.py`) answers the actual interview question —
-"hire data scientists, or build new hardware?" The honest answer: none of five software-only
+a more realistic instrument model — a rod carrying three **scalar** total-field heads (never
+x/y/z), carried by a human walker with GPS dropout, not the single 3-axis vector head on a
+fixed grid this project originally assumed. Every existing gate was re-measured honestly
+against the rebuilt corpus, and a new 6-arm **ablation ladder**
+(`scripts/ablation_ladder.py`) answers a real instrumentation question — "improve the
+software, or upgrade the hardware?" The honest answer: none of five software-only
 improvements move detection recall by a statistically distinguishable amount, while a genuine
-hardware upgrade to full vector output roughly triples it. Full writeup:
-[`LSM_PROJECT.md`](LSM_PROJECT.md#rig-v2-measured-results-stage-d-in-progress).
+hardware upgrade to full vector output roughly triples it.
 
 ![Project components: pipeline stages, infrastructure, and consumers](img/project-components.png)
 *Pipeline stages, infrastructure, and consumers.*
