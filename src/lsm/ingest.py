@@ -103,21 +103,29 @@ def load_readings(conn: sqlite3.Connection, survey_id: str, df: pd.DataFrame) ->
     at 80,000 rows (Stage 6 scale rehearsal), the real bottleneck this project's
     row-by-row conversion was; see docs/stage6-scale-rehearsal.md for the
     measured before/after.
+
+    Rig-v2: lat/lon are the nullable columns now (GPS dropout, not gradiometer
+    axes) -- b_lo/mid/hi_nt, girth_weld and chainage_true_m are all NOT NULL
+    per RawReadingSchema, so only lat/lon need the NaN->None conversion.
     """
-    cols = ["sample_idx", "lat", "lon", "bx_nt", "by_nt", "bz_nt", "bx2_nt", "by2_nt", "bz2_nt"]
-    grad_cols = ["bx2_nt", "by2_nt", "bz2_nt"]
+    cols = ["sample_idx", "t_s", "lat", "lon", "b_lo_nt", "b_mid_nt", "b_hi_nt",
+            "girth_weld", "chainage_true_m"]
+    nullable_cols = ["lat", "lon"]
     prepared = df[cols].copy()
     # numpy.int64 is not a Python `int` subclass (unlike numpy.float64/`float`),
-    # so sample_idx needs an explicit vectorized cast -- sqlite3 rejects it
-    # silently-wrong otherwise on some driver/dtype combinations.
+    # so sample_idx/girth_weld need an explicit vectorized cast -- sqlite3
+    # rejects it silently-wrong otherwise on some driver/dtype combinations.
     prepared["sample_idx"] = prepared["sample_idx"].astype(int)
-    prepared[grad_cols] = prepared[grad_cols].astype(object).where(prepared[grad_cols].notna(), None)
+    prepared["girth_weld"] = prepared["girth_weld"].astype(int)
+    prepared[nullable_cols] = prepared[nullable_cols].astype(object).where(
+        prepared[nullable_cols].notna(), None
+    )
     rows = [(survey_id, *row) for row in prepared.to_numpy(dtype=object).tolist()]
 
     conn.executemany(
         """
-        INSERT INTO reading (survey_id, sample_idx, lat, lon, bx_nt, by_nt, bz_nt,
-                              bx2_nt, by2_nt, bz2_nt)
+        INSERT INTO reading (survey_id, sample_idx, t_s, lat, lon,
+                              b_lo_nt, b_mid_nt, b_hi_nt, girth_weld, chainage_true_m)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         rows,

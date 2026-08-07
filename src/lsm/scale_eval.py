@@ -155,7 +155,7 @@ def run_temporal_holdout(
     test_corpus = corpus[corpus["run_id"] == test_run_id].copy()
 
     anomaly_cfg = cfg.base.model.anomaly
-    mad = MADBaseline().fit(train_corpus)
+    mad = MADBaseline(residual_col="r_mid_nt").fit(train_corpus)
     iso = IsolationForestAnomalyModel(
         feature_cols=feature_cols,
         contamination=anomaly_cfg["contamination"],
@@ -309,15 +309,14 @@ def run_scale_evaluation(cfg: Config, conn: sqlite3.Connection) -> dict:
     truth = train._load_truth_and_geometry(conn, survey_ids)
     corpus = corpus.merge(truth, on=["survey_id", "sample_idx"], how="left", validate="one_to_one")
 
-    has_grad = "g_mag_nt_per_m" in corpus.columns and corpus["g_mag_nt_per_m"].notna().any()
-    feature_cols = train.feature_columns(cfg.base.features, with_gradiometer=has_grad)
+    feature_cols = train.feature_columns(cfg.base.features)
 
     line_ids = sorted(corpus["line_id"].unique())
     registries = []
     for line_id in line_ids:
         ref_survey_id = min(corpus.loc[corpus["line_id"] == line_id, "survey_id"].unique())
         ref_rows = corpus[corpus["survey_id"] == ref_survey_id]
-        registries.append(train.build_truth_registry(ref_rows, line_id))
+        registries.append(train.build_truth_registry(ref_rows, line_id, ref_rows["chainage_m"].to_numpy()))
     registry = pd.concat(registries, ignore_index=True)
     run_line_id = corpus.drop_duplicates("survey_id").set_index("survey_id")["line_id"].to_dict()
 

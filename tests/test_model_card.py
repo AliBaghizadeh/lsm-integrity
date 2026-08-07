@@ -9,11 +9,13 @@ TRIPLE = (0.7, 0.5, 0.9)
 BASE_RESULT = {
     "mad": {
         "recall_at_budget": TRIPLE, "false_dig_rate": TRIPLE,
-        "interference_dig_fraction": TRIPLE, "localisation_error_m": TRIPLE, "pr_auc": 0.5,
+        "interference_dig_fraction": TRIPLE, "localisation_error_m": TRIPLE,
+        "localisation_error_cm": (70.0, 50.0, 90.0), "pr_auc": 0.5,
     },
     "isolation_forest": {
         "recall_at_budget": TRIPLE, "false_dig_rate": TRIPLE,
-        "interference_dig_fraction": TRIPLE, "localisation_error_m": TRIPLE, "pr_auc": 0.5,
+        "interference_dig_fraction": TRIPLE, "localisation_error_m": TRIPLE,
+        "localisation_error_cm": (70.0, 50.0, 90.0), "pr_auc": 0.5,
     },
     "recall_gap_if_minus_mad": TRIPLE,
     "interference_gap_mad_minus_if": TRIPLE,

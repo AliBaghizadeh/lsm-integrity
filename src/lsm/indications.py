@@ -48,12 +48,32 @@ INDICATION_COLUMNS = [
 ]
 
 
-def _make_indication_id(survey_id: str, pipeline_version: str, chainage_peak_m: float) -> str:
+def _make_indication_id(
+    survey_id: str, pipeline_version: str, chainage_peak_m: float, peak_sample_idx: int
+) -> str:
     """Deterministic, so re-running predict on the same survey+pipeline_version
     is idempotent -- required by the indication table's contract (architecture.md:
     "idempotent on (survey_id, pipeline_version)").
+
+    Includes `peak_sample_idx` (the physical, integer, tie-free key -- SKILL
+    invariant #8) alongside `chainage_peak_m`, not instead of it. Rig-v2's
+    registered `chainage_m` is a dead-reckoned + weld-locked estimate and
+    genuinely repeats the same value across many samples (e.g. flat
+    extrapolation before the first locked GPS fix, or several samples landing
+    in the same interpolation step) -- on the production corpus, over 38,000
+    of ~200,000 rows in a single survey share their `chainage_m` with at least
+    one other row, some in runs of 90+. Two DIFFERENT indications (different
+    extent, different anomaly_score) can therefore land on peak rows that tie
+    in chainage to the millisecond it used to be hashed at, and a chainage-only
+    key silently collapsed them onto the same `indication_id` -- not a
+    non-determinism bug (the collision was 100% reproducible run to run) but a
+    genuine collision bug: `write_indications`'s `INSERT OR IGNORE` then
+    dropped the second, distinct indication as if it were a re-run duplicate
+    of the first. `sample_idx` is dense and unique per row by construction, so
+    keying on it as well makes two distinct clusters' peaks unable to collide
+    even when their chainage does.
     """
-    key = f"{survey_id}|{pipeline_version}|{chainage_peak_m:.3f}"
+    key = f"{survey_id}|{pipeline_version}|{peak_sample_idx}|{chainage_peak_m:.3f}"
     return hashlib.sha256(key.encode("utf-8")).hexdigest()[:24]
 
 
@@ -88,7 +108,7 @@ def cluster_indications(
         rows.append(
             {
                 "indication_id": _make_indication_id(
-                    survey_id, pipeline_version, float(peak["chainage_m"])
+                    survey_id, pipeline_version, float(peak["chainage_m"]), int(peak["sample_idx"])
                 ),
                 "survey_id": survey_id,
                 "pipeline_version": pipeline_version,
@@ -131,6 +151,58 @@ def select_dig_budget(
     return indications.sort_values("anomaly_score", ascending=False).head(budget)
 
 
+BLOCK_HEATMAP_COLUMNS = ["line_id", "block_start_m", "value", "n_indications", "metric"]
+
+
+def block_risk_heatmap(
+    indications: pd.DataFrame,
+    line_id_col: str = "line_id",
+    chainage_col: str = "chainage_peak_m",
+    block_m: float = 100.0,
+) -> pd.DataFrame:
+    """Aggregate indications into (line_id, 100 m block) cells for a
+    cross-line "defective areas" heatmap -- one row per non-empty cell, so
+    an inspection engineer can read off where risk clusters along the whole
+    pipe, not just within one survey.
+
+    Deliberately the SAME block grouping `evaluate.assign_group()` uses for
+    CV fold assignment (`int(chainage_m // block_m)`): a heatmap cell and a
+    fold's group_key describe the same physical 100 m stretch, so the two
+    views of the data never silently disagree about where a "block" starts.
+
+    Falls back to `anomaly_score` when `risk_score` is entirely missing (no
+    classify/severity model released yet) -- same fallback `chart_utils.py`
+    already uses for the dig-ranking table/chart. `metric` in the output
+    records which column was actually used, per call, not assumed by the
+    caller.
+    """
+    if indications is None or indications.empty:
+        return pd.DataFrame(columns=BLOCK_HEATMAP_COLUMNS)
+
+    has_risk = "risk_score" in indications.columns and indications["risk_score"].notna().any()
+    metric = "risk_score" if has_risk else "anomaly_score"
+    if metric not in indications.columns:
+        return pd.DataFrame(columns=BLOCK_HEATMAP_COLUMNS)
+
+    df = (
+        indications[[line_id_col, chainage_col, metric]]
+        .rename(columns={line_id_col: "line_id", chainage_col: "chainage_peak_m", metric: "value"})
+        .dropna(subset=["line_id", "chainage_peak_m", "value"])
+    )
+    if df.empty:
+        return pd.DataFrame(columns=BLOCK_HEATMAP_COLUMNS)
+
+    df["block_start_m"] = (df["chainage_peak_m"] // block_m) * block_m
+
+    out = (
+        df.groupby(["line_id", "block_start_m"])["value"]
+        .agg(value="max", n_indications="count")
+        .reset_index()
+    )
+    out["metric"] = metric
+    return out[BLOCK_HEATMAP_COLUMNS]
+
+
 def attach_indication_features(
     indications: pd.DataFrame, rows: pd.DataFrame, feature_cols: list[str]
 ) -> pd.DataFrame:
@@ -153,6 +225,21 @@ def attach_indication_features(
         right_on=["survey_id", "chainage_peak_m"],
         how="inner",
     )
+    # Rig-v2: registration.register_survey's own belt-and-braces
+    # np.maximum.accumulate legitimately produces exact ties in `chainage_m`
+    # among immediately-adjacent rows (registration.py's module docstring) --
+    # this float-equality join (a pre-existing pattern, not introduced here)
+    # can therefore match MORE THAN ONE row to a single indication_id where
+    # ties land exactly on a peak's chainage, silently exploding attach_
+    # severity's row count downstream (measured: 131 indications -> 616
+    # merged rows on a real corpus). Keep exactly one match per indication --
+    # the tied rows are immediately-adjacent samples with near-identical
+    # feature values, so which one survives doesn't matter; a future cleanup
+    # could join on sample_idx instead (SKILL invariant #8: never key/join on
+    # a float) by threading the peak row's sample_idx through
+    # cluster_indications, which would need a schema/DDL change this fix
+    # deliberately avoids.
+    peak_rows = peak_rows.drop_duplicates(subset="indication_id", keep="first")
     out = indications.merge(
         peak_rows[["indication_id", *feature_cols]], on="indication_id", how="left"
     )

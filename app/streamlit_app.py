@@ -23,10 +23,12 @@ import streamlit as st
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import chart_utils
 from map_utils import build_map
 
 from lsm.config import load_config
 from lsm.db import connect
+from lsm.indications import block_risk_heatmap
 
 st.set_page_config(layout="wide", page_title="LSM Stage 3 -- indications")
 
@@ -77,10 +79,12 @@ if pipeline_version:
 else:
     st.warning("No trained pipeline yet -- run `lsm train` first. Showing ground truth only.")
 
-st.pydeck_chart(build_map(raw, indications))
+show_heatmap = st.checkbox("Show risk heatmap on map", value=False)
+st.pydeck_chart(build_map(raw, indications, show_heatmap=show_heatmap))
 st.caption(
     "orange = true defect · grey = true interference (unlabelled to the model) · "
-    "blue = detected indication"
+    "blue = detected indication (or a heatmap glow, weighted by risk_score/anomaly_score, "
+    "if the box above is checked)"
 )
 
 st.subheader("Ranked indications")
@@ -91,3 +95,26 @@ if len(indications):
     st.dataframe(ranked, width="stretch")
 else:
     st.info("No indications for this survey yet -- run `lsm predict <survey_id>` first.")
+
+st.subheader("Risk heatmap across all lines")
+st.caption(
+    "Every indication for the currently released pipeline, across every survey in this "
+    "database -- not just the one selected above -- aggregated into 100 m blocks "
+    "(`lsm.indications.block_risk_heatmap`, same block grouping `evaluate.assign_group()` "
+    "uses for CV folds)."
+)
+if pipeline_version:
+    all_indications = pd.read_sql_query(
+        "SELECT i.*, s.line_id FROM indication i "
+        "JOIN survey s ON i.survey_id = s.survey_id "
+        "WHERE i.pipeline_version = ? AND i.is_shadow = 0",
+        conn,
+        params=(pipeline_version,),
+    )
+    blocks = block_risk_heatmap(all_indications)
+    if blocks.empty:
+        st.info("No indications recorded yet for any survey.")
+    else:
+        st.altair_chart(chart_utils.block_heatmap_chart(blocks), width="content")
+else:
+    st.info("No trained pipeline yet -- run `lsm train` first.")

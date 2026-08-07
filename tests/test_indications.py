@@ -9,10 +9,12 @@ import pandas as pd
 import pytest
 
 import lsm.indications as indications_module
+from lsm.evaluate import assign_group
 from lsm.indications import (
     attach_classification,
     attach_indication_features,
     attach_severity,
+    block_risk_heatmap,
     cluster_indications,
     select_dig_budget,
 )
@@ -247,6 +249,61 @@ def test_attach_classification_risk_score_is_none_when_sev_pred_is_none():
         base_feature_cols=["feat_a"], consequence_proxy=_CONSEQUENCE_PROXY,
     )
     assert pd.isna(out.iloc[0]["risk_score"])
+
+
+def test_block_risk_heatmap_groups_by_line_and_100m_block():
+    indications = pd.DataFrame({
+        "line_id": ["L1", "L1", "L1", "L2"],
+        "chainage_peak_m": [10.0, 90.0, 250.0, 10.0],  # first two share block 0 (0-100m)
+        "risk_score": [0.2, 0.9, 0.4, 0.6],
+        "anomaly_score": [1.0, 1.0, 1.0, 1.0],
+    })
+    out = block_risk_heatmap(indications)
+
+    assert list(out.columns) == indications_module.BLOCK_HEATMAP_COLUMNS
+    assert (out["metric"] == "risk_score").all()
+
+    l1_block0 = out[(out["line_id"] == "L1") & (out["block_start_m"] == 0.0)].iloc[0]
+    assert l1_block0["value"] == 0.9  # max of 0.2, 0.9
+    assert l1_block0["n_indications"] == 2
+
+    l1_block2 = out[(out["line_id"] == "L1") & (out["block_start_m"] == 200.0)].iloc[0]
+    assert l1_block2["value"] == 0.4
+
+    assert len(out[out["line_id"] == "L2"]) == 1
+
+
+def test_block_risk_heatmap_block_boundaries_match_evaluate_assign_group():
+    """Same (line_id, 100 m block) grouping evaluate.assign_group() uses for
+    CV folds -- a heatmap cell and a fold's group_key must describe the same
+    physical stretch, or the two views of the data would silently disagree."""
+    indications = pd.DataFrame({
+        "line_id": ["L1"],
+        "chainage_peak_m": [250.0],
+        "risk_score": [0.5],
+    })
+    out = block_risk_heatmap(indications)
+    expected_key = assign_group("L1", 250.0, block_m=100.0)
+    assert expected_key == f"L1::{int(out.iloc[0]['block_start_m'] // 100.0)}"
+
+
+def test_block_risk_heatmap_falls_back_to_anomaly_score_when_risk_is_all_null():
+    indications = pd.DataFrame({
+        "line_id": ["L1"],
+        "chainage_peak_m": [10.0],
+        "risk_score": [np.nan],
+        "anomaly_score": [0.7],
+    })
+    out = block_risk_heatmap(indications)
+    assert out.iloc[0]["metric"] == "anomaly_score"
+    assert out.iloc[0]["value"] == 0.7
+
+
+def test_block_risk_heatmap_on_empty_indications():
+    empty = pd.DataFrame(columns=["line_id", "chainage_peak_m", "risk_score", "anomaly_score"])
+    out = block_risk_heatmap(empty)
+    assert len(out) == 0
+    assert list(out.columns) == indications_module.BLOCK_HEATMAP_COLUMNS
 
 
 def test_attach_classification_on_empty_indications():

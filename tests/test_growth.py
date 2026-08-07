@@ -31,16 +31,44 @@ _BOOT_CFG = SimpleNamespace(n_resamples=500, level=0.95)
 
 
 def _growth_sized_cfg(cfg):
-    """Same shape as test_train.py's _severity_sized_cfg -- 1 line x 3 runs
-    x 10 defects, confirmed to produce enough matched, multi-run severity
-    observations for growth fitting, not just severity's own CV path.
+    """1 line x 3 runs x 20 defects on a 1000 m line -- NOT the same size as
+    test_train.py's _severity_sized_cfg (500m/10 defects) anymore.
+
+    Under Rig-v2's scalar-rig physics, detection recall on a small corpus is
+    low enough that the 500m/10-defect size (used pre-Rig-v2, when every
+    defect was easily separable) left growth starved: only ~8 matched,
+    non-NaN-severity (matched_source_id, run) observations survived to
+    `build_growth_frame` in total, all effectively concentrated in runs 0-1,
+    which produced two failures that are the SAME underlying small-sample
+    problem, not two bugs:
+      - `test_no_growth_baseline_gate`: gate_passed=False because there were
+        ZERO paired (train-run projection, test-run observation) pairs at
+        all at that size (n_defects_evaluated=0) -- not a negative result,
+        an empty one, at 500m/10.
+      - `test_as_of_flag_restricts_which_runs_are_used`: n_growth_samples was
+        8 for BOTH the `as_of`-restricted and unrestricted corpus (8 == 8) --
+        because at that size essentially none of run 2's already-scarce
+        detections survived the growth frame's NaN-severity filter even in
+        the unrestricted case, so restricting away run 2 changed nothing
+        observable.
+    Verified directly (scripts, not guesswork) that this is a corpus-power
+    problem, not a registration/clustering/matching bug: the SAME code,
+    re-measured on the real production corpus (config/base.yaml: 5 lines x
+    2000m x 12 defects x 3 runs), passes cleanly -- population
+    log-growth-rate 0.1398 (== ln(1.15) to 4 places), gate PASSED, n=14
+    defects evaluated. 1000m/20-defects/6-interference (this size) is the
+    smallest of {500/10, 1000/20, 1500/30, 2000x2-lines/24} that reliably
+    clears both gates with room to spare (gate CI lower bound ~9.9 > 0,
+    n_defects_evaluated=9; restricted=15 < unrestricted=24) while keeping
+    this test's runtime near its previous ~17s (now ~35-40s) rather than the
+    1500m size's ~70s.
     """
-    cfg.base.data.length_m = 500.0
+    cfg.base.data.length_m = 1000.0
     cfg.base.data.step_m = 1.0
     cfg.base.data.n_lines = 1
     cfg.base.data.n_runs = 3
-    cfg.base.data.n_defects = 10
-    cfg.base.data.n_interference = 3
+    cfg.base.data.n_defects = 20
+    cfg.base.data.n_interference = 6
     return cfg
 
 
@@ -151,7 +179,7 @@ def test_match_residual_is_recorded_and_finite(cfg):
     for line_id in line_ids:
         ref_survey_id = min(corpus.loc[corpus["line_id"] == line_id, "survey_id"].unique())
         ref_rows = corpus[corpus["survey_id"] == ref_survey_id]
-        registries.append(train_module.build_truth_registry(ref_rows, line_id))
+        registries.append(train_module.build_truth_registry(ref_rows, line_id, ref_rows["chainage_m"].to_numpy()))
     registry = pd.concat(registries, ignore_index=True)
 
     # Reuse the actually-released anomaly bundle to score+cluster, matching

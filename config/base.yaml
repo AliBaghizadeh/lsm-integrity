@@ -46,23 +46,96 @@ data:
   label_window_scale: 2.0
   n_runs: 3
   growth: 1.15
-  gradiometer:
-    # Stage 2: a second sensor head at baseline_m above the first. Until this was
-    # switched on there was NO gradiometry in this project -- one 3-axis
-    # magnetometer gives three axes, not three sensors, and the only derivative
-    # available was the along-track dB/ds. With it on, the vertical difference
-    # cancels the common-mode background, and the claim is literally true.
-    enabled: true
-    baseline_m: 0.5
-    # Stage 2.5 item 1: until these were nonzero, B2 was built from the exact
-    # same drift/wave arrays as B, so the background's vertical gradient was
-    # exactly zero and common-mode rejection was perfect by construction (the
-    # measured head difference was pure sensor noise, sigma*sqrt(2)). The main
-    # field's real vertical gradient is ~0.02 nT/m; geology contributes more and
-    # varies along the line, so it is modelled as its own spatial term in
-    # generate.py rather than a second constant.
+  # Rig-v2 (schema_version 2 -> 3, 2026-08-06): a second-round interview with
+  # the LSM instrument's own developer revealed the real rig -- a rod with
+  # THREE magnetometers 50 cm apart (middle + two), each reporting only |B|,
+  # carried by a WALKER at irregular speed with GPS that drops out, not the
+  # single-vector-head-on-a-rail model this file described until now. `rig`
+  # selects the generator; `array`/`walk`/`gps`/`weld`/`sensor` are all new,
+  # replacing `gradiometer` (absorbed into `array`, see config.py).
+  rig: scalar
+  # random: a defect's total-field anomaly sign (enhancing vs degrading the
+  # ambient field) is whatever its isotropic moment orientation gives --
+  # physically honest, per the developer's own stated point that stress can
+  # go either way. positive: canonicalised to always-enhancing, i.e. the old
+  # implicit (and now known-false) assumption. Kept as a toggle so Stage C's
+  # sign-agnostic-feature test can show separability collapsing under the
+  # honest setting.
+  stress_polarity: random
+  array:
+    # The real rod: middle + two heads, 50 cm apart, vertical mast (one of the
+    # open confirm-with-ROSEN items -- see docs -- assumed vertical here).
+    # n_heads is fixed at 3 for rig: scalar; the schema's b_lo/b_mid/b_hi
+    # columns are hardcoded to match.
+    n_heads: 3
+    spacing_m: 0.5
+    orientation: vertical
+    # Unrenamed from the old `gradiometer` block -- same physics, still needed
+    # so gradient rejection isn't perfect by construction. Until these were
+    # nonzero (Stage 2.5 item 1), B2 (now b_hi) was built from the exact same
+    # drift/wave arrays as B (b_mid), so the background's vertical gradient
+    # was exactly zero and the measured head difference was pure sensor
+    # noise, sigma*sqrt(2). The main field's real vertical gradient is
+    # ~0.02 nT/m; geology contributes more and varies along the line, so it
+    # gets its own spatially-varying term in generate.py.
     main_field_gradient_nT_per_m: 0.02
     geology_gradient_scale_nT_per_m: 10.0
+  walk:
+    # A human walker, not a cart on rails -- speed/stand-off/lateral position
+    # all wander as OU (mean-reverting random-walk) processes. Numbers below
+    # marked "plan" are from the approved Rig-v2 physics spec; the
+    # *_correlation_s/_m values are this implementation's own reasoned choice
+    # of time/length scale (see config.py's WalkConfig docstring) -- there is
+    # no equivalent ROSEN-supplied number for those yet.
+    speed_m_per_s: 1.2
+    speed_sigma_m_per_s: 0.15
+    speed_correlation_s: 8.0
+    speed_min_m_per_s: 0.6
+    speed_max_m_per_s: 1.8
+    # 120 Hz -> ~1 cm mean spacing at nominal speed. This is a deliberate
+    # consequence of the real rig, not a demo convenience: it makes the
+    # per-survey row count ~50x what the old uniform 0.5 m grid produced.
+    sample_rate_hz: 120.0
+    standoff_m: 1.5
+    standoff_sigma_m: 0.20
+    standoff_correlation_m: 10.0
+    lateral_sigma_m: 0.30
+    lateral_correlation_m: 5.0
+    tilt_sigma_deg: 5.0
+    tilt_correlation_m: 3.0
+  gps:
+    # Markov good/bad lock state. dropout_rate is the steady-state FRACTION of
+    # the survey spent unlocked; mean_gap_s is the mean length of one dropout
+    # (~15 s ~= 18 m at nominal walking speed, per the plan). This is what
+    # check_gps_chainage_consistency and Stage B's registration exist to
+    # survive -- lat/lon are nullable in the schema specifically for this.
+    dropout_rate: 0.05
+    mean_gap_s: 15.0
+    sigma_m: 1.5
+  weld:
+    # Girth welds occur every ~12 m -- a fact of how the pipe is built, not a
+    # rare event. This corrects a real physical error the pre-Rig-v2 model
+    # had: `weld` used to be drawn as one of a dozen rare point-defect types
+    # (~12 TIMES total on a 2 km line, via rng.choice), not every 12 m.
+    pitch_m: 12.2
+    pitch_jitter_m: 0.15
+    # 5-20x a defect's dipole moment -- a joint carries real extra steel.
+    moment_scale_range: [5.0, 20.0]
+  sensor:
+    # Per-head imperfections a real fluxgate head has and the pre-Rig-v2
+    # model didn't. gain_sigma is the one that matters most: a 0.2% gain
+    # MISMATCH between two heads leaves ~100 nT of uncancelled common-mode
+    # signal against a ~25 nT anomaly -- inter-sensor calibration is a
+    # modelled first-class problem here, not a footnote (see
+    # tests/test_generate.py's gain-mismatch test).
+    gain_sigma: 0.002
+    offset_nt: 2.0
+    # 24-bit over +/-100 uT -> LSB ~0.012 nT. ROSEN open question: is 100 uT
+    # the actual full-scale range (assumed here -- Earth's field is ~50 uT,
+    # so this is a standard fluxgate range) or a noise/resolution figure?
+    adc_bits: 24
+    full_scale_ut: 100.0
+    noise_nt: 5.0
   # Stage 2.5 item 3: swap the synthetic drift+wave background for a real
   # geomagnetic observatory trace (data/reference/*.csv, USGS Geomagnetism
   # Program, BOU/Boulder). Off by default -- it is a deliberate realism stress
@@ -97,10 +170,30 @@ validate:
     coverage: warn
   max_gap_m: 2.0
   max_gps_jump_m: 5.0
-  field_range_nT: [-80000.0, 80000.0]
+  # Rig-v2: a total-field MAGNITUDE is never negative -- a signed range here
+  # (the old bx/by/bz vector-axis bound) is a check.range gate that could
+  # never fail on this rig. Matches schemas.py's FIELD_RANGE_NT.
+  field_range_nT: [20000.0, 80000.0]
   noise_floor_range_nT: [1.0, 15.0]
   min_coverage_frac: 0.95
-  saturation_run_length: 3
+  # Stage D re-measurement, 2026-08-06: bumped 3 -> 5. At Rig-v2's 120 Hz /
+  # 24-bit ADC (sensor.adc_bits/full_scale_ut, sensor.noise_nt=5.0), adjacent
+  # samples are only ~1 cm apart, so the TRUE signal barely moves between
+  # them -- after independent per-sample noise (sigma=5 nT) and quantisation
+  # to LSB~=0.012 nT, two consecutive samples coincidentally land in the SAME
+  # quantisation bin with probability ~=1/1490 (confirmed by exact ADC
+  # bin-index matches on real generated data, not corrupted rows). A run of
+  # exactly 3 identical values (the old threshold) is two such coincidences
+  # in a row, ~=4.5e-7 per row -- across ~200k rows/survey that is ~0.09
+  # expected occurrences per survey, close to the ~40% spurious quarantine
+  # rate actually measured end-to-end at rig: scalar's production config
+  # (config/base.yaml n_lines=5). A run of 5 is two MORE such coincidences
+  # (~2e-13 per row, ~4e-8 expected per survey -- negligible at this
+  # project's scale) while a genuinely stuck/railed sensor produces a run
+  # lasting the whole fault duration (seconds to minutes at 120 Hz, i.e.
+  # hundreds-to-tens-of-thousands of samples) -- 5 stays enormously more
+  # sensitive to a real fault than to this rig's own quantisation noise floor.
+  saturation_run_length: 5
   overlap_correlation_threshold: 0.9
 
 features:
@@ -109,7 +202,20 @@ features:
   # (Stage 2.75) measured them as EXACT duplicates of r_mag_nt /
   # peak_prominence_nt under a single global depth_m. See features.py's
   # feature_columns() docstring and PLAN.md.
-  version: 2
+  #
+  # Bumped 2 -> 3 (Stage C, Rig-v2, 2026-08-06): rx/ry/rz/r_mag_nt/
+  # r_incl_deg/r_decl_deg/gx/gy/gz/g_mag_nt_per_m -- all vector-axis columns
+  # -- are gone; there is no vector output under the scalar rig (schemas.py).
+  # r_lo/mid/hi_nt (each head's own detrended residual) replace them,
+  # r_mid_nt taking over r_mag_nt's old role as the primary signal for
+  # dr_ds_nt_per_m/d2r_ds2_nt_per_m2/the window-stat block/the peak-shape
+  # block. g1_nt_per_m/g2_nt_per_m2 (first/second difference across the 3
+  # heads) and standoff_est_m (a genuine per-row measured stand-off -- not
+  # the fv=1->2 global depth_m that made the normalised columns exact
+  # duplicates) are new; r_mag_norm_nt_m3/peak_prominence_norm_nt_m3 are
+  # reinstated now that standoff_est_m makes them real again.
+  # dist_to_weld_m/gps_locked (Stage B registration output) are new.
+  version: 3
   detrend:
     # Two stages: a global robust polynomial removes the drift, then a rolling-median
     # high-pass of window_m removes whatever long-wavelength structure the polynomial
@@ -240,10 +346,48 @@ model:
     # training rate is "a sensor or background problem until proven
     # otherwise" (Layer 4).
     indications_per_km_ratio_warn: 3.0
+    # Kept at 3.0, NOT lowered, after a Rig-v2 investigation (2026-08-06,
+    # Stage D) into tests/test_monitor.py's shifted-background test, which
+    # initially failed to fire at a 300 nT single-axis background shift.
+    # Root cause: `background_regime_shift` (evaluate.py) z-scores a new
+    # survey's per-head median against the MEAN/STD of only the line's prior
+    # surveys' medians -- fine pre-Rig-v2 (background was deterministic, so
+    # historical std was ~0 and any shift stood out trivially), but Rig-v2's
+    # `sensor.gain_sigma`/`sensor.offset_nt` are drawn FRESH per survey
+    # (generate.py's SensorConfig docstring: "fixed per survey"), so the
+    # historical medians now have a genuine physical spread of their own --
+    # measured directly at gain_sigma(0.002) * |B0|(~48,857 nT) ~= 97.6 nT,
+    # matching the ~30-65 nT per-head sample std actually observed across
+    # only 3 history runs (an inherently noisy estimate of that ~98 nT
+    # figure at n=3). A 300 nT shift on one background AXIS survives
+    # projection onto B_hat0 as only ~115 nT of per-head total-field shift --
+    # the same order as this now-real calibration noise floor, so it is
+    # genuinely, physically UNDETECTABLE with any threshold choice here: at
+    # this project's fixed test seed, z_scores for offsets swept from 0-1000
+    # nT were NON-MONOTONIC (an offset of 0 nT, i.e. no shift, produced
+    # z=4.47 by pure per-survey calibration noise; 300-500 nT, an actual
+    # shift, produced z<2.4) -- lowering the threshold would only trade
+    # missed shifts for false alarms on ordinary recalibration noise, not
+    # fix the underlying power problem. Reliable separation (z >= ~4 on
+    # EVERY head, with margin, vs. this project's specific measured noise
+    # floor) starts around a 1000 nT single-axis shift -- see
+    # tests/test_monitor.py's updated `bx_offset`. Below that, with only 3
+    # historical surveys per line, this check cannot be expected to
+    # distinguish a real moderate regime shift from ordinary per-survey
+    # sensor drift -- an honest limitation of a 3-history-run baseline, not
+    # something a threshold constant can paper over. A real fix would
+    # compare against the KNOWN physical noise floor (gain_sigma * |B0|)
+    # rather than an empirical 3-point sample std, or require more history
+    # -- left as a documented limitation, not implemented here (out of
+    # Stage D's scope: this is validate.py/evaluate.py DQ-check machinery,
+    # not a re-measurement).
     background_regime_z_threshold: 3.0
   dig_budget_per_km: 5
 
 mlflow:
   experiment: lsm-integrity
 
-schema_version: 2
+# Rig-v2, 2026-08-06: bx_nt/by_nt/bz_nt/... replaced by b_lo/b_mid/b_hi_nt,
+# lat/lon now nullable, chainage_m removed from raw (see schemas.py and
+# generate.py's module docstrings). A deliberate breaking change, not additive.
+schema_version: 3

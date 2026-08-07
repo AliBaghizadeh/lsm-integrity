@@ -28,28 +28,65 @@ DEFECT_TYPES: list[str] = ["scc", "weld", "dent", "corrosion", "interference", "
 # class -- DEFECT_TYPES minus "none", same pinned-order discipline.
 CLASSIFY_CLASSES: list[str] = [t for t in DEFECT_TYPES if t != "none"]
 
-FIELD_RANGE_NT = (-80_000.0, 80_000.0)
+# Rig-v2 (schema_version 3): a total-field MAGNITUDE, never negative, so the
+# range is no longer signed per-axis -- a check that still admitted negatives
+# was a check that could never fail. ~19-45k background axis components summed
+# in quadrature give F ~= 48,857 nT; [20_000, 80_000] is a broad sanity band
+# around that, not a tight physical bound (gain error, quantization and a
+# defect anomaly are all tiny by comparison).
+FIELD_RANGE_NT = (20_000.0, 80_000.0)
 
 # Raw reading table, as generated/ingested per survey. This is the schema
 # `validate.py`'s `schema` check enforces (Layer 1, gate: fail).
+#
+# Rig-v2 break (schema_version 2 -> 3): bx_nt/by_nt/bz_nt/bx2_nt/by2_nt/bz2_nt
+# are GONE. The real instrument has three heads that each report only |B| --
+# see generate.py's module docstring and the physics section of the Rig-v2
+# plan. b_lo/b_mid/b_hi replace them; there is no vector output in the scalar
+# rig (data.rig: vector, the preserved legacy path, does NOT write this
+# schema at all -- it is a reference arm, not a second maintained product).
 RawReadingSchema = DataFrameSchema(
     {
         "sample_idx": Column(pa.Int64, Check.ge(0), nullable=False),
-        "lat": Column(pa.Float64, nullable=False),
-        "lon": Column(pa.Float64, nullable=False),
-        "bx_nt": Column(pa.Float64, Check.in_range(*FIELD_RANGE_NT), nullable=False),
-        "by_nt": Column(pa.Float64, Check.in_range(*FIELD_RANGE_NT), nullable=False),
-        "bz_nt": Column(pa.Float64, Check.in_range(*FIELD_RANGE_NT), nullable=False),
-        "bx2_nt": Column(pa.Float64, Check.in_range(*FIELD_RANGE_NT), nullable=True),
-        "by2_nt": Column(pa.Float64, Check.in_range(*FIELD_RANGE_NT), nullable=True),
-        "bz2_nt": Column(pa.Float64, Check.in_range(*FIELD_RANGE_NT), nullable=True),
+        # Elapsed seconds since survey start -- the walk is TIME-sampled at a
+        # fixed rate, not distance-sampled, so t_s (not chainage) is the
+        # regular axis. sample_idx stays the dense integer key regardless.
+        "t_s": Column(pa.Float64, Check.ge(0), nullable=False),
+        # Nullable, unlike schema_version 2: GPS drops out in poor sky view
+        # (GpsConfig) and the gap is written as NaN, not synthesised. A survey
+        # with mandatory lat/lon was a survey that couldn't represent the
+        # instrument's actual failure mode.
+        "lat": Column(pa.Float64, nullable=True),
+        "lon": Column(pa.Float64, nullable=True),
+        "b_lo_nt": Column(pa.Float64, Check.in_range(*FIELD_RANGE_NT), nullable=False),
+        "b_mid_nt": Column(pa.Float64, Check.in_range(*FIELD_RANGE_NT), nullable=False),
+        "b_hi_nt": Column(pa.Float64, Check.in_range(*FIELD_RANGE_NT), nullable=False),
         "defect": Column(pa.Int64, Check.isin([0, 1]), nullable=False),
         "defect_type": Column(pa.String, Check.isin(DEFECT_TYPES), nullable=False),
         "severity_smys": Column(pa.Float64, nullable=True),
         # Ground truth for off-pipe interference sources -- tracked separately
         "interference": Column(pa.Int64, Check.isin([0, 1]), nullable=False),
+        # Ground truth for the periodic girth-weld train -- tracked separately
+        # from `defect`: a weld is not damage, but IS a real, strong, non-
+        # cancelling source a naive detector would false-alarm on.
+        "girth_weld": Column(pa.Int64, Check.isin([0, 1]), nullable=False),
+        # TRUTH TIER, same as `defect`/`interference`: the generator's own
+        # exact along-track position, known because it wrote the walk. May be
+        # used to SCORE registration (Stage B); must never be used as a
+        # feature -- see references/data-contract.md and features.py's
+        # denylist (Stage C). This is why raw no longer carries a plain
+        # `chainage_m`: under irregular human walking there is no physically-
+        # final chainage until registration produces one.
+        "chainage_true_m": Column(pa.Float64, nullable=False),
     },
-    strict=False,  # extra convenience columns (e.g. chainage_m) are allowed but not checked
+    # extra convenience columns are allowed but not checked -- notably
+    # chainage_provisional_m, a naive constant-speed dead-reckoning estimate
+    # generate.py writes for interim convenience only (see its docstring).
+    # Deliberately NOT named chainage_m: that name is what a careless
+    # downstream join would reach for as "the" chainage, and this column is
+    # neither truth nor registered -- it is provisional and uncorrected until
+    # Stage B's registration.py lands.
+    strict=False,
     coerce=False,
 )
 
@@ -92,11 +129,16 @@ FeatureFrameSchema = DataFrameSchema(
         "chainage_m": Column(pa.Float64, nullable=False),
         "feature_version": Column(pa.Int64, Check.ge(1), nullable=False),
         "dq_flag": Column(pa.String, Check.isin(DQ_FLAGS), nullable=False),
-        # Residuals are the whole point of the stage: they must exist and be finite.
-        "rx_nt": Column(pa.Float32, nullable=False),
-        "ry_nt": Column(pa.Float32, nullable=False),
-        "rz_nt": Column(pa.Float32, nullable=False),
-        "r_mag_nt": Column(pa.Float32, Check.ge(0), nullable=False),
+        # Residuals are the whole point of the stage: they must exist and be
+        # finite. Rig-v2 (feature_version 3): rx/ry/rz/r_mag_nt (a vector's
+        # components and its magnitude) are gone -- there is no vector output
+        # under the scalar rig. r_lo/mid/hi_nt (each head's own detrended
+        # residual) replace them; unlike the old r_mag_nt these are SIGNED
+        # (a total-field anomaly can enhance or degrade the ambient field), so
+        # there is no Check.ge(0) any more.
+        "r_lo_nt": Column(pa.Float32, nullable=False),
+        "r_mid_nt": Column(pa.Float32, nullable=False),
+        "r_hi_nt": Column(pa.Float32, nullable=False),
     },
     strict=False,
     coerce=False,

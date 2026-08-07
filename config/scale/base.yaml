@@ -20,6 +20,15 @@
 #   n_interference: 4     -> 80      (80/40km = 2/km, same density as today)
 # 40 x (40000/0.5) x 3 = 9,600,000 rows =~ 10^7, matching both PLAN.md's
 # "~10^7" and its own "n_lines: 40" figure.
+#
+# STALE UNDER RIG-V2 (2026-08-06, Stage A, flagged not fixed -- re-deriving a
+# new row-count target is a scale-rehearsal decision, out of Stage A's scope):
+# the ~10^7 arithmetic above assumed the OLD uniform step_m=0.5 grid.
+# `rig: scalar`'s walk model samples at walk.sample_rate_hz (120 Hz) in TIME,
+# which at the nominal 1.2 m/s works out to ~1 cm mean spacing -- ~50x denser
+# than step_m=0.5 -- so this file's n_lines/length_m, unchanged below, would
+# now produce ~5x10^8 rows, not ~10^7. Confirm the intended target before
+# actually running this config's `generate` for a scale rehearsal.
 seed: 42
 
 data:
@@ -52,23 +61,46 @@ data:
   label_window_scale: 2.0
   n_runs: 3
   growth: 1.15
-  gradiometer:
-    # Stage 2: a second sensor head at baseline_m above the first. Until this was
-    # switched on there was NO gradiometry in this project -- one 3-axis
-    # magnetometer gives three axes, not three sensors, and the only derivative
-    # available was the along-track dB/ds. With it on, the vertical difference
-    # cancels the common-mode background, and the claim is literally true.
-    enabled: true
-    baseline_m: 0.5
-    # Stage 2.5 item 1: until these were nonzero, B2 was built from the exact
-    # same drift/wave arrays as B, so the background's vertical gradient was
-    # exactly zero and common-mode rejection was perfect by construction (the
-    # measured head difference was pure sensor noise, sigma*sqrt(2)). The main
-    # field's real vertical gradient is ~0.02 nT/m; geology contributes more and
-    # varies along the line, so it is modelled as its own spatial term in
-    # generate.py rather than a second constant.
+  # Rig-v2 (schema_version 2 -> 3, 2026-08-06): mirrors config/base.yaml's
+  # `data.rig`/`array`/`walk`/`gps`/`weld`/`sensor` blocks -- see that file
+  # for the full "why" comments, not repeated here. `gradiometer` is gone,
+  # absorbed into `array` (config.py).
+  rig: scalar
+  stress_polarity: random
+  array:
+    n_heads: 3
+    spacing_m: 0.5
+    orientation: vertical
     main_field_gradient_nT_per_m: 0.02
     geology_gradient_scale_nT_per_m: 10.0
+  walk:
+    speed_m_per_s: 1.2
+    speed_sigma_m_per_s: 0.15
+    speed_correlation_s: 8.0
+    speed_min_m_per_s: 0.6
+    speed_max_m_per_s: 1.8
+    sample_rate_hz: 120.0
+    standoff_m: 1.5
+    standoff_sigma_m: 0.20
+    standoff_correlation_m: 10.0
+    lateral_sigma_m: 0.30
+    lateral_correlation_m: 5.0
+    tilt_sigma_deg: 5.0
+    tilt_correlation_m: 3.0
+  gps:
+    dropout_rate: 0.05
+    mean_gap_s: 15.0
+    sigma_m: 1.5
+  weld:
+    pitch_m: 12.2
+    pitch_jitter_m: 0.15
+    moment_scale_range: [5.0, 20.0]
+  sensor:
+    gain_sigma: 0.002
+    offset_nt: 2.0
+    adc_bits: 24
+    full_scale_ut: 100.0
+    noise_nt: 5.0
   # Stage 2.5 item 3: swap the synthetic drift+wave background for a real
   # geomagnetic observatory trace (data/reference/*.csv, USGS Geomagnetism
   # Program, BOU/Boulder). Off by default -- it is a deliberate realism stress
@@ -103,19 +135,20 @@ validate:
     coverage: warn
   max_gap_m: 2.0
   max_gps_jump_m: 5.0
-  field_range_nT: [-80000.0, 80000.0]
+  # Rig-v2: a total-field MAGNITUDE is never negative -- see base.yaml.
+  field_range_nT: [20000.0, 80000.0]
   noise_floor_range_nT: [1.0, 15.0]
   min_coverage_frac: 0.95
-  saturation_run_length: 3
+  # Stage D re-measurement, 2026-08-06: 3 -> 5, same ADC-quantisation-
+  # coincidence reasoning as base.yaml (this scale config shares the same
+  # sensor/walk physics, just more lines).
+  saturation_run_length: 5
   overlap_correlation_threshold: 0.9
 
 features:
-  # Bumped 1 -> 2 on 2026-07-30: r_mag_norm_nt_m3 / peak_prominence_norm_nt_m3
-  # removed from feature_columns() (and from being computed at all) -- EDA
-  # (Stage 2.75) measured them as EXACT duplicates of r_mag_nt /
-  # peak_prominence_nt under a single global depth_m. See features.py's
-  # feature_columns() docstring and PLAN.md.
-  version: 2
+  # Mirrors config/base.yaml's features.version -- see that file for the
+  # full fv history/"why" comments, not repeated here.
+  version: 3
   detrend:
     # Two stages: a global robust polynomial removes the drift, then a rolling-median
     # high-pass of window_m removes whatever long-wavelength structure the polynomial
@@ -223,4 +256,4 @@ model:
 mlflow:
   experiment: lsm-integrity-scale
 
-schema_version: 2
+schema_version: 3

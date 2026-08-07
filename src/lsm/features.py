@@ -4,6 +4,14 @@ off-pipe interference. This is the stage the project is actually about: the raw
 field is ~45000 nT and the defect signature is ~25 nT, so 99.95% of the signal is
 something to be removed before any model sees it.
 
+Rig-v2 (feature_version 3): the raw contract is `rig: scalar` only (three
+total-field heads `b_lo_nt`/`b_mid_nt`/`b_hi_nt`, no vector output anywhere --
+see schemas.py / generate.py's module docstrings). `rig: vector`'s own
+ablation-arm evaluation is Stage D's concern, with its own simpler feature
+path if it ever needs one; this module does not stay polymorphic across both
+raw schemas, mirroring the same scope decision Stage B's ingest.py/validate.py
+already made.
+
 The physics encoded here:
   - A defect is a buried dipole; its field falls off as 1/r^3. At stand-off h the
     along-track profile depends on s/h alone (times 1/h^3), so doubling the depth
@@ -13,10 +21,25 @@ The physics encoded here:
     broader. Width and decay shape separate it from a defect far better than
     amplitude does -- which is why fwhm_m, peak_asymmetry and decay_exponent
     exist and why amplitude alone is a false-positive machine.
-  - With a second sensor head at a vertical baseline, the difference between the
-    heads cancels the common-mode background (which is spatially uniform at this
-    scale) while keeping the near-field defect term (which is not). That is
-    gradiometry proper, not the along-track derivative.
+  - Each head reports only a total-field MAGNITUDE (never x/y/z), so `r_mid_nt`
+    (the detrended residual of the middle head) is the direct successor to the
+    old `r_mag_nt`: under a scalar rig "the magnitude" and "the middle head's
+    reading" are the same thing, there being no vector left to norm. Every
+    downstream derivative/window-stat/peak-shape column that used to run on
+    `r_mag_nt` now runs on `r_mid_nt` instead -- same code, new input, same
+    column NAMES (none of them ever spelled out "r_mag").
+  - Three heads at -spacing/0/+spacing along the mast give a first difference
+    `g1_nt_per_m` (common-mode background rejection, the old two-head
+    gradiometer story) AND a second difference `g2_nt_per_m2` (linear-gradient
+    rejection -- the specific extra value the third head buys). Both are
+    computed from the DETRENDED residuals, not the raw heads, so they are
+    background-removed like everything else in this stage.
+  - The head-to-head amplitude/curvature ratio also inverts (approximately) for
+    source distance via 1/r^3 -- `standoff_est_m`, a genuine per-row measured
+    stand-off rather than the single global `depth_m` that made the fv=1
+    normalised columns (`r_mag_norm_nt_m3`, `peak_prominence_norm_nt_m3`) exact
+    duplicates of their un-normalised counterparts. See `_standoff_est_m`'s
+    docstring for exactly what this is and is not.
 
 Two kinds of transform, distinguished in the TYPE SIGNATURES rather than in a
 comment (references/architecture.md, "Feature layer: stateless vs fitted"):
@@ -26,6 +49,15 @@ comment (references/architecture.md, "Feature layer: stateless vs fitted"):
       parameter through which another survey's statistics could enter, so
       point-in-time correctness holds by construction rather than by discipline.
       These are legitimately re-fit at inference: they ARE background removal.
+      Registration (Stage B) is the same kind of transform -- a pure function of
+      one survey's own raw rows -- so its output (`chainage_m`, `dist_to_weld_m`)
+      is threaded into `compute_survey_features` as explicit parameters computed
+      once per survey (by `pipeline.run_feature_pipeline`, which owns the
+      `DataConfig` `register_survey` needs), not recomputed here: that keeps this
+      module's own dependency graph one-directional (registration.py does not
+      import features.py, features.py does not import registration.py) and keeps
+      `compute_survey_features`'s signature an explicit, typed contract rather
+      than an implicit "df happens to carry extra columns" one.
 
   FittedTransform     .fit(X) once, then .transform(X) many times
       Cross-survey statistics -- scalers, calibration maps, conformal quantiles,
@@ -57,7 +89,21 @@ from lsm.schemas import FEATURE_KEY_COLUMNS, validate_feature_schema
 log = get_logger("lsm.features")
 
 STORAGE_DTYPE = "float32"
-AXES = ("x", "y", "z")
+HEADS = ("lo", "mid", "hi")
+
+# Truth-tier columns (schemas.py's RawReadingSchema) that may be present on the
+# raw df this module reads but must never become a feature: a real survey never
+# has them, and `defect`/`defect_type`/`interference`/`severity_smys`/
+# `girth_weld`/`chainage_true_m` exist only so a caller can SCORE this stage's
+# output after the fact -- the same truth tier `registration.py`'s own
+# `registration_error_m` documents. `_assert_no_truth_leakage` is the same kind
+# of guard `evaluate.shap_denylist_check` gives the classifier: cheap, and it
+# turns "features.py must never read these" from a comment into something that
+# fails loudly if a future edit reaches for one.
+TRUTH_DENYLIST = [
+    "chainage_true_m", "chainage_provisional_m", "girth_weld",
+    "defect", "defect_type", "severity_smys", "interference",
+]
 
 
 class PointInTimeViolation(Exception):
@@ -85,18 +131,27 @@ class SurveyContext:
     no corpus, no connection and no population statistic here, so a stateless
     transform *cannot* reach across surveys even if someone tries.
 
-    `gradiometer_baseline_m` is sensor metadata. It lives in code config today
-    because the generator owns it; on real data it belongs on the `survey` row
-    alongside step_m and standoff_m, and would be read from there.
+    Rig-v2 dropped `step_m`: chainage is no longer `sample_idx * step_m` (the
+    walk is irregular, see registration.py), and `compute_survey_features`
+    derives its own along-track sample spacing from the registered chainage it
+    is handed, so a fixed nominal `step_m` had no remaining reader. `standoff_m`
+    stays -- not for chainage (never used for that even before this rework) but
+    as the nominal configured rod height, used as the fallback prior when
+    `standoff_est_m`'s per-row inversion is ill-conditioned (see that
+    function's docstring). Both fields are real acquisition metadata that on
+    real data would be read from the `survey` row, same as before.
+
+    `array_spacing_m` is sensor metadata: the fixed distance between adjacent
+    heads on the mast (`ArrayConfig.spacing_m`). It lives in code config today
+    because the generator owns it; on real data it belongs on the `survey` row.
     """
 
     survey_id: str
     line_id: str
     run_id: int
-    step_m: float
-    standoff_m: float
     surveyed_at: str
-    gradiometer_baseline_m: float | None = None
+    standoff_m: float
+    array_spacing_m: float | None = None
 
 
 @runtime_checkable
@@ -208,6 +263,21 @@ def assert_point_in_time(df: pd.DataFrame, as_of: str, what: str = "frame") -> N
         )
 
 
+def _assert_no_truth_leakage(columns: list[str]) -> None:
+    """A feature-column list must never contain a truth-tier name. Always
+    passes today -- feature_columns() is a fixed, hand-written list -- but it
+    turns "features.py must never read truth" from a comment enforced by
+    vigilance into something that fails loudly the moment it stops being true,
+    the same role `evaluate.shap_denylist_check` plays for the classifier.
+    """
+    leaked = [c for c in columns if c in TRUTH_DENYLIST]
+    if leaked:
+        raise AssertionError(
+            f"feature_columns() would leak truth-tier column(s) {leaked} into the "
+            "feature store -- a real survey never has these."
+        )
+
+
 # ---------------------------------------------------------------------------
 # Stateless transforms: background removal
 # ---------------------------------------------------------------------------
@@ -276,6 +346,26 @@ def detrend_axis(s_m: np.ndarray, y: np.ndarray, cfg: FeaturesConfig) -> np.ndar
     return resid
 
 
+def _mean_step_m(s_m: np.ndarray) -> float:
+    """Survey-mean along-track sample spacing, for window sizing (in SAMPLES)
+    and for converting a peak width in samples to metres.
+
+    Rig-v2's row spacing is irregular by construction (a human walker at
+    varying speed, see registration.py) -- there is no single true `step_m`
+    any more, only this survey-level average, the same approximation
+    `detrend_axis` already makes internally for its own windowing. Using one
+    scalar here (rather than resampling onto a uniform grid) keeps the rolling-
+    window statistics operating directly on the actual rows, at the cost of a
+    window that is nominally `window_m` wide but not exactly so wherever the
+    walker sped up or slowed down -- an honest trade for a demonstrator whose
+    row count already makes resampling expensive, not free.
+    """
+    n = len(s_m)
+    if n < 2:
+        return 1.0
+    return float((s_m[-1] - s_m[0]) / (n - 1))
+
+
 def _odd_window(window_m: float, step_m: float, minimum: int = 3) -> int:
     """Window length in samples, forced odd so `center=True` is symmetric."""
     n = round(window_m / step_m)
@@ -283,21 +373,56 @@ def _odd_window(window_m: float, step_m: float, minimum: int = 3) -> int:
     return n if n % 2 == 1 else n + 1
 
 
-def _orientation(rx: np.ndarray, ry: np.ndarray, rz: np.ndarray, r_mag: np.ndarray):
-    """Inclination/declination of the RESIDUAL vector, in degrees.
+def _first_second_difference(
+    r_lo: np.ndarray, r_mid: np.ndarray, r_hi: np.ndarray, spacing_m: float
+) -> tuple[np.ndarray, np.ndarray]:
+    """g1 (first difference, common-mode rejection) and g2 (second difference,
+    linear-gradient rejection) across the three heads at -spacing/0/+spacing.
 
-    A defect's dipole moment has a direction, and the residual's orientation is
-    close to constant across the anomaly while background noise points anywhere.
-    Guarded at |r| ~ 0 where the angles are genuinely undefined -> NaN, not 0.
+    Central-difference formulas over the physical head geometry (ArrayConfig:
+    lo/hi sit `spacing_m` either side of mid, so their OWN separation is
+    `2*spacing_m`, not `spacing_m`):
+      g1 = (r_hi - r_lo) / (2*spacing_m)          -- dr/ds
+      g2 = (r_hi + r_lo - 2*r_mid) / spacing_m**2 -- d2r/ds2
+    Verified against tests/test_generate.py's own reference derivation
+    (test_second_difference_cancels_linear_gradient_first_difference_does_not)
+    and re-verified here at the feature layer in
+    tests/test_features.py::test_g1_recovers_an_injected_linear_gradient_g2_does_not.
     """
-    tiny = r_mag < 1e-9
-    incl = np.degrees(np.arcsin(np.divide(rz, r_mag, out=np.zeros_like(rz), where=~tiny)))
-    decl = np.degrees(np.arctan2(ry, rx))
-    return np.where(tiny, np.nan, incl), np.where(tiny, np.nan, decl)
+    g1 = (r_hi - r_lo) / (2.0 * spacing_m)
+    g2 = (r_hi + r_lo - 2.0 * r_mid) / spacing_m**2
+    return g1, g2
+
+
+def _standoff_est_m(r_mid: np.ndarray, g2: np.ndarray, nominal_m: float) -> np.ndarray:
+    """Effective sensor-to-source distance, from the curvature-to-amplitude
+    ratio a 1/r^3 falloff implies.
+
+    APPROXIMATE, NOT PHYSICALLY RIGOROUS -- reported as "effective sensor-to-
+    source distance", not a metrically exact stand-off. It treats the local
+    anomaly as an on-axis radial power law A(r) = A0/r^3 (A = r_mid_nt, the
+    measured amplitude proxy): then A''(r) = 12*A(r)/r^2, so inverting the
+    measured curvature-to-amplitude ratio g2/r_mid_nt gives
+        r = sqrt(12 * |r_mid_nt| / |g2|).
+    This ignores the true dipole's angular field pattern and the total-field
+    projection onto B_hat0 (module docstring) -- a genuine per-row inversion
+    would need the source bearing too, which three collinear heads cannot
+    recover. It is also ill-conditioned wherever the anomaly is small relative
+    to noise (most background rows, where both r_mid_nt and g2 are noise-
+    dominated): those rows fall back to `nominal_m` (the survey's configured
+    stand-off) rather than reporting a numerically unstable ratio, and the
+    result is clipped to a physically plausible band so a near-zero
+    denominator cannot report millimetres or kilometres.
+    """
+    with np.errstate(divide="ignore", invalid="ignore"):
+        r = np.sqrt(12.0 * np.abs(r_mid) / np.abs(g2))
+    valid = np.isfinite(r) & (r > 0)
+    r = np.where(valid, r, nominal_m)
+    return np.clip(r, 0.2, 20.0)
 
 
 def _peak_shape(
-    r_mag: np.ndarray, step_m: float, cfg: FeaturesConfig
+    r: np.ndarray, step_m: float, cfg: FeaturesConfig
 ) -> dict[str, np.ndarray]:
     """FWHM, asymmetry and decay exponent -- the interference discriminators.
 
@@ -306,26 +431,35 @@ def _peak_shape(
     row counts a per-row shape fit is the difference between minutes and hours,
     and the shape of a peak is a property of the peak, not of the row.
 
+    `r` must already be non-negative (`find_peaks` only ever finds local
+    MAXIMA): the caller passes `|r_mid_nt|`, not `r_mid_nt` itself, because a
+    total-field anomaly can go either direction (enhance or degrade the
+    ambient field -- `stress_polarity`), and a defect that happens to dip
+    negative must be just as detectable as one that peaks positive. The old
+    vector rig got this for free by construction (`r_mag_nt` was already a
+    magnitude); the scalar rig's `r_mid_nt` is signed, so the abs() has to be
+    explicit here instead.
+
     Rows with no peak within assign_radius_fwhm get NaN. That is a real "no local
     anomaly here" statement, and LightGBM splits on it natively -- imputing 0
     would claim a zero-width peak exists.
     """
-    n = len(r_mag)
+    n = len(r)
     out = {
         k: np.full(n, np.nan)
         for k in ("fwhm_m", "peak_asymmetry", "decay_exponent", "peak_prominence_nt", "peak_distance_m")
     }
-    med = np.median(r_mag)
-    mad = np.median(np.abs(r_mag - med))
+    med = np.median(r)
+    mad = np.median(np.abs(r - med))
     sigma = 1.4826 * mad
     if sigma <= 0 or n < 8:
         return out
 
-    peaks, props = find_peaks(r_mag, prominence=cfg.peak.prominence_mad * sigma)
+    peaks, props = find_peaks(r, prominence=cfg.peak.prominence_mad * sigma)
     if len(peaks) == 0:
         return out
 
-    widths, _, left_ips, right_ips = peak_widths(r_mag, peaks, rel_height=0.5)
+    widths, _, left_ips, right_ips = peak_widths(r, peaks, rel_height=0.5)
     widths = np.maximum(widths, 1.0)
     fwhm_m = widths * step_m
     # +1 skewed right (a slow trailing flank), -1 skewed left. Normalised by the
@@ -343,7 +477,7 @@ def _peak_shape(
 
     decay = np.array(
         [
-            _decay_exponent(r_mag, p, widths[i], cfg.peak.flank_fit_span, step_m,
+            _decay_exponent(r, p, widths[i], cfg.peak.flank_fit_span, step_m,
                             bounds_lo[i], bounds_hi[i])
             for i, p in enumerate(peaks)
         ]
@@ -376,7 +510,7 @@ def _nearest_peak(n: int, peaks: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
 
 
 def _decay_exponent(
-    r_mag: np.ndarray,
+    r: np.ndarray,
     peak: int,
     width_samples: float,
     span: tuple[float, float],
@@ -407,7 +541,7 @@ def _decay_exponent(
     js, ds = js[keep], ds[keep]
     if len(js) < 4:
         return np.nan
-    vals = r_mag[js]
+    vals = r[js]
     positive = vals > 0
     if positive.sum() < 4:
         return np.nan
@@ -424,7 +558,7 @@ def window_name(window_m: float) -> str:
     return f"w{window_m:g}m".replace(".", "p")
 
 
-def feature_columns(cfg: FeaturesConfig, with_gradiometer: bool) -> list[str]:
+def feature_columns(cfg: FeaturesConfig) -> list[str]:
     """The ordered feature list, derived from config.
 
     A bundle pins this list and refuses to load against a mismatch. Deriving it
@@ -433,95 +567,142 @@ def feature_columns(cfg: FeaturesConfig, with_gradiometer: bool) -> list[str]:
     meaningful, and it also fixes column ORDER, which matters the moment anything
     downstream indexes by position.
 
-    `r_mag_norm_nt_m3` / `peak_prominence_norm_nt_m3` (stand-off-normalised
+    feature_version 3 (Rig-v2): the vector-axis columns (`rx_nt`/`ry_nt`/
+    `rz_nt`/`r_mag_nt`/`r_incl_deg`/`r_decl_deg`/`gx_nt_per_m`/`gy_nt_per_m`/
+    `gz_nt_per_m`/`g_mag_nt_per_m`) are gone -- there is no vector output under
+    the scalar rig, and no more optional second head (every `rig: scalar`
+    survey has exactly 3 heads, so the old `with_gradiometer` branch this
+    function used to take is also gone; there is nothing left to be
+    conditional on). `r_lo_nt`/`r_mid_nt`/`r_hi_nt` (the three heads' own
+    detrended residuals) replace them, with `r_mid_nt` taking over
+    `r_mag_nt`'s old role as the primary signal for `dr_ds_nt_per_m`,
+    `d2r_ds2_nt_per_m2`, every window-stat column and the peak-shape block --
+    same computation, new input, no downstream column NAME changes.
+    `g1_nt_per_m`/`g2_nt_per_m2` (first/second difference across the 3 heads,
+    computed from the residuals) and `standoff_est_m` (a genuine per-row
+    measured stand-off -- see its docstring) are new.
+
+    `r_mag_norm_nt_m3`/`peak_prominence_norm_nt_m3` (stand-off-normalised
     amplitude, feature_version 1) were removed entirely in feature_version 2:
     EDA (Stage 2.75, see PLAN.md) measured them as EXACT duplicates (r=1.000)
-    of `r_mag_nt` / `peak_prominence_nt`, because `depth_m` is one global
-    config value, not measured per row, so dividing by `depth_m**3` is a
-    constant scalar multiply, not new information -- two dead dimensions in a
-    model that already has too many redundant ones. Reintroduce them (with
-    another feature_version bump) once a future stage makes stand-off a
-    genuine per-row measurement and they diverge from their un-normalised
-    counterparts again.
+    of `r_mag_nt` / `peak_prominence_nt`, because `depth_m` was one global
+    config value, not measured per row, so dividing by `depth_m**3` was a
+    constant scalar multiply, not new information. Reinstated here at
+    feature_version 3, now that `standoff_est_m` is a genuine per-row
+    measurement and the normalised columns are no longer guaranteed to be
+    exact duplicates -- see tests/test_features.py's measured correlation.
+
+    `dist_to_weld_m`/`gps_locked` (Stage B registration output / GPS-lock
+    data-quality companion) are new and last: registration/data-quality
+    companions, not physics derived from the field readings themselves.
     """
-    cols = [
-        "rx_nt", "ry_nt", "rz_nt", "r_mag_nt",
-        "r_incl_deg", "r_decl_deg",
-        "dr_ds_nt_per_m", "d2r_ds2_nt_per_m2", "drz_ds_nt_per_m",
-    ]
-    if with_gradiometer:
-        cols += ["gx_nt_per_m", "gy_nt_per_m", "gz_nt_per_m", "g_mag_nt_per_m"]
+    cols = ["r_lo_nt", "r_mid_nt", "r_hi_nt",
+            "dr_ds_nt_per_m", "d2r_ds2_nt_per_m2",
+            "g1_nt_per_m", "g2_nt_per_m2", "standoff_est_m"]
     for w in cfg.windows_m:
         p = window_name(w)
         cols += [f"{p}_mean_nt", f"{p}_std_nt", f"{p}_max_nt", f"{p}_ptp_nt",
                  f"{p}_kurt", f"{p}_zcr", f"{p}_energy_nt2"]
     cols += ["fwhm_m", "peak_asymmetry", "decay_exponent",
              "peak_prominence_nt", "peak_distance_m"]
+    cols += ["r_mag_norm_nt_m3", "peak_prominence_norm_nt_m3"]
+    cols += ["dist_to_weld_m", "gps_locked"]
+    _assert_no_truth_leakage(cols)
     return cols
 
 
 def compute_survey_features(
-    df: pd.DataFrame, ctx: SurveyContext, cfg: FeaturesConfig
+    df: pd.DataFrame,
+    ctx: SurveyContext,
+    cfg: FeaturesConfig,
+    chainage_m: np.ndarray,
+    dist_to_weld_m: np.ndarray,
 ) -> pd.DataFrame:
     """One raw survey -> one feature frame. The stateless half of the feature layer.
 
-    Signature is the enforcement: a single survey and its own context. Nothing in
-    this function can see another survey, so there is no route by which a
-    population statistic or a later run's data could enter.
+    Signature is the enforcement: a single survey, its own context, and its own
+    already-computed registration output. Nothing in this function can see
+    another survey, so there is no route by which a population statistic or a
+    later run's data could enter.
+
+    `chainage_m`/`dist_to_weld_m` are `registration.RegistrationResult` fields,
+    aligned to `df`'s row order EXACTLY as `register_survey` returns them (same
+    convention documented on `RegistrationResult` -- never resorted before
+    being handed here). This function still defensively re-sorts by
+    `sample_idx` (as it always has), carrying the two arrays along with the
+    same permutation so the alignment survives the sort.
     """
     assert_point_in_time(df, ctx.surveyed_at, what=f"survey {ctx.survey_id}")
 
-    df = df.sort_values("sample_idx").reset_index(drop=True)
-    n = len(df)
-    step_m = ctx.step_m
-    sample_idx = df["sample_idx"].to_numpy()
-    s_m = sample_idx.astype(np.float64) * step_m  # derived, never a key
+    required = {f"b_{h}_nt" for h in HEADS} | {"lat", "lon"}
+    missing = required - set(df.columns)
+    if missing:
+        raise ValueError(
+            f"{ctx.survey_id}: features.py only supports rig: scalar raw data "
+            f"(b_lo_nt/b_mid_nt/b_hi_nt + lat/lon) -- missing {sorted(missing)}. "
+            "rig: vector has no counterpart in this module; see its own module "
+            "docstring on scope."
+        )
 
-    # -- background removal, per axis, in float64 ---------------------------
-    resid = {a: detrend_axis(s_m, df[f"b{a}_nt"].to_numpy(), cfg) for a in AXES}
-    rx, ry, rz = resid["x"], resid["y"], resid["z"]
-    r_mag = np.sqrt(rx**2 + ry**2 + rz**2)
-    incl, decl = _orientation(rx, ry, rz, r_mag)
+    order = np.argsort(df["sample_idx"].to_numpy(), kind="stable")
+    df = df.iloc[order].reset_index(drop=True)
+    chainage_m = np.asarray(chainage_m, dtype=np.float64)[order]
+    dist_to_weld_m = np.asarray(dist_to_weld_m, dtype=np.float64)[order]
+
+    n = len(df)
+    sample_idx = df["sample_idx"].to_numpy()
+    s_m = chainage_m  # the registered axis -- no longer sample_idx * step_m
+    step_m = _mean_step_m(s_m)
+
+    # -- background removal, per head, in float64 -----------------------
+    resid = {h: detrend_axis(s_m, df[f"b_{h}_nt"].to_numpy(), cfg) for h in HEADS}
+    r_lo, r_mid, r_hi = resid["lo"], resid["mid"], resid["hi"]
+
+    if not ctx.array_spacing_m:
+        raise ValueError(
+            f"{ctx.survey_id}: SurveyContext has no array_spacing_m -- g1/g2 need "
+            "the physical head separation, and guessing one silently rescales "
+            "every difference feature."
+        )
+    g1, g2 = _first_second_difference(r_lo, r_mid, r_hi, ctx.array_spacing_m)
+    standoff_est = _standoff_est_m(r_mid, g2, ctx.standoff_m)
+
+    # np.gradient divides by the spacing between neighbours. Registered
+    # chainage CAN legitimately contain exact ties -- register_survey's own
+    # belt-and-braces np.maximum.accumulate allows equal consecutive values
+    # (registration.py's module docstring), which is real and expected, not a
+    # bug, but turns np.gradient's central-difference coefficients into 0/0.
+    # Nudge by an astronomically small strictly-increasing epsilon (5e-9 m
+    # cumulative per row -- over even a Stage-6 survey that is 1e-5 m of
+    # fake spacing, utterly negligible next to cm-level position accuracy)
+    # purely to break ties for THIS derivative; the stored chainage_m and
+    # every other feature still use the real, unperturbed s_m.
+    s_grad = s_m + np.arange(n) * 5e-9
 
     out: dict[str, np.ndarray] = {
-        "rx_nt": rx, "ry_nt": ry, "rz_nt": rz, "r_mag_nt": r_mag,
-        "r_incl_deg": incl, "r_decl_deg": decl,
+        "r_lo_nt": r_lo, "r_mid_nt": r_mid, "r_hi_nt": r_hi,
         # np.gradient uses central differences inside and one-sided at the ends,
         # so the derivative has no NaN of its own -- the window stats below own
         # the edge story, and having one owner for it keeps the flag honest.
-        "dr_ds_nt_per_m": np.gradient(r_mag, s_m),
-        "drz_ds_nt_per_m": np.gradient(rz, s_m),
+        "dr_ds_nt_per_m": np.gradient(r_mid, s_grad),
+        "g1_nt_per_m": g1,
+        "g2_nt_per_m2": g2,
+        "standoff_est_m": standoff_est,
     }
-    out["d2r_ds2_nt_per_m2"] = np.gradient(out["dr_ds_nt_per_m"], s_m)
+    out["d2r_ds2_nt_per_m2"] = np.gradient(out["dr_ds_nt_per_m"], s_grad)
 
-    # -- vertical gradiometer, when the second head is fitted ---------------
-    has_grad = _has_gradiometer(df)
-    if has_grad:
-        if not ctx.gradiometer_baseline_m:
-            raise ValueError(
-                f"{ctx.survey_id} carries second-head columns but the context has no "
-                "gradiometer_baseline_m -- a gradient needs its baseline, and guessing "
-                "one silently rescales every gradient feature."
-            )
-        b = ctx.gradiometer_baseline_m
-        g = {
-            a: (df[f"b{a}2_nt"].to_numpy(dtype=np.float64)
-                - df[f"b{a}_nt"].to_numpy(dtype=np.float64)) / b
-            for a in AXES
-        }
-        out |= {f"g{a}_nt_per_m": g[a] for a in AXES}
-        out["g_mag_nt_per_m"] = np.sqrt(g["x"] ** 2 + g["y"] ** 2 + g["z"] ** 2)
-
-    # -- sliding-window statistics over |r| ---------------------------------
-    r_series = pd.Series(r_mag)
-    # Zero crossings are counted on rz rather than |r|: a magnitude is
-    # non-negative and never crosses zero, so the same code on |r| would be
-    # silently identically zero -- a feature that looks computed and is not.
+    # -- sliding-window statistics over r_mid_nt -----------------------------
+    r_series = pd.Series(r_mid)
+    # Zero crossings on r_mid_nt directly: unlike the old r_mag_nt (a
+    # magnitude, never negative, so a zcr on it was silently always zero --
+    # features.py:519-522 pre-Rig-v2), r_mid_nt is a signed total-field
+    # residual and genuinely crosses zero. Verified empirically, not assumed
+    # -- tests/test_features.py::test_zcr_on_r_mid_is_not_trivially_zero.
     sign_change = np.zeros(n, dtype=np.float64)
     if n > 1:
-        sign_change[1:] = (np.signbit(rz[1:]) != np.signbit(rz[:-1])).astype(np.float64)
+        sign_change[1:] = (np.signbit(r_mid[1:]) != np.signbit(r_mid[:-1])).astype(np.float64)
     zc_series = pd.Series(sign_change)
-    energy_series = pd.Series(r_mag**2)
+    energy_series = pd.Series(r_mid**2)
 
     max_win = 0
     for w in cfg.windows_m:
@@ -540,27 +721,35 @@ def compute_survey_features(
             energy_series.rolling(win, center=True, min_periods=win).sum().to_numpy()
         )
 
-    out |= _peak_shape(r_mag, step_m, cfg)
+    # |r_mid_nt|, not r_mid_nt: find_peaks only ever finds local maxima, and a
+    # total-field anomaly can dip negative just as easily as it can peak
+    # positive (stress_polarity: random) -- see _peak_shape's docstring.
+    peak_shape = _peak_shape(np.abs(r_mid), step_m, cfg)
+    out |= peak_shape
 
-    # Stand-off normalisation (1/r^3: multiplying by depth_m^3 puts surveys flown
-    # at different heights on one amplitude scale) was removed here (feature_version
-    # 1 -> 2): EDA (Stage 2.75, PLAN.md) measured r_mag_norm_nt_m3 / peak_prominence_
-    # norm_nt_m3 as EXACT duplicates (r=1.000) of r_mag_nt / peak_prominence_nt,
-    # because depth_m is one global config value, not measured per row -- a constant
-    # scalar multiply within any survey, confirming what this code already suspected
-    # ("buys a tree model exactly nothing"). It earns its place once stand-off is a
-    # genuine per-row measurement across surveys/lines, which is Stage 6 -- reintroduce
-    # it there, not before.
+    # Stand-off normalisation, reinstated at feature_version 3 (see
+    # feature_columns()'s docstring for why fv=1->2 removed it and what makes
+    # it real again): standoff_est_m is now a genuine per-row measurement, not
+    # one global depth_m, so these are no longer guaranteed exact duplicates
+    # of their un-normalised counterparts.
+    out["r_mag_norm_nt_m3"] = r_mid * standoff_est**3
+    out["peak_prominence_norm_nt_m3"] = peak_shape["peak_prominence_nt"] * standoff_est**3
+
+    # -- registration / data-quality companions ------------------------------
+    out["dist_to_weld_m"] = dist_to_weld_m
+    lat, lon = df["lat"].to_numpy(dtype=float), df["lon"].to_numpy(dtype=float)
+    # Same convention as registration.py::_dead_reckon_chainage's own `locked`.
+    out["gps_locked"] = (~(np.isnan(lat) | np.isnan(lon))).astype(np.float64)
 
     # -- assemble, flag edges, cast to storage precision ---------------------
     feat = pd.DataFrame(out, index=df.index)
-    expected = feature_columns(cfg, with_gradiometer=has_grad)
-    missing = set(expected) - set(feat.columns)
-    extra = set(feat.columns) - set(expected)
-    if missing or extra:
+    expected = feature_columns(cfg)
+    missing_cols = set(expected) - set(feat.columns)
+    extra_cols = set(feat.columns) - set(expected)
+    if missing_cols or extra_cols:
         raise AssertionError(
             f"feature_columns() and compute_survey_features() disagree for "
-            f"{ctx.survey_id}: missing={sorted(missing)} extra={sorted(extra)}. "
+            f"{ctx.survey_id}: missing={sorted(missing_cols)} extra={sorted(extra_cols)}. "
             "The ordered list is what a bundle pins -- they cannot drift apart."
         )
     feat = feat[expected].astype(STORAGE_DTYPE)
@@ -603,22 +792,9 @@ def compute_survey_features(
             "n_rows": len(result),
             "n_features": len(expected),
             "n_edge": int((result["dq_flag"] == "edge").sum()),
-            "gradiometer": has_grad,
         },
     )
     return result
-
-
-def _has_gradiometer(df: pd.DataFrame) -> bool:
-    """A second head is fitted if its columns exist and carry any real value.
-
-    All-NULL bx2_nt is the documented "no second sensor head" case, not a defect
-    in the data -- the bundle must not require gradiometer features to exist.
-    """
-    cols = [f"b{a}2_nt" for a in AXES]
-    if not all(c in df.columns for c in cols):
-        return False
-    return bool(df[cols].notna().any().any())
 
 
 # ---------------------------------------------------------------------------
@@ -702,14 +878,23 @@ def compute_and_store(
     feature_dir: str | Path,
     content_sha256: str,
     config_sha256: str,
+    chainage_m: np.ndarray,
+    dist_to_weld_m: np.ndarray,
     force: bool = False,
 ) -> tuple[str, Path]:
     """Returns ('hit'|'computed', dir). The cache check is the only reason a
-    Stage-6 re-run over 10^7 rows is tolerable."""
+    Stage-6 re-run over 10^7 rows is tolerable.
+
+    `chainage_m`/`dist_to_weld_m` are `register_survey(raw_df, ...)`'s output,
+    computed once by the caller (`pipeline.run_feature_pipeline`, which owns
+    the `DataConfig` registration needs) and threaded straight through -- see
+    `compute_survey_features`'s docstring for why this is a parameter here
+    rather than something recomputed inside this module.
+    """
     dir_path = feature_store_dir(feature_dir, cfg.version, ctx.line_id, ctx.run_id)
     if not force and is_cache_hit(dir_path, content_sha256, cfg.version):
         return "hit", dir_path
-    features = compute_survey_features(raw_df, ctx, cfg)
+    features = compute_survey_features(raw_df, ctx, cfg, chainage_m, dist_to_weld_m)
     write_features(dir_path, features, ctx, content_sha256, cfg.version, config_sha256)
     return "computed", dir_path
 

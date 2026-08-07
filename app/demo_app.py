@@ -26,6 +26,7 @@ import os
 import sys
 from pathlib import Path
 
+import pandas as pd
 import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
@@ -36,6 +37,7 @@ import demo_lib
 from map_utils import build_map
 
 from lsm.config import load_config
+from lsm.indications import block_risk_heatmap
 
 st.set_page_config(layout="wide", page_title="LSM demo -- Stage 4.5", initial_sidebar_state="collapsed")
 
@@ -58,9 +60,12 @@ if not st.session_state["entered"]:
         )
         st.write(
             "A live walkthrough of an LSM pipeline-integrity pipeline -- from a raw "
-            "45,000 nT magnetometer signal to a risk-ranked dig list, scored end to end "
-            "by real, trained models."
+            "~48,800 nT scalar magnetometer signal (3 heads on a walked rod) to a "
+            "risk-ranked dig list, scored end to end by real, trained models."
         )
+        components_img = Path(__file__).resolve().parents[1] / "img" / "project-components.png"
+        if components_img.exists():
+            st.image(str(components_img), width="stretch")
         _, button_center, _ = st.columns([1, 1, 1])
         with button_center:
             if st.button("Launch the demo  →", type="primary", width="stretch"):
@@ -159,9 +164,9 @@ else:
         else None
     )
 
-overview, performance, beat1, beat2, beat3, beat4 = st.tabs([
+overview, performance, beat1, beat2, beat3, beat4, heatmap_tab = st.tabs([
     "1. How it works", "2. Model performance", "3. Raw signal", "4. Detrend + gradient",
-    "5. Ranked indications", "6. Corrupted survey",
+    "5. Ranked indications", "6. Corrupted survey", "7. Risk heatmap",
 ])
 
 # Real module names and check names, not paraphrases -- this tab exists so an
@@ -266,10 +271,10 @@ with performance:
 with beat1:
     st.subheader("The raw field, full range")
     st.caption(
-        "bx/by/bz per axis against the ~45,000 nT background. Dashed orange lines mark true "
-        "defects, dashed grey lines mark true interference sources -- if the anomaly were "
-        "visible here, background removal wouldn't be the hard part of this project. "
-        "Scroll/drag to zoom and pan."
+        "b_lo/mid/hi -- the rod's three scalar total-field heads -- against the ~48,800 nT "
+        "background. Dashed orange lines mark true defects, dashed grey lines mark true "
+        "interference sources -- if the anomaly were visible here, background removal "
+        "wouldn't be the hard part of this project. Scroll/drag to zoom and pan."
     )
     st.altair_chart(chart_utils.raw_components_chart(raw), width="stretch")
 
@@ -306,7 +311,8 @@ with beat3:
     if indications is None or not len(indications):
         st.info("No indications for this scenario.")
     else:
-        length_km = max(float(raw["chainage_m"].max()) / 1000.0, 0.001)
+        _chainage_col = "chainage_m" if "chainage_m" in raw.columns else "chainage_true_m"
+        length_km = max(float(raw[_chainage_col].max()) / 1000.0, 0.001)
         budget_choice = st.segmented_control(
             "Dig budget (per km)", ["3", "5", "10"], default="5", key="dig_budget", required=True,
         )
@@ -321,9 +327,22 @@ with beat3:
             rank_col = "anomaly_score"
         ranked = indications.sort_values(rank_col, ascending=False, na_position="last")
         dug = ranked.head(budget_n)
+        st.caption(
+            f"**{budget_choice} digs/km** x {length_km:.2f} km surveyed -> top **{budget_n}** "
+            f"of {len(indications)} detected indication(s) get dug (ranked by {rank_col}); the "
+            f"rest are left unexamined. This is a real inspection-cost tradeoff, not a display "
+            f"setting (`lsm.indications.select_dig_budget`) -- a higher budget catches more "
+            f"true defects but pays for more digs, including false ones. This is exactly what "
+            f"'recall @ dig budget' (tab 2) is measured against."
+        )
 
-        st.pydeck_chart(build_map(raw, dug))
-        st.caption("orange = true defect - grey = true interference (unlabelled to the model) - blue = dug indication")
+        show_heatmap = st.checkbox("Show risk heatmap on map", value=False, key="beat3_heatmap")
+        st.pydeck_chart(build_map(raw, dug, show_heatmap=show_heatmap))
+        st.caption(
+            "orange = true defect - grey = true interference (unlabelled to the model) - "
+            "blue = dug indication (or a heatmap glow, weighted by risk_score/anomaly_score, "
+            "if the box above is checked)"
+        )
         st.caption(f"Ranked by **{rank_col}**.")
 
         st.altair_chart(chart_utils.indications_chart(dug, raw), width="stretch")
@@ -340,6 +359,20 @@ with beat3:
 
         st.altair_chart(chart_utils.indications_rank_chart(dug), width="stretch")
         st.caption(f"The table above, ranked and labeled -- one bar per row, by **{rank_col}**.")
+
+        st.markdown("**Risk by chainage block, this line**")
+        st.caption(
+            "The same dug indications, aggregated into the 100 m blocks "
+            "`lsm.indications.block_risk_heatmap` uses -- WHERE risk clusters along this one "
+            "line, complementing the rank order above. Tab 7 does the same aggregation across "
+            "every line at once."
+        )
+        line_dug = dug.assign(line_id=survey_id.split("_R")[0])
+        line_blocks = block_risk_heatmap(line_dug)
+        if line_blocks.empty:
+            st.info("No indications above threshold for this scenario.")
+        else:
+            st.altair_chart(chart_utils.block_heatmap_chart(line_blocks), width="content")
 
 with beat4:
     st.subheader("What happens when the data itself is bad")
@@ -359,6 +392,49 @@ with beat4:
                         st.markdown(f"- {column} at {where} failed `{f['check']}` (value: `{f['failure_case']}`)")
                 elif r["detail"]:
                     st.json(r["detail"])
+
+with heatmap_tab:
+    st.subheader("Risk heatmap across lines")
+    st.caption(
+        "Indications from every scenario run so far, aggregated into (line, 100 m block) "
+        "cells -- `lsm.indications.block_risk_heatmap`, the same block grouping "
+        "`evaluate.assign_group()` uses for CV folds. A CONSUMER of the `indication` table "
+        "across surveys, not a new model."
+    )
+
+    frames = []
+    if mode == "demo":
+        for s in scenarios:
+            if s["kind"] != "clean":
+                continue  # the corrupted scenario is quarantined -- never has indications
+            ind = _cached_demo_indications(s["survey_id"])
+            if ind is not None and len(ind):
+                ind = ind.copy()
+                ind["line_id"] = s["survey_id"].split("_R")[0]
+                frames.append(ind)
+    else:
+        for sid, (_report, ind, _feat) in live_results.items():
+            if ind is not None and len(ind):
+                ind = ind.copy()
+                ind["line_id"] = sid.split("_R")[0]
+                frames.append(ind)
+        n_clean = sum(1 for s in scenarios if s["kind"] == "clean")
+        if len(frames) < n_clean:
+            st.caption(
+                "Live mode only includes scenarios you've already run this session -- pick "
+                "each clean scenario above (with Mode = live) to add its line here."
+            )
+
+    if not frames:
+        st.info("No indications available yet for a cross-line heatmap.")
+    else:
+        all_indications = pd.concat(frames, ignore_index=True)
+        blocks = block_risk_heatmap(all_indications)
+        if blocks.empty:
+            st.info("No indications above threshold in any scenario yet.")
+        else:
+            st.altair_chart(chart_utils.block_heatmap_chart(blocks), width="content")
+            st.caption(f"{len(frames)} line(s), {len(all_indications)} indication(s) total.")
 
 st.divider()
 pr = manifest["pipeline_release"]

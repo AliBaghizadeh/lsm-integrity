@@ -65,6 +65,9 @@ def write_model_card(path: str | Path, provenance: dict, result: dict) -> None:
         f"MAD {_fmt_ci(mad['interference_dig_fraction'])}"),
         (f"- localisation error (m): IsolationForest {_fmt_ci(iso['localisation_error_m'])}, "
         f"MAD {_fmt_ci(mad['localisation_error_m'])}"),
+        (f"- localisation error (cm): IsolationForest {_fmt_ci(iso['localisation_error_cm'])}, "
+        f"MAD {_fmt_ci(mad['localisation_error_cm'])} -- the ~1 cm dig-marking requirement's "
+        "own unit (Rig-v2 plan), what Stage B weld-comb registration was built to reach"),
         f"- recall gap (IsolationForest - MAD): {_fmt_ci(result['recall_gap_if_minus_mad'])}",
         (f"- **gate (>= 0.15 recall gap at the CI lower bound): "
         f"{'PASSED' if result['gate_passed'] else 'DID NOT PASS'}**"),

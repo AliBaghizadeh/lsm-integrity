@@ -39,7 +39,7 @@ def backfill_setup(cfg, tmp_path):
     # Corrupt one survey: an out-of-range field value -> hard fail on `range`.
     corrupt_sr = results[2]
     df = pd.read_parquet(corrupt_sr.path)
-    df.loc[5, "bx_nt"] = 999_999.0
+    df.loc[5, "b_lo_nt"] = 999_999.0
     df.to_parquet(corrupt_sr.path, index=False, compression="zstd")
 
     instance = dg.DagsterInstance.ephemeral()
@@ -53,7 +53,11 @@ def backfill_setup(cfg, tmp_path):
         "survey_ids": survey_ids,
         "corrupt_survey_id": corrupt_sr.survey_id,
         "sqlite_path": cfg.env.storage.sqlite_path,
-        "n_samples": results[0].n_samples,
+        # Rig-v2: row count is emergent from the walk (OU-random speed), not
+        # a fixed length_m/step_m grid -- every survey has its OWN count, not
+        # one shared constant (measured: three surveys of the same length_m
+        # differed by hundreds of rows). Keyed by survey_id, not a single int.
+        "n_samples_by_survey": {r.survey_id: r.n_samples for r in results},
     }
 
 
@@ -100,7 +104,7 @@ def test_backfill_kill_and_resume_no_duplication(backfill_setup):
         n = conn.execute(
             "SELECT COUNT(*) FROM reading WHERE survey_id=?", (sid,)
         ).fetchone()[0]
-        assert n == backfill_setup["n_samples"]
+        assert n == backfill_setup["n_samples_by_survey"][sid]
 
     # Re-materialize an already-clean partition ("backfill touches a done
     # partition again") -- must not duplicate rows.
@@ -110,7 +114,7 @@ def test_backfill_kill_and_resume_no_duplication(backfill_setup):
     n_after = conn.execute(
         "SELECT COUNT(*) FROM reading WHERE survey_id=?", (already_done,)
     ).fetchone()[0]
-    assert n_after == backfill_setup["n_samples"]  # unchanged, not doubled
+    assert n_after == backfill_setup["n_samples_by_survey"][already_done]  # unchanged, not doubled
 
     conn.close()
 
@@ -153,5 +157,5 @@ def test_features_materialise_for_clean_partitions_only(backfill_setup, cfg, tmp
     feats = pd.read_parquet(
         feature_store_dir(tmp_path / "features", fv, line_id, int(run_id)) / "features.parquet"
     )
-    assert len(feats) == backfill_setup["n_samples"]
+    assert len(feats) == backfill_setup["n_samples_by_survey"][clean_id]
     assert (feats["feature_version"] == fv).all()

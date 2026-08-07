@@ -16,9 +16,9 @@ def _toy_raw(n=200):
     interference[60:65] = 1
     return pd.DataFrame({
         "chainage_m": chainage,
-        "bx_nt": np.random.default_rng(0).normal(0, 5, n),
-        "by_nt": np.random.default_rng(1).normal(0, 5, n),
-        "bz_nt": np.random.default_rng(2).normal(45000, 5, n),
+        "b_lo_nt": np.random.default_rng(0).normal(45000, 5, n),
+        "b_mid_nt": np.random.default_rng(1).normal(45000, 5, n),
+        "b_hi_nt": np.random.default_rng(2).normal(45000, 5, n),
         "defect": defect,
         "interference": interference,
     })
@@ -68,12 +68,12 @@ def test_deviation_chart_switches_between_log_and_linear_scale():
 
 def test_residual_gradient_chart_with_and_without_gradient_column():
     raw = _toy_raw()
-    features = pd.DataFrame({"chainage_m": raw["chainage_m"], "r_mag_nt": np.random.default_rng(3).normal(0, 2, len(raw))})
+    features = pd.DataFrame({"chainage_m": raw["chainage_m"], "r_mid_nt": np.random.default_rng(3).normal(0, 2, len(raw))})
 
     chart_no_grad = chart_utils.residual_gradient_chart(features, raw)
     assert chart_no_grad is not None
 
-    features["g_mag_nt_per_m"] = np.random.default_rng(4).normal(0, 0.5, len(raw))
+    features["g1_nt_per_m"] = np.random.default_rng(4).normal(0, 0.5, len(raw))
     chart_with_grad = chart_utils.residual_gradient_chart(features, raw)
     assert chart_with_grad is not None
 
@@ -132,3 +132,45 @@ def test_indications_rank_chart_one_bar_per_row():
     spec = chart_utils.indications_rank_chart(dug).to_dict()
     dataset = next(iter(spec["datasets"].values()))  # Altair hoists inline data by name
     assert len(dataset) == len(dug)
+
+
+def _toy_blocks():
+    return pd.DataFrame({
+        "line_id": ["L1", "L1", "L2"],
+        "block_start_m": [0.0, 200.0, 0.0],
+        "value": [0.9, 0.4, 0.6],
+        "n_indications": [2, 1, 1],
+        "metric": ["risk_score", "risk_score", "risk_score"],
+    })
+
+
+def test_block_heatmap_chart_builds_one_rect_per_cell():
+    blocks = _toy_blocks()
+    spec = chart_utils.block_heatmap_chart(blocks).to_dict()
+    dataset = next(iter(spec["datasets"].values()))
+    assert len(dataset) == len(blocks)
+    assert spec["encoding"]["color"]["field"] == "value"
+    assert spec["encoding"]["x"]["field"] == "block_start_m"
+    assert spec["encoding"]["y"]["field"] == "line_id"
+
+
+def test_block_heatmap_chart_uses_a_sequential_single_hue_scheme():
+    """Never a rainbow for a magnitude encoding -- one hue, light -> dark."""
+    spec = chart_utils.block_heatmap_chart(_toy_blocks()).to_dict()
+    assert spec["encoding"]["color"]["scale"]["scheme"] == "oranges"
+
+
+def test_block_heatmap_chart_titles_by_metric():
+    risk_spec = chart_utils.block_heatmap_chart(_toy_blocks()).to_dict()
+    assert risk_spec["encoding"]["color"]["title"] == "risk score"
+
+    anomaly_blocks = _toy_blocks()
+    anomaly_blocks["metric"] = "anomaly_score"
+    anomaly_spec = chart_utils.block_heatmap_chart(anomaly_blocks).to_dict()
+    assert anomaly_spec["encoding"]["color"]["title"] == "anomaly score"
+
+
+def test_block_heatmap_chart_on_empty_blocks_does_not_raise():
+    empty = pd.DataFrame(columns=["line_id", "block_start_m", "value", "n_indications", "metric"])
+    chart = chart_utils.block_heatmap_chart(empty)
+    assert chart.to_dict() is not None

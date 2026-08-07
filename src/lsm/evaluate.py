@@ -178,6 +178,18 @@ def localisation_errors_m(matched: pd.DataFrame) -> np.ndarray:
     return hits["distance_m"].to_numpy(dtype=float)
 
 
+def localisation_errors_cm(matched: pd.DataFrame) -> np.ndarray:
+    """`localisation_errors_m` * 100. A separate function, not just "multiply
+    the printed number by 100 in your head", because cm is the unit that
+    actually answers the ~1 cm dig-marking requirement (Rig-v2 plan, Stage B's
+    whole reason for existing) -- metres rounds away exactly the precision
+    weld-comb registration was built to buy. Same bootstrap unit (one value
+    per matched, TRUE-DEFECT indication) as the metre version, so it can be
+    fed straight into `bootstrap_ci`.
+    """
+    return localisation_errors_m(matched) * 100.0
+
+
 def pr_auc(y_true: np.ndarray, y_score: np.ndarray) -> float:
     """Row-level PR-AUC -- a diagnostic only (per validation-and-trust.md,
     ROC-AUC is banned outright: positives are ~2.7% of rows and ROC flatters
@@ -474,14 +486,29 @@ def prediction_drift_report(
 def background_regime_shift(
     current_median: pd.Series, history_medians: pd.DataFrame, z_threshold: float = 3.0
 ) -> dict:
-    """Per-axis (bx/by/bz) z-score of `current_median` against
-    `history_medians`' own mean/std -- "catches recalibration, a different
-    scanner unit, or a seasonal geomagnetic excursion" (Layer 4). Extracted
-    from `validate.py::check_background_regime`'s exact math so there is ONE
+    """Per-head (Rig-v2: b_lo/b_mid/b_hi, not the pre-Rig-v2 bx/by/bz vector
+    axes) z-score of `current_median` against `history_medians`' own
+    mean/std -- "catches recalibration, a different scanner unit, or a
+    seasonal geomagnetic excursion" (Layer 4). Extracted from
+    `validate.py::check_background_regime`'s exact math so there is ONE
     implementation, reused by both the ingest-time DQ gate (comparing a new
     survey against other already-ingested surveys of the same line) and the
     Stage 8 monitor (comparing against a released pipeline's history) --
     not two copies that can silently diverge.
+
+    CAVEAT (found investigating a Stage D test failure, see
+    config/base.yaml's `background_regime_z_threshold` comment for the full
+    measurement): `history_medians`' std is an EMPIRICAL sample std over
+    whatever few prior surveys exist (often just 3) -- under Rig-v2,
+    `sensor.gain_sigma`/`offset_nt` are drawn fresh per survey, so that
+    std is itself a noisy estimate of a real ~98 nT physical calibration
+    floor (gain_sigma * |B0|), not nearly the ~0 it was pre-Rig-v2 when the
+    background was deterministic. This statistic is under-powered against
+    shifts of a similar order to that noise floor at small history sizes --
+    an honest limitation of a small `n`, not a bug in the formula. A more
+    robust version would floor `hist_std` at the physically-known
+    calibration noise rather than trust a 3-point empirical estimate; not
+    implemented here (Stage D re-measurement scope, not a DQ-check rewrite).
     """
     hist_mean, hist_std = history_medians.mean(), history_medians.std().replace(0, np.nan)
     z = ((current_median - hist_mean) / hist_std).abs()

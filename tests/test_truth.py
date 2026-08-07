@@ -9,25 +9,30 @@ from lsm.truth import build_truth_registry, nearest_source
 
 
 def _raw_frame(n=400, step_m=1.0):
+    """Rig-v2: raw no longer carries chainage_m at all (schemas.py) --
+    build_truth_registry now takes the (registered) chainage as a separate
+    array, aligned to this frame's row order. On this fixture that array is
+    just sample_idx * step_m, the same numbers the old inline column had.
+    """
     sample_idx = np.arange(n)
-    return pd.DataFrame(
+    df = pd.DataFrame(
         {
             "sample_idx": sample_idx,
-            "chainage_m": sample_idx * step_m,
             "defect": 0,
             "defect_type": "none",
             "interference": 0,
         }
     )
+    return df, sample_idx.astype(float) * step_m
 
 
 def test_build_truth_registry_finds_one_defect_and_one_interference_region():
-    df = _raw_frame()
+    df, chainage = _raw_frame()
     df.loc[100:105, "defect"] = 1
     df.loc[100:105, "defect_type"] = "weld"
     df.loc[300:310, "interference"] = 1
 
-    registry = build_truth_registry(df, line_id="LINE000")
+    registry = build_truth_registry(df, line_id="LINE000", chainage_m=chainage)
 
     defects = registry[registry["kind"] == "defect"]
     interference = registry[registry["kind"] == "interference"]
@@ -40,13 +45,13 @@ def test_build_truth_registry_finds_one_defect_and_one_interference_region():
 
 
 def test_build_truth_registry_separates_multiple_defects_by_type():
-    df = _raw_frame()
+    df, chainage = _raw_frame()
     df.loc[50:55, "defect"] = 1
     df.loc[50:55, "defect_type"] = "scc"
     df.loc[200:206, "defect"] = 1
     df.loc[200:206, "defect_type"] = "corrosion"
 
-    registry = build_truth_registry(df, line_id="LINE000")
+    registry = build_truth_registry(df, line_id="LINE000", chainage_m=chainage)
     defects = registry[registry["kind"] == "defect"].sort_values("chainage_m")
 
     assert len(defects) == 2

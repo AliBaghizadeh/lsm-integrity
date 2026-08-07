@@ -39,7 +39,7 @@ def test_launching_the_demo_reveals_the_tabs():
     at.run()
     _enter(at)
     assert not at.exception
-    assert len(at.tabs) == 6
+    assert len(at.tabs) == 7
 
 
 def test_demo_mode_corrupted_scenario_shows_the_refusal():
@@ -148,23 +148,49 @@ def test_live_mode_refuses_the_corrupted_scenario_too():
     assert any("Refused to score" in e.value for e in at.error)
 
 
-def test_beat3_table_falls_back_to_anomaly_score_when_risk_score_is_all_null():
-    """The currently baked `serving/` predates Stage 5 (no classify model
-    released yet), so every indication's `risk_score` is NULL -- Beat 3 must
-    rank by `anomaly_score` in that case, not silently sort by an all-NULL
-    column. Once a classify model is baked in, this scenario's caption should
-    read `risk_score` instead -- that half isn't reachable with today's data.
+def test_beat3_table_ranks_by_risk_score_once_a_classify_model_is_baked_in():
+    """The currently baked `serving/` (Rig-v2, 2026-08-06) includes a real
+    Stage 5 classify model, so every indication has a non-NULL `risk_score`
+    -- Beat 3 ranks by it. (Previously, before Stage 5 was baked in,
+    `risk_score` was all-NULL and Beat 3 correctly fell back to
+    `anomaly_score` instead of silently sorting by an all-NULL column --
+    that fallback path is still real code, just not exercised by TODAY's
+    baked data; see chart_utils.indications_rank_chart's own NULL-fallback
+    tests in test_chart_utils.py for direct coverage of it.)
     """
     at = AppTest.from_file(APP_PATH, default_timeout=60)
     at.run()
     _enter(at)
     assert not at.exception
     ranked_by = [c.value for c in at.caption if c.value.startswith("Ranked by")]
-    assert ranked_by == ["Ranked by **anomaly_score**."]
+    assert ranked_by == ["Ranked by **risk_score**."]
 
     cols = at.dataframe[0].value.columns.tolist()
     for expected in ["pred_type", "pred_type_conf", "risk_score"]:
         assert expected in cols
+
+
+def test_heatmap_tab_aggregates_across_the_clean_demo_scenarios():
+    """Tab 7 is a CONSUMER of every clean scenario's baked indications at
+    once, not just the one selected in the segmented control above it --
+    proves the cross-line aggregation actually ran in demo mode (zero
+    compute, so this must always have data to show)."""
+    at = AppTest.from_file(APP_PATH, default_timeout=60)
+    at.run()
+    _enter(at)
+    assert not at.exception
+    captions = [c.value for c in at.caption]
+    assert any("line(s)" in c and "indication(s) total" in c for c in captions)
+
+
+def test_heatmap_tab_live_mode_notes_only_run_scenarios_are_included():
+    at = AppTest.from_file(APP_PATH, default_timeout=90)
+    at.run()
+    _enter(at)
+    at.segmented_control(key="app_mode").set_value("live").run()
+    assert not at.exception
+    captions = [c.value for c in at.caption]
+    assert any("only includes scenarios you've already run" in c for c in captions)
 
 
 def test_streamlit_app_stage3_thin_app_still_boots_with_no_exception():

@@ -106,16 +106,25 @@ def monitor_survey(conn, survey_id: str, cfg: Config) -> dict:
             (line_id, survey_id),
         ).fetchall()
     ]
+    # Rig-v2: compare all three heads' medians (b_lo/mid/hi_nt), matching
+    # validate.py::check_background_regime's choice -- same per-column
+    # z-score math (background_regime_shift), three heads instead of the
+    # old bx/by/bz vector axes.
+    heads = ["b_lo_nt", "b_mid_nt", "b_hi_nt"]
     medians = []
     for pid in prior_ids:
-        prior = pd.read_sql_query("SELECT bx_nt, by_nt, bz_nt FROM reading WHERE survey_id=?", conn, params=(pid,))
+        prior = pd.read_sql_query(
+            f"SELECT {', '.join(heads)} FROM reading WHERE survey_id=?", conn, params=(pid,)
+        )
         if not prior.empty:
-            medians.append(prior[["bx_nt", "by_nt", "bz_nt"]].median())
-    cur_reading = pd.read_sql_query("SELECT bx_nt, by_nt, bz_nt FROM reading WHERE survey_id=?", conn, params=(survey_id,))
+            medians.append(prior[heads].median())
+    cur_reading = pd.read_sql_query(
+        f"SELECT {', '.join(heads)} FROM reading WHERE survey_id=?", conn, params=(survey_id,)
+    )
     background_regime: dict = {"n_bad": 0, "z_scores": {}}
     if len(medians) >= 2 and not cur_reading.empty:
         hist = pd.DataFrame(medians)
-        cur_median = cur_reading[["bx_nt", "by_nt", "bz_nt"]].median()
+        cur_median = cur_reading[heads].median()
         background_regime = background_regime_shift(cur_median, hist, monitor_cfg["background_regime_z_threshold"])
     if background_regime["n_bad"] > 0:
         _bump("warn")

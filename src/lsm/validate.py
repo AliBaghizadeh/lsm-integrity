@@ -84,22 +84,29 @@ def check_schema(df: pd.DataFrame, gate: str) -> DQCheckResult:
 
 
 def check_range(df: pd.DataFrame, field_range: tuple[float, float], gate: str) -> DQCheckResult:
+    """Rig-v2: three total-field HEADS (b_lo/mid/hi_nt), not three vector axes
+    -- a value out of range now means that HEAD's magnitude reading is
+    physically implausible, not that one axis component railed.
+    """
     lo, hi = field_range
-    axes = ["bx_nt", "by_nt", "bz_nt"]
+    heads = ["b_lo_nt", "b_mid_nt", "b_hi_nt"]
     mask = pd.Series(False, index=df.index)
-    for a in axes:
-        mask |= (df[a] < lo) | (df[a] > hi)
+    for h in heads:
+        mask |= (df[h] < lo) | (df[h] > hi)
     n = int(mask.sum())
     return DQCheckResult("range", _gate_status(n > 0, gate), n)
 
 
 def check_saturation(df: pd.DataFrame, run_length: int, gate: str) -> DQCheckResult:
-    """>= run_length consecutive identical raw values on any axis: ADC rail / stuck sensor."""
-    axes = ["bx_nt", "by_nt", "bz_nt"]
+    """>= run_length consecutive identical raw values on any HEAD: that head's
+    ADC railed / the sensor is stuck (Rig-v2: three scalar heads, not three
+    vector axes -- see check_range).
+    """
+    heads = ["b_lo_nt", "b_mid_nt", "b_hi_nt"]
     n_affected = 0
-    axes_hit = []
-    for a in axes:
-        vals = df[a].to_numpy()
+    heads_hit = []
+    for h in heads:
+        vals = df[h].to_numpy()
         if len(vals) == 0:
             continue
         same_as_prev = np.concatenate([[False], vals[1:] == vals[:-1]])
@@ -107,10 +114,10 @@ def check_saturation(df: pd.DataFrame, run_length: int, gate: str) -> DQCheckRes
         run_len_per_row = np.bincount(group_id)[group_id]
         hit = run_len_per_row >= run_length
         if hit.any():
-            axes_hit.append(a)
+            heads_hit.append(h)
         n_affected += int(hit.sum())
     return DQCheckResult(
-        "saturation", _gate_status(n_affected > 0, gate), n_affected, {"axes": axes_hit}
+        "saturation", _gate_status(n_affected > 0, gate), n_affected, {"heads": heads_hit}
     )
 
 
@@ -166,6 +173,16 @@ def check_survey_overlap(
     the whole point of the growth-forecasting scenario). What is not expected is
     near-perfect signal correlation in the overlap -- that indicates the same
     physical acquisition was ingested twice under different run_id labels.
+
+    Rig-v2: b_mid_nt (the middle head, no extra vertical-gradient offset --
+    see check_interference_density) is the representative single column for
+    this correlation, in place of the old bx_nt vector axis.
+
+    step_m here is still the SURVEY's own nominal mean spacing
+    (chainage_end - chainage_start)/(n-1) -- fine as a coarse index-to-
+    chainage converter for locating the overlap WINDOW (sample_idx range),
+    since sample_idx is still dense/monotonic; it is not used as an exact
+    per-row chainage anywhere in this check.
     """
     cur = conn.execute(
         """
@@ -182,19 +199,19 @@ def check_survey_overlap(
         if lo >= hi:
             continue
         other = pd.read_sql_query(
-            "SELECT sample_idx, bx_nt FROM reading WHERE survey_id=?", conn, params=(other_id,)
+            "SELECT sample_idx, b_mid_nt FROM reading WHERE survey_id=?", conn, params=(other_id,)
         )
         if other.empty:
             continue
         lo_idx, hi_idx = int(lo / step_m), int(hi / step_m)
         mine = df[(df["sample_idx"] >= lo_idx) & (df["sample_idx"] <= hi_idx)]
         theirs = other[(other["sample_idx"] >= lo_idx) & (other["sample_idx"] <= hi_idx)]
-        merged = mine[["sample_idx", "bx_nt"]].merge(
+        merged = mine[["sample_idx", "b_mid_nt"]].merge(
             theirs, on="sample_idx", suffixes=("_mine", "_theirs")
         )
         if len(merged) < 10:
             continue
-        r = float(np.corrcoef(merged["bx_nt_mine"], merged["bx_nt_theirs"])[0, 1])
+        r = float(np.corrcoef(merged["b_mid_nt_mine"], merged["b_mid_nt_theirs"])[0, 1])
         if abs(r) > max_r:
             max_r = abs(r)
             overlap_with = other_id
@@ -207,10 +224,21 @@ def check_survey_overlap(
 
 
 def check_gps_jump(df: pd.DataFrame, max_jump_m: float, gate: str) -> DQCheckResult:
-    lat = np.radians(df["lat"].to_numpy())
-    lon = np.radians(df["lon"].to_numpy())
+    """Great-circle distance between CONSECUTIVE LOCKED fixes only -- Rig-v2's
+    GPS drops out (GpsConfig) and the gap is written as NaN, a real and
+    expected acquisition state, not a data-quality violation. A jump
+    computed across a dropout would flag every reacquisition as a false
+    "jump" (real distance covered while unlocked, not a receiver glitch), so
+    NaN rows are dropped from the sequence entirely before differencing --
+    consecutive LOCKED fixes, wherever they fall in the original row order.
+    """
+    lat_all = df["lat"].to_numpy()
+    lon_all = df["lon"].to_numpy()
+    locked = ~(np.isnan(lat_all) | np.isnan(lon_all))
+    lat = np.radians(lat_all[locked])
+    lon = np.radians(lon_all[locked])
     if len(lat) < 2:
-        return DQCheckResult("gps_jump", "pass", 0)
+        return DQCheckResult("gps_jump", "pass", 0, {"reason": "fewer than 2 locked fixes"})
     dlat = np.diff(lat)
     dlon = np.diff(lon)
     a = np.sin(dlat / 2) ** 2 + np.cos(lat[:-1]) * np.cos(lat[1:]) * np.sin(dlon / 2) ** 2
@@ -222,16 +250,38 @@ def check_gps_jump(df: pd.DataFrame, max_jump_m: float, gate: str) -> DQCheckRes
 
 
 def check_gps_chainage_consistency(df: pd.DataFrame, step_m: float, gate: str) -> DQCheckResult:
-    lat = np.radians(df["lat"].to_numpy())
-    lon = np.radians(df["lon"].to_numpy())
-    if len(lat) < 2:
-        return DQCheckResult("gps_chainage_consistency", "pass", 0)
+    """What this checks now: total GPS-derived path length over the LOCKED
+    stretches, against `chainage_true_m`'s own span over those SAME rows.
+
+    The old check compared GPS path length to `step_m * (len(df)-1)` -- that
+    assumed a uniform distance grid, which Rig-v2 does not have even once
+    (irregular walk speed) and definitely not under GPS dropout (locked rows
+    are a subset, not a prefix). `chainage_true_m` is the generator's own
+    truth column; using it HERE is not a features leak (this is a raw-layer
+    DQ gate, not a model input, and this stage runs before registration even
+    exists) -- it is the one honest reference along-track length available
+    at raw-validation time, in the same spirit `sample_idx_gap` already uses
+    the raw file's own declared structure to sanity-check itself. Real
+    (non-synthetic) data would substitute odometry/chainage-marker distance
+    here instead.
+    """
+    lat_all = df["lat"].to_numpy()
+    lon_all = df["lon"].to_numpy()
+    locked = ~(np.isnan(lat_all) | np.isnan(lon_all))
+    if locked.sum() < 2:
+        return DQCheckResult(
+            "gps_chainage_consistency", "pass", 0, {"reason": "fewer than 2 locked fixes"}
+        )
+    lat = np.radians(lat_all[locked])
+    lon = np.radians(lon_all[locked])
     dlat = np.diff(lat)
     dlon = np.diff(lon)
     a = np.sin(dlat / 2) ** 2 + np.cos(lat[:-1]) * np.cos(lat[1:]) * np.sin(dlon / 2) ** 2
     dist_m = 2 * 6_371_000.0 * np.arcsin(np.clip(np.sqrt(a), 0, 1))
     gps_length = float(dist_m.sum())
-    chainage_length = step_m * (len(df) - 1)
+
+    true_s = df.loc[locked, "chainage_true_m"].to_numpy()
+    chainage_length = float(true_s.max() - true_s.min())
     if chainage_length == 0:
         return DQCheckResult("gps_chainage_consistency", "pass", 0)
     rel_err = abs(gps_length - chainage_length) / chainage_length
@@ -244,25 +294,30 @@ def check_gps_chainage_consistency(df: pd.DataFrame, step_m: float, gate: str) -
 
 
 def check_noise_floor(df: pd.DataFrame, noise_range: tuple[float, float], gate: str) -> DQCheckResult:
-    """Coarse proxy: std of the first difference per axis, which suppresses slow
+    """Coarse proxy: std of the first difference per HEAD, which suppresses slow
     drift and approximates the sensor noise floor without a real detrend (Stage 2).
+    Rig-v2: three scalar heads (b_lo/mid/hi_nt), not three vector axes.
     """
     lo, hi = noise_range
-    bad_axes = []
+    bad_heads = []
     detail = {}
-    for a in ["bx_nt", "by_nt", "bz_nt"]:
-        sigma = float(np.diff(df[a].to_numpy()).std() / np.sqrt(2))
-        detail[a] = sigma
+    for h in ["b_lo_nt", "b_mid_nt", "b_hi_nt"]:
+        sigma = float(np.diff(df[h].to_numpy()).std() / np.sqrt(2))
+        detail[h] = sigma
         if sigma < lo or sigma > hi:
-            bad_axes.append(a)
+            bad_heads.append(h)
     return DQCheckResult(
-        "noise_floor", _gate_status(len(bad_axes) > 0, gate), len(bad_axes), detail
+        "noise_floor", _gate_status(len(bad_heads) > 0, gate), len(bad_heads), detail
     )
 
 
 def check_background_regime(
     conn: sqlite3.Connection, line_id: str, survey_id: str, df: pd.DataFrame, gate: str
 ) -> DQCheckResult:
+    """Rig-v2: compare all three heads' medians (b_lo/mid/hi_nt), not the old
+    bx/by/bz vector axes -- same per-column z-score math
+    (`background_regime_shift`), just three heads instead of three axes.
+    """
     cur = conn.execute(
         """
         SELECT survey_id FROM survey
@@ -275,19 +330,20 @@ def check_background_regime(
         return DQCheckResult(
             "background_regime", "pass", 0, {"reason": "insufficient history", "n_prior": len(prior_ids)}
         )
+    heads = ["b_lo_nt", "b_mid_nt", "b_hi_nt"]
     medians = []
     for pid in prior_ids:
         prior = pd.read_sql_query(
-            "SELECT bx_nt, by_nt, bz_nt FROM reading WHERE survey_id=?", conn, params=(pid,)
+            f"SELECT {', '.join(heads)} FROM reading WHERE survey_id=?", conn, params=(pid,)
         )
         if not prior.empty:
-            medians.append(prior[["bx_nt", "by_nt", "bz_nt"]].median())
+            medians.append(prior[heads].median())
     if len(medians) < 2:
         return DQCheckResult(
             "background_regime", "pass", 0, {"reason": "insufficient loaded history"}
         )
     hist = pd.DataFrame(medians)
-    cur_median = df[["bx_nt", "by_nt", "bz_nt"]].median()
+    cur_median = df[heads].median()
     shift = background_regime_shift(cur_median, hist, z_threshold=3.0)
     return DQCheckResult(
         "background_regime", _gate_status(shift["n_bad"] > 0, gate), shift["n_bad"],
@@ -296,10 +352,14 @@ def check_background_regime(
 
 
 def check_interference_density(df: pd.DataFrame, gate: str, expected_frac: float = 0.05) -> DQCheckResult:
-    """Coarse proxy: robust z-score of raw Bx magnitude vs the survey median;
-    fraction of |z|>5 rows compared against an expected small baseline.
+    """Coarse proxy: robust z-score of the raw MID-head magnitude vs the survey
+    median; fraction of |z|>5 rows compared against an expected small
+    baseline. Rig-v2: b_mid_nt is the natural single-column representative --
+    it is the reference level in generate.py's per-head background gradient
+    (`_grad_offset` adds nothing at z_off=0), so it carries no extra vertical-
+    gradient offset the way b_lo/b_hi do.
     """
-    vals = df["bx_nt"].to_numpy()
+    vals = df["b_mid_nt"].to_numpy()
     med = np.median(vals)
     mad = np.median(np.abs(vals - med)) or 1e-9
     z = 0.6745 * (vals - med) / mad
@@ -313,9 +373,18 @@ def check_interference_density(df: pd.DataFrame, gate: str, expected_frac: float
 
 
 def check_coverage(df: pd.DataFrame, expected_length_m: float | None, step_m: float, gate: str) -> DQCheckResult:
+    """`step_m * len(df)` assumed a uniform distance grid -- wrong under
+    Rig-v2's irregular walk (step_m is now a nominal MEAN, not exact, see
+    DataConfig.step_m). `chainage_true_m`'s own extent is the honest
+    completeness signal available at raw-validation time: real chainage
+    isn't computed until registration (a separate, later stage), and this is
+    the survey's OWN recorded extent, not a feature -- same spirit as
+    `sample_idx_gap` checking the raw file's own declared structure against
+    itself, not an external/derived value.
+    """
     if expected_length_m is None:
         return DQCheckResult("coverage", "pass", 0, {"reason": "no expected length declared"})
-    actual = step_m * len(df)
+    actual = float(df["chainage_true_m"].max() - df["chainage_true_m"].min()) if len(df) else 0.0
     frac = actual / expected_length_m
     return DQCheckResult("coverage", _gate_status(frac < 0.95, gate), int(frac < 0.95), {"coverage_frac": frac})
 

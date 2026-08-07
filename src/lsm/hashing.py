@@ -27,8 +27,23 @@ CANONICAL_FLOAT_DECIMALS = 6
 # Column order the canonical hash is computed over. Anything outside this set
 # (e.g. an ingestion timestamp) is metadata, not content, and must not affect
 # the content hash.
+#
+# Rig-v2: `canonicalise()` silently drops any listed column absent from `df`
+# (`if c in df.columns`), so a raw scalar-rig frame (b_lo/b_mid/b_hi_nt, no
+# bx/by/bz_nt at all) that only listed the old vector-rig columns would hash
+# ONLY sample_idx/defect/defect_type/severity_smys/interference -- every
+# magnetic reading, GPS position, chainage and girth_weld label silently
+# excluded from "content". That is not a hypothetical: it is what this list
+# did until both column sets were listed together here, and it broke content
+# identity/dedup exactly where it matters (ingest.py's immutability check,
+# validate.py's check_survey_overlap) without raising anything -- the kind of
+# silent rumour-relocation the project's own invariants forbid. Both rigs'
+# columns are listed so whichever one is actually present in `df` is hashed;
+# `rig: vector` files keep their original hash behaviour unchanged.
 CONTENT_COLUMNS = [
     "sample_idx",
+    "t_s",
+    "chainage_true_m",
     "lat",
     "lon",
     "bx_nt",
@@ -37,10 +52,14 @@ CONTENT_COLUMNS = [
     "bx2_nt",
     "by2_nt",
     "bz2_nt",
+    "b_lo_nt",
+    "b_mid_nt",
+    "b_hi_nt",
     "defect",
     "defect_type",
     "severity_smys",
     "interference",
+    "girth_weld",
 ]
 
 

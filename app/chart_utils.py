@@ -15,17 +15,42 @@ import altair as alt
 import numpy as np
 import pandas as pd
 
-# These are single-survey demo datasets (thousands of rows, not millions) --
-# Altair's default 5000-row cap (aimed at genuinely huge datasets) was
-# silently rejecting the 3-line raw components chart (4000 rows x 3 axes =
-# 12,000 melted rows), which rendered as an EMPTY chart with only the truth-
-# marker rule layer visible, not an error. Disabling it here is safe at this
-# bounded scale; a real "millions of rows" dataset (Stage 6) would need
-# server-side aggregation before plotting, not this.
+# Written when a raw survey was ~4,000 rows (0.5 m fixed grid). Rig-v2's
+# walked rig samples at 120 Hz, so a single survey is now ~200,000 rows --
+# melting 3 axes over that is 600,000+ points handed to Vega-Lite as inline
+# JSON, which is what made the app "very slow" (seconds of melt/serialize on
+# every rerun, then a browser struggling to render that many marks). Still
+# disabled, because MAX_PLOT_ROWS below already caps what actually reaches
+# Altair -- this just stops the (now-irrelevant) 5000-row warning from firing
+# on the pre-downsample frame in any code path that skips _thin().
 alt.data_transformers.disable_max_rows()
 
 TRUE_DEFECT_COLOR = "#dc5028"
 TRUE_INTERFERENCE_COLOR = "#828282"
+
+# Target point count for the full-survey line charts (Beat 1/2). Chosen the
+# same way map_utils.build_map thins the track: way more than a screen has
+# pixels for, so downsampling is visually lossless, but far below the point
+# count that makes melt()/JSON-serialize/browser-render slow.
+MAX_PLOT_ROWS = 3000
+
+
+def _thin(df: pd.DataFrame) -> pd.DataFrame:
+    """Stride-sample a survey-length frame down to ~MAX_PLOT_ROWS for
+    plotting only -- never used for anything the model or a metric reads."""
+    stride = max(1, len(df) // MAX_PLOT_ROWS)
+    return df.iloc[::stride] if stride > 1 else df
+
+
+def _raw_chainage_col(raw: pd.DataFrame) -> str:
+    """Rig-v2: raw no longer carries a plain `chainage_m` (see schemas.py --
+    it is a feature-layer output of registration.register_survey now). The
+    demo app's baked scenarios are synthetic, so `chainage_true_m` (truth-
+    tier, but only ever used here for PLOTTING the demo's own known-good
+    survey, never as a model input) is the honest stand-in; fall back to
+    `chainage_m` for any caller still passing an old-schema/feature-layer
+    frame that already has it."""
+    return "chainage_m" if "chainage_m" in raw.columns else "chainage_true_m"
 
 
 def contiguous_midpoints(raw: pd.DataFrame, flag_col: str) -> list[float]:
@@ -39,7 +64,7 @@ def contiguous_midpoints(raw: pd.DataFrame, flag_col: str) -> list[float]:
     change = np.diff(padded)
     starts = np.where(change == 1)[0]
     ends = np.where(change == -1)[0]  # exclusive
-    chainage = raw["chainage_m"].to_numpy()
+    chainage = raw[_raw_chainage_col(raw)].to_numpy()
     return [float(chainage[s:e].mean()) for s, e in zip(starts, ends)]
 
 
@@ -71,36 +96,44 @@ def truth_rule_layer(raw: pd.DataFrame) -> alt.Chart:
 
 
 def raw_components_chart(raw: pd.DataFrame) -> alt.Chart:
-    """bx/by/bz vs chainage, full range, three separate lines -- not a single
-    |B| magnitude line, which throws away axis information and (per Ali's
-    feedback) reads as "only one line, nothing to look at"."""
-    long_df = raw.melt(
-        id_vars=["chainage_m"], value_vars=["bx_nt", "by_nt", "bz_nt"],
-        var_name="axis", value_name="field_nT",
-    )
+    """b_lo/mid/hi vs chainage, full range, three separate lines -- not a
+    single |B| magnitude line, which throws away head information and (per
+    Ali's feedback) reads as "only one line, nothing to look at". Rig-v2: the
+    three lines are the rod's three total-field HEADS, not vector axes --
+    there is no x/y/z under the scalar rig (generate.py's module docstring)."""
+    chainage_col = _raw_chainage_col(raw)
+    long_df = _thin(raw).melt(
+        id_vars=[chainage_col], value_vars=["b_lo_nt", "b_mid_nt", "b_hi_nt"],
+        var_name="head", value_name="field_nT",
+    ).rename(columns={chainage_col: "chainage_m"})
     lines = (
         alt.Chart(long_df)
         .mark_line()
         .encode(
             x=alt.X("chainage_m:Q", title="chainage (m)"),
             y=alt.Y("field_nT:Q", title="field (nT)"),
-            color=alt.Color("axis:N", legend=alt.Legend(title=None)),
+            color=alt.Color("head:N", legend=alt.Legend(title=None)),
         )
     )
     return alt.layer(lines, truth_rule_layer(raw)).properties(height=320).interactive()
 
 
 def deviation_chart(raw: pd.DataFrame, log_scale: bool = True) -> alt.Chart:
-    """|r_mag - median(r_mag)| vs chainage, switchable between a log and a
-    linear y-axis. The raw field is signed and centred on a huge background,
-    so a literal log-scale of bx/by/bz doesn't mean anything -- but the
+    """|b_mid - median(b_mid)| vs chainage, switchable between a log and a
+    linear y-axis. The raw field is centred on a huge background, so a
+    literal log-scale of b_lo/mid/hi doesn't mean anything -- but the
     ABSOLUTE deviation from the survey's own median does, and on a log axis
     it's the one view where the anomaly stops being invisible. This is the
     direct answer to "I need log scale to see anomalies" -- `log_scale` is a
-    real switch, not a one-way toggle to show/hide the chart."""
-    r_mag = np.sqrt(raw["bx_nt"] ** 2 + raw["by_nt"] ** 2 + raw["bz_nt"] ** 2)
-    dev = (r_mag - r_mag.median()).abs().clip(lower=1e-3)
-    df = pd.DataFrame({"chainage_m": raw["chainage_m"], "deviation_nT": dev})
+    real switch, not a one-way toggle to show/hide the chart. Uses the middle
+    head as the single representative signal (same choice validate.py's
+    check_background_regime / monitor.py make for consistency)."""
+    # Median computed on the full-resolution signal (robust statistic, cheap
+    # even at 200k rows) -- only the plotted deviation trace is thinned.
+    median = raw["b_mid_nt"].median()
+    thin = _thin(raw)
+    dev = (thin["b_mid_nt"] - median).abs().clip(lower=1e-3)
+    df = pd.DataFrame({"chainage_m": thin[_raw_chainage_col(thin)], "deviation_nT": dev})
     scale = alt.Scale(type="log") if log_scale else alt.Scale(type="linear")
     y_title = "|deviation| from median |B| (nT" + (", log scale)" if log_scale else ")")
     line = (
@@ -115,17 +148,22 @@ def deviation_chart(raw: pd.DataFrame, log_scale: bool = True) -> alt.Chart:
 
 
 def residual_gradient_chart(features: pd.DataFrame, raw: pd.DataFrame) -> alt.Chart:
-    """Background-removed residual, plus the along-track/vertical gradient if
-    a second sensor head is present -- the Beat 2 "now it appears" view, with
-    the same true-location markers so the reveal is visually obvious."""
-    resid_df = pd.DataFrame({"chainage_m": features["chainage_m"], "residual_nT": features["r_mag_nt"]})
+    """Background-removed residual, plus the first-difference gradient across
+    the 3 heads -- the Beat 2 "now it appears" view, with the same
+    true-location markers so the reveal is visually obvious. Rig-v2:
+    `r_mag_nt`/`g_mag_nt_per_m` (vector magnitude columns) are gone --
+    `r_mid_nt` (the middle head's own detrended residual) and `g1_nt_per_m`
+    (first difference across heads) are their direct successors, see
+    features.py's feature_columns() docstring."""
+    features = _thin(features)
+    resid_df = pd.DataFrame({"chainage_m": features["chainage_m"], "residual_nT": features["r_mid_nt"]})
     residual = (
         alt.Chart(resid_df)
         .mark_line(color=TRUE_DEFECT_COLOR)
-        .encode(x=alt.X("chainage_m:Q", title="chainage (m)"), y=alt.Y("residual_nT:Q", title="residual |r| (nT)"))
+        .encode(x=alt.X("chainage_m:Q", title="chainage (m)"), y=alt.Y("residual_nT:Q", title="residual r_mid (nT)"))
     )
-    if "g_mag_nt_per_m" in features.columns:
-        grad_df = pd.DataFrame({"chainage_m": features["chainage_m"], "gradient_nT_per_m": features["g_mag_nt_per_m"]})
+    if "g1_nt_per_m" in features.columns:
+        grad_df = pd.DataFrame({"chainage_m": features["chainage_m"], "gradient_nT_per_m": features["g1_nt_per_m"]})
         gradient = (
             alt.Chart(grad_df)
             .mark_line(color="#2878dc")
@@ -233,3 +271,48 @@ def indications_rank_chart(dug: pd.DataFrame) -> alt.Chart:
         )
     )
     return (bars + labels).properties(height=max(120, 32 * len(df)))
+
+
+def block_heatmap_chart(blocks: pd.DataFrame) -> alt.Chart:
+    """(line, 100 m block) risk matrix -- output of
+    `lsm.indications.block_risk_heatmap`, one rect per non-empty cell.
+    Sequential single-hue ramp (light -> dark = low -> high), never a
+    rainbow, matching this app's other "hotter = more concerning" cues
+    (the pydeck heatmap layer, `TRUE_DEFECT_COLOR`'s orange-red family)."""
+    if blocks.empty:
+        return alt.Chart(pd.DataFrame({"msg": ["no indications yet"]})).mark_text().encode(text="msg:N")
+
+    metric = blocks["metric"].iloc[0]
+    value_title = "risk score" if metric == "risk_score" else "anomaly score"
+
+    # Cell size scales with how many blocks/lines there are, targeting a
+    # comfortably wide chart (~1100px) rather than a fixed small cell --
+    # clamped so a handful of blocks doesn't produce giant cells and a huge
+    # scale-rehearsal-sized corpus doesn't produce unreadably thin ones (it
+    # scrolls instead).
+    n_blocks = blocks["block_start_m"].nunique()
+    n_lines = blocks["line_id"].nunique()
+    cell_w = min(60, max(28, 1100 // max(n_blocks, 1)))
+    cell_h = min(60, max(32, 320 // max(n_lines, 1)))
+
+    return (
+        alt.Chart(blocks)
+        .mark_rect()
+        .encode(
+            x=alt.X("block_start_m:O", title="chainage block (100 m)"),
+            y=alt.Y("line_id:N", title="line"),
+            color=alt.Color("value:Q", title=value_title, scale=alt.Scale(scheme="oranges")),
+            tooltip=[
+                "line_id", "block_start_m",
+                alt.Tooltip("value:Q", title=value_title, format=".3f"),
+                alt.Tooltip("n_indications:Q", title="indications in block"),
+            ],
+        )
+        # Both axes are discrete (block, line) -- a fixed total height/width
+        # combined with Streamlit's container-stretch resize collapses every
+        # row to a sliver (a known Vega-Lite "fit" autosize interaction with
+        # two discrete scales). alt.Step gives each cell a fixed per-category
+        # size instead of a total-size target, which sidesteps it; the caller
+        # must display this with width="content", not "stretch".
+        .properties(width=alt.Step(cell_w), height=alt.Step(cell_h))
+    )

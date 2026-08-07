@@ -38,12 +38,23 @@ CREATE TABLE IF NOT EXISTS survey (
 -- `duplicate_content` DQ check (validate.py), not crash register_survey with
 -- an uncaught IntegrityError -- "quarantine, not crash" applies here too.
 
+-- Rig-v2 (schema_version 3): bx/by/bz(+bx2/by2/bz2) are gone -- the real rig
+-- has three total-field HEADS (b_lo/b_mid/b_hi), never a vector reading (see
+-- schemas.py). lat/lon are nullable now: GPS dropout is a real, expected
+-- acquisition state (GpsConfig), not corrupt data. t_s, girth_weld and
+-- chainage_true_m are new -- chainage_true_m is TRUTH TIER, stored directly
+-- on `reading` the same way severity_smys already is (nullable there, NOT
+-- NULL here since the generator always knows it for every row). There is
+-- deliberately no registered-chainage column here: chainage_m is a
+-- FEATURE-layer output (registration.py, Stage B), never written to raw.
 CREATE TABLE IF NOT EXISTS reading (
   survey_id  TEXT    NOT NULL REFERENCES survey(survey_id),
   sample_idx INTEGER NOT NULL,
-  lat REAL NOT NULL, lon REAL NOT NULL,
-  bx_nt REAL NOT NULL, by_nt REAL NOT NULL, bz_nt REAL NOT NULL,
-  bx2_nt REAL, by2_nt REAL, bz2_nt REAL,
+  t_s REAL NOT NULL,
+  lat REAL, lon REAL,
+  b_lo_nt REAL NOT NULL, b_mid_nt REAL NOT NULL, b_hi_nt REAL NOT NULL,
+  girth_weld INTEGER NOT NULL,
+  chainage_true_m REAL NOT NULL,
   PRIMARY KEY (survey_id, sample_idx)
 ) WITHOUT ROWID;
 

@@ -42,6 +42,7 @@ from lsm.evaluate import (
     false_dig_rate_per_run,
     interference_dig_fraction_per_run,
     interference_precision_units,
+    localisation_errors_cm,
     localisation_errors_m,
     mae_by_severity_decile,
     match_dug_indications,
@@ -81,6 +82,32 @@ log = get_logger("lsm.train")
 # to ~2 * sqrt(depth_m^2 + 8^2) =~ 16 m at the far end of the lateral-offset
 # range, see config/base.yaml's label_window_scale comment) without being so
 # wide that unrelated background rows start matching by chance.
+#
+# Revisited under Rig-v2 (Stage D, 2026-08-06), now that registration exists
+# and localisation is reported in cm: KEPT at 15.0, not tightened, on
+# measurement, not guesswork. Two checks against the real production corpus
+# (config/base.yaml defaults, 5 lines x 2000 m x 3 runs):
+#   1. Stage B's own row-level registration residual (chainage_m vs
+#      chainage_true_m, read-only via registration.register_survey/
+#      registration_error_m on every production raw survey): per-survey
+#      median 0.48-2.03 m (pooled median ~1.2 m), a real ~8x improvement over
+#      the naive GPS-only chainage_provisional_m baseline (~11.3 m median) --
+#      but NOWHERE NEAR the 1 cm target at this scale (see Stage D's
+#      reported cm-localisation numbers for the full honest picture; a
+#      shorter/denser-weld survey like tests/test_registration.py's 500 m
+#      case does noticeably better, 0.57-2.03 m median across seeds).
+#   2. The champion bundle's own dig-budget-selected matched-defect
+#      `distance_m` values (26 matches, one full production scoring pass):
+#      max 12.65 m, p95 12.26 m -- every real match already falls at or below
+#      ~12.65 m, with NOTHING observed between 12.65 m and the 15 m cutoff.
+#      There is no evidence 15 m is currently crediting a spuriously distant
+#      "hit", and no evidence it is truncating real matches either --
+#      tightening it (e.g. to 13 m) would cost nothing on this sample but
+#      would also buy nothing measurable, and would remove margin for a
+#      future run/seed at this same recall-starved scale (only 26 matches
+#      total) to legitimately land a hair past today's observed max. Revisit
+#      again once detection recall itself improves enough to accumulate a
+#      larger, more decisive `distance_m` sample.
 MATCH_TOLERANCE_M = 15.0
 
 # The Stage 3 gate (PLAN.md): IsolationForest must beat MAD by this much
@@ -203,7 +230,9 @@ def _run_grouped_cv(
             continue
         train, test = corpus.loc[train_mask], corpus.loc[test_mask]
 
-        mad = MADBaseline().fit(train)
+        # r_mid_nt is r_mag_nt's Rig-v2 successor (features.py) -- the middle
+        # head's detrended residual, same "amplitude-only" baseline role.
+        mad = MADBaseline(residual_col="r_mid_nt").fit(train)
         iso = IsolationForestAnomalyModel(
             feature_cols=feature_cols,
             contamination=cfg.base.model.anomaly["contamination"],
@@ -605,6 +634,7 @@ def _bootstrap_metrics(
     false_digs = [false_dig_rate_per_run(m) for m in matched_by_run.values()]
     interference_fracs = [interference_dig_fraction_per_run(m) for m in matched_by_run.values()]
     loc_errors = np.concatenate([localisation_errors_m(m) for m in matched_by_run.values()])
+    loc_errors_cm = np.concatenate([localisation_errors_cm(m) for m in matched_by_run.values()])
 
     return {
         "recall_at_budget": bootstrap_ci(list(hit_rates.values()), boot_cfg.n_resamples, boot_cfg.level, cfg.seed),
@@ -613,6 +643,10 @@ def _bootstrap_metrics(
             interference_fracs, boot_cfg.n_resamples, boot_cfg.level, cfg.seed + 2
         ),
         "localisation_error_m": bootstrap_ci(loc_errors, boot_cfg.n_resamples, boot_cfg.level, cfg.seed + 3),
+        # Same values, cm units: the ~1 cm dig-marking requirement (Rig-v2
+        # plan) is the actual thing being asked about -- see
+        # evaluate.py::localisation_errors_cm's docstring.
+        "localisation_error_cm": bootstrap_ci(loc_errors_cm, boot_cfg.n_resamples, boot_cfg.level, cfg.seed + 3),
     }, hit_rates, false_digs, interference_fracs
 
 
@@ -670,10 +704,12 @@ def _evaluate_corpus(
     result = {
         "mad": {"recall_at_budget": metrics_mad["recall_at_budget"], "false_dig_rate": metrics_mad["false_dig_rate"],
                 "interference_dig_fraction": metrics_mad["interference_dig_fraction"],
-                "localisation_error_m": metrics_mad["localisation_error_m"], "pr_auc": pr_auc_mad},
+                "localisation_error_m": metrics_mad["localisation_error_m"],
+                "localisation_error_cm": metrics_mad["localisation_error_cm"], "pr_auc": pr_auc_mad},
         "isolation_forest": {"recall_at_budget": metrics_if["recall_at_budget"], "false_dig_rate": metrics_if["false_dig_rate"],
                               "interference_dig_fraction": metrics_if["interference_dig_fraction"],
-                              "localisation_error_m": metrics_if["localisation_error_m"], "pr_auc": pr_auc_if},
+                              "localisation_error_m": metrics_if["localisation_error_m"],
+                              "localisation_error_cm": metrics_if["localisation_error_cm"], "pr_auc": pr_auc_if},
         "recall_gap_if_minus_mad": recall_gap,
         "interference_gap_mad_minus_if": interference_gap,
         "gate_passed": gate_passed,
@@ -775,8 +811,7 @@ def run_train(cfg: Config, conn) -> dict:
     truth = _load_truth_and_geometry(conn, survey_ids)
     corpus = corpus.merge(truth, on=["survey_id", "sample_idx"], how="left", validate="one_to_one")
 
-    has_grad = "g_mag_nt_per_m" in corpus.columns and corpus["g_mag_nt_per_m"].notna().any()
-    feature_cols = feature_columns(cfg.base.features, with_gradiometer=has_grad)
+    feature_cols = feature_columns(cfg.base.features)
 
     # One reference run per line builds that line's truth registry -- defect/
     # interference position is fixed across a line's runs (generate.py), so any
@@ -786,7 +821,7 @@ def run_train(cfg: Config, conn) -> dict:
     for line_id in line_ids:
         ref_survey_id = min(corpus.loc[corpus["line_id"] == line_id, "survey_id"].unique())
         ref_rows = corpus[corpus["survey_id"] == ref_survey_id]
-        registries.append(build_truth_registry(ref_rows, line_id))
+        registries.append(build_truth_registry(ref_rows, line_id, ref_rows["chainage_m"].to_numpy()))
     registry = pd.concat(registries, ignore_index=True)
 
     run_line_id = corpus.drop_duplicates("survey_id").set_index("survey_id")["line_id"].to_dict()
@@ -929,7 +964,10 @@ def _log_and_persist(
         )
         for model_name in ("mad", "isolation_forest"):
             m = result[model_name]
-            for metric_name in ("recall_at_budget", "false_dig_rate", "interference_dig_fraction", "localisation_error_m"):
+            for metric_name in (
+                "recall_at_budget", "false_dig_rate", "interference_dig_fraction",
+                "localisation_error_m", "localisation_error_cm",
+            ):
                 point, lo, hi = m[metric_name]
                 mlflow.log_metric(f"{model_name}_{metric_name}", point)
                 mlflow.log_metric(f"{model_name}_{metric_name}_lo", lo)
@@ -993,7 +1031,7 @@ def _log_and_persist(
         plt.close(fig)
 
         # Refit on the FULL corpus -- the model that actually ships.
-        mad_final = MADBaseline().fit(corpus)
+        mad_final = MADBaseline(residual_col="r_mid_nt").fit(corpus)
         mad_final_threshold = calibrated_threshold(mad_final.score(corpus), cfg.base.model.anomaly["contamination"])
         iso_final = IsolationForestAnomalyModel(
             feature_cols=feature_cols,
@@ -1270,6 +1308,7 @@ def _print_report(result: dict) -> None:
         print(fmt("false-dig rate", m["false_dig_rate"]))
         print(fmt("  of which: interference", m["interference_dig_fraction"]))
         print(fmt("localisation error (m)", m["localisation_error_m"]))
+        print(fmt("localisation error (cm)", m["localisation_error_cm"]))
         print(f"  {'PR-AUC (diagnostic)':28s} {m['pr_auc']:6.3f}")
 
     point, lo, hi = result["recall_gap_if_minus_mad"]

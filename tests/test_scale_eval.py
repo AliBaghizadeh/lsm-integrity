@@ -141,14 +141,14 @@ def test_run_temporal_holdout_smoke(cfg):
     survey_ids = sorted(corpus["survey_id"].unique())
     truth = train._load_truth_and_geometry(conn, survey_ids)
     corpus = corpus.merge(truth, on=["survey_id", "sample_idx"], how="left", validate="one_to_one")
-    feature_cols = train.feature_columns(cfg.base.features, with_gradiometer=False)
+    feature_cols = train.feature_columns(cfg.base.features)
 
     line_ids = sorted(corpus["line_id"].unique())
     registries = []
     for line_id in line_ids:
         ref_survey_id = min(corpus.loc[corpus["line_id"] == line_id, "survey_id"].unique())
         ref_rows = corpus[corpus["survey_id"] == ref_survey_id]
-        registries.append(train.build_truth_registry(ref_rows, line_id))
+        registries.append(train.build_truth_registry(ref_rows, line_id, ref_rows["chainage_m"].to_numpy()))
     registry = pd.concat(registries, ignore_index=True)
     run_line_id = corpus.drop_duplicates("survey_id").set_index("survey_id")["line_id"].to_dict()
 

@@ -53,7 +53,7 @@ def test_run_full_pipeline_refuses_a_corrupted_survey_without_raising(tiny_cfg, 
     sr = generate_all(tiny_cfg.base.data, tmp_path / "raw", seed=tiny_cfg.seed)[0]
 
     df = pd.read_parquet(sr.path)
-    df.loc[3, "bx_nt"] = 999_999.0  # outside field_range_nT, trips check_range
+    df.loc[3, "b_lo_nt"] = 999_999.0  # outside field_range_nT, trips check_range
     df.to_parquet(sr.path, index=False, compression="zstd")
     sr.file_sha256 = file_sha256(sr.path)
     sr.content_sha256 = content_sha256(df)

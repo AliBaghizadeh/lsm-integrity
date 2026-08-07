@@ -8,21 +8,24 @@ from lsm.schemas import DEFECT_TYPES, SchemaValidationError, validate_reading_sc
 
 
 def _clean_df() -> pd.DataFrame:
+    """Rig-v2 (schema_version 3): a scalar-rig raw frame -- b_lo/b_mid/b_hi_nt
+    total-field magnitudes, t_s, chainage_true_m, girth_weld. See schemas.py.
+    """
     return pd.DataFrame(
         {
             "sample_idx": [0, 1, 2],
+            "t_s": [0.0, 0.5, 1.0],
             "lat": [46.9, 46.91, 46.92],
             "lon": [8.3, 8.31, 8.32],
-            "bx_nt": [19000.0, 19001.0, 19002.0],
-            "by_nt": [1000.0, 1001.0, 1002.0],
-            "bz_nt": [45000.0, 45001.0, 45002.0],
-            "bx2_nt": [np.nan, np.nan, np.nan],
-            "by2_nt": [np.nan, np.nan, np.nan],
-            "bz2_nt": [np.nan, np.nan, np.nan],
+            "b_lo_nt": [48800.0, 48801.0, 48802.0],
+            "b_mid_nt": [48857.0, 48858.0, 48859.0],
+            "b_hi_nt": [48900.0, 48901.0, 48902.0],
             "defect": [0, 0, 1],
             "defect_type": ["none", "none", "scc"],
             "severity_smys": [np.nan, np.nan, 42.0],
             "interference": [0, 0, 0],
+            "girth_weld": [0, 0, 0],
+            "chainage_true_m": [0.0, 1.2, 2.4],
         }
     )
 
@@ -40,7 +43,7 @@ def test_unseen_defect_type_is_rejected():
 
 def test_out_of_range_field_is_rejected():
     df = _clean_df()
-    df.loc[0, "bx_nt"] = 200_000.0
+    df.loc[0, "b_lo_nt"] = 200_000.0
     with pytest.raises(SchemaValidationError):
         validate_reading_schema(df)
 
@@ -52,14 +55,14 @@ def test_schema_error_reports_affected_rows_not_the_whole_frame():
     the entire survey as bad for a single out-of-range value.
     """
     df = _clean_df()
-    df.loc[0, "bx_nt"] = 200_000.0
+    df.loc[0, "b_lo_nt"] = 200_000.0
     with pytest.raises(SchemaValidationError) as exc_info:
         validate_reading_schema(df)
     exc = exc_info.value
     assert exc.n_affected_rows == 1
     assert len(exc.failures) == 1
     failure = exc.failures[0]
-    assert failure["column"] == "bx_nt"
+    assert failure["column"] == "b_lo_nt"
     assert failure["row_index"] == 0
     assert failure["failure_case"] == 200_000.0
     # JSON/st.json-safe: native Python types, not numpy scalars.
@@ -69,7 +72,7 @@ def test_schema_error_reports_affected_rows_not_the_whole_frame():
 
 def test_null_required_field_is_rejected():
     df = _clean_df()
-    df.loc[0, "bx_nt"] = np.nan
+    df.loc[0, "b_lo_nt"] = np.nan
     with pytest.raises(SchemaValidationError):
         validate_reading_schema(df)
 

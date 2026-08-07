@@ -39,10 +39,16 @@ def cfg(tmp_path: Path):
 
 @pytest.fixture
 def tiny_cfg(cfg):
-    """A small survey (200 samples) so tests run fast. One line, one run.
+    """A small survey (~a few hundred samples) so tests run fast. One line, one run.
     length_m must stay > 100: defect/interference placement keeps a 50 m margin
     off each end (rng.uniform(50, length_m - 50)), a real physics assumption in
     generate.py, not something to work around in the fixture.
+
+    Rig-v2's scalar rig samples in TIME at walk.sample_rate_hz (120 Hz by
+    default -- ~1 cm mean spacing at nominal speed), not on a step_m distance
+    grid, so leaving the base.yaml default here would make a "tiny" 200 m
+    survey ~20,000 rows, not ~200. sample_rate_hz is cut to 2 Hz so this
+    fixture stays genuinely tiny under the new walk model too.
     """
     cfg.base.data.length_m = 200.0
     cfg.base.data.step_m = 1.0
@@ -50,6 +56,7 @@ def tiny_cfg(cfg):
     cfg.base.data.n_runs = 1
     cfg.base.data.n_defects = 2
     cfg.base.data.n_interference = 1
+    cfg.base.data.walk.sample_rate_hz = 2.0
     return cfg
 
 

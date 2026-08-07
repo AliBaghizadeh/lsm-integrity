@@ -33,29 +33,54 @@ def _contiguous_runs(flag: np.ndarray) -> list[tuple[int, int]]:
     return list(zip(edges[::2], edges[1::2]))
 
 
-def build_truth_registry(raw_df: pd.DataFrame, line_id: str) -> pd.DataFrame:
+def build_truth_registry(raw_df: pd.DataFrame, line_id: str, chainage_m: np.ndarray) -> pd.DataFrame:
     """One reference survey's raw frame -> a registry of physical truth sources.
 
     Columns: source_id, line_id, kind ('defect'|'interference'), defect_type,
     chainage_m (region centre -- what indications are matched against),
     chainage_start_m, chainage_end_m (the labelled extent).
+
+    `chainage_m` is a plain array, aligned to `raw_df`'s INPUT row order (same
+    convention as `registration.RegistrationResult` -- see that module's
+    docstring), not a column read off `raw_df` itself: Rig-v2 raw no longer
+    carries a physically-final `chainage_m` at all (schemas.py), only
+    `chainage_true_m` (truth tier, never a feature) and the registered
+    `chainage_m` Stage B's `register_survey` produces. This function accepts
+    it as a separate parameter rather than importing `registration.py` and
+    calling `register_survey` itself, for two reasons: it avoids a second,
+    wasteful (if harmless -- registration is deterministic) recomputation
+    when a caller already has the registered chainage from the feature
+    pipeline, and it keeps this module's own logic -- contiguous-run
+    detection on `defect`/`interference` flags -- genuinely schema-agnostic,
+    tested here with a bare synthetic chainage array and not coupled to
+    registration's own DataConfig-shaped input.
     """
-    d = raw_df.sort_values("sample_idx").reset_index(drop=True)
+    d = raw_df.reset_index(drop=True)
+    chainage = np.asarray(chainage_m, dtype=np.float64)
+    if len(chainage) != len(d):
+        raise ValueError(
+            f"chainage_m has {len(chainage)} rows but raw_df has {len(d)} -- "
+            "they must be aligned to the same (input) row order."
+        )
+    order = np.argsort(d["sample_idx"].to_numpy(), kind="stable")
+    d = d.iloc[order].reset_index(drop=True)
+    chainage = chainage[order]
+
     rows = []
     for kind, flag_col in (("defect", "defect"), ("interference", "interference")):
         flag = d[flag_col].to_numpy()
         for i, (a, b) in enumerate(_contiguous_runs(flag)):
-            run = d.iloc[a:b]
-            defect_type = str(run["defect_type"].iloc[0]) if kind == "defect" else "interference"
+            run_chainage = chainage[a:b]
+            defect_type = str(d["defect_type"].iloc[a]) if kind == "defect" else "interference"
             rows.append(
                 {
                     "source_id": f"{line_id}_{kind}_{i:02d}",
                     "line_id": line_id,
                     "kind": kind,
                     "defect_type": defect_type,
-                    "chainage_m": float(run["chainage_m"].mean()),
-                    "chainage_start_m": float(run["chainage_m"].min()),
-                    "chainage_end_m": float(run["chainage_m"].max()),
+                    "chainage_m": float(run_chainage.mean()),
+                    "chainage_start_m": float(run_chainage.min()),
+                    "chainage_end_m": float(run_chainage.max()),
                 }
             )
     return pd.DataFrame(rows, columns=REGISTRY_COLUMNS)
