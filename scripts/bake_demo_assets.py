@@ -86,7 +86,7 @@ def _bake_corrupted_scenario(cfg) -> dict:
     df = pd.read_parquet(src)
     df["line_id"] = "LINEDEMO"
     df["run_id"] = 0
-    df.loc[3, "bx_nt"] = 999_999.0  # outside field_range_nT -- trips check_range, same
+    df.loc[3, "b_lo_nt"] = 999_999.0  # outside field_range_nT -- trips check_range, same
     # recipe tests/test_validate.py already proves, reused rather than invented.
 
     (SERVING_DIR / "demo_surveys").mkdir(parents=True, exist_ok=True)
@@ -104,9 +104,9 @@ def _bake_corrupted_scenario(cfg) -> dict:
         content_sha256=content_sha256(df),
         step_m=cfg.base.data.step_m,
         n_samples=len(df),
-        chainage_start_m=float(df["chainage_m"].min()),
-        chainage_end_m=float(df["chainage_m"].max()),
-        standoff_m=cfg.base.data.depth_m,
+        chainage_start_m=float(df["chainage_true_m"].min()),
+        chainage_end_m=float(df["chainage_true_m"].max()),
+        standoff_m=cfg.base.data.walk.standoff_m,
         surveyed_at="2026-01-01T00:00:00+00:00",
     )
 

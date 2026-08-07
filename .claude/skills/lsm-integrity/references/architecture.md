@@ -18,11 +18,16 @@ lsm-integrity-demo/
 │   ├── __main__.py              # Typer CLI: generate|ingest|validate|features|train|predict|forecast|serve
 │   ├── config.py                # pydantic model of config.yaml + sha256
 │   ├── schemas.py               # THE data contract: pandera/pyarrow schemas, enums, dtypes
-│   ├── generate.py              # synthetic survey generator (from generate_lsm_data.py)
+│   ├── generate.py              # synthetic survey generator, Rig-v2: 3-head scalar rig,
+│   │                             # human walker, GPS dropout, weld train (rig: vector
+│   │                             # preserves the pre-Rig-v2 model as an ablation reference arm)
 │   ├── db.py                    # SQLite connection, DDL, migrations, upserts
 │   ├── hashing.py               # file_sha256 vs canonical content_sha256; Merkle data_sha256
 │   ├── storage.py               # S3 put/get + local mirror; quarantine path
 │   ├── validate.py              # DQ checks -> DQReport; hard-fail vs warn gates
+│   ├── registration.py          # Stage B: GPS dead-reckoning through dropout + girth-weld-
+│   │                             # comb detection -> registered chainage_m + dist_to_weld_m;
+│   │                             # runs inside the features step (pipeline.py::run_feature_pipeline)
 │   ├── features.py              # StatelessTransform vs FittedTransform (see below)
 │   ├── indications.py           # peak clustering: row scores -> indication objects
 │   ├── models/
@@ -49,10 +54,16 @@ lsm-integrity-demo/
 seed: 42
 
 data:
-  n_lines: 1              # 1 for the showcase; 40+ for the scale rehearsal
+  n_lines: 1              # 1 for the showcase; 5+ for the CI-narrowing rehearsal
   length_m: 2000.0
-  step_m: 0.5
-  depth_m: 1.5            # burial depth == stand-off distance
+  step_m: 0.5              # nominal/mean spacing metadata only under rig: scalar --
+                            # actual row spacing is irregular by construction (see walk below)
+  depth_m: 1.5              # DEFECT/WELD BURIAL DEPTH (dipole source depth, r_eff =
+                             # hypot(depth_m, y_off_m)) -- NOT the sensor stand-off under
+                             # rig: scalar, which is separately modelled and varies
+                             # (walk.standoff_m below). The two happen to share a value in
+                             # this config; they are not the same field. (rig: vector, the
+                             # legacy path, DOES use depth_m directly as a fixed stand-off.)
   background_nT: [19000.0, 1000.0, 45000.0]
   noise_nT: 5.0
   n_defects: 12           # per line
@@ -63,28 +74,77 @@ data:
   label_window_scale: 2.0  # half-width = scale * r_eff (r_eff = sqrt(depth_m^2 + y_off_m^2))
   n_runs: 3
   growth: 1.15
-  gradiometer:
-    enabled: true         # Stage 2: second sensor head -- gradiometry is real from here
-    baseline_m: 0.5       # vertical separation of the two sensor heads
-    main_field_gradient_nT_per_m: 0.02   # Stage 2.5: real vertical gradient, not zero
-    geology_gradient_scale_nT_per_m: 0.3
+  rig: scalar               # Rig-v2 default: 3-head scalar total-field rig, human walker,
+                             # GPS dropout. "vector" preserves the pre-Rig-v2 single-3-axis-
+                             # head-on-a-rail model byte-for-byte, kept solely as the
+                             # reference arm of the Stage D hardware-upgrade ablation -- not
+                             # a second maintained product, and it does not produce
+                             # RawReadingSchema-conformant output.
+  stress_polarity: random   # a defect's total-field sign is whatever its isotropic moment
+                             # orientation gives (stress can enhance OR degrade the field --
+                             # honest default). "positive" reproduces the old, now-known-
+                             # false always-enhancing assumption; only affects rig: scalar.
+  array:                    # the physical rod: middle + two heads, 50 cm apart, vertical mast
+    n_heads: 3               # fixed physical fact under rig: scalar (b_lo/b_mid/b_hi are
+                              # hardcoded schema columns to match) -- not a free dial
+    spacing_m: 0.5
+    orientation: vertical     # "horizontal" raises NotImplementedError rather than
+                               # silently running vertical-mast physics under a different
+                               # label -- an open question for ROSEN, not guessed
+    main_field_gradient_nT_per_m: 0.02   # without these, every head would see an identical
+    geology_gradient_scale_nT_per_m: 10.0 # background and gradient rejection would be
+                                           # perfect by construction, which is not real
+  walk:                     # a human walker, not a cart on rails -- speed/stand-off/lateral
+                             # position all wander as OU (mean-reverting) processes
+    speed_m_per_s: 1.2
+    sample_rate_hz: 120.0    # -> ~1 cm mean spacing at nominal speed; a deliberate
+                              # consequence of the real rig, ~50x the old uniform 0.5 m
+                              # grid's row count, not a demo convenience
+    standoff_m: 1.5           # nominal rod height above ground/pipe -- THE actual sensor
+                               # stand-off under rig: scalar (see depth_m note above)
+    standoff_sigma_m: 0.20
+    # ... speed/standoff/lateral/tilt each carry their own OU sigma + correlation
+    # length (see WalkConfig) -- omitted here for brevity
+  gps:                      # Markov good/bad lock state, not "always on"
+    dropout_rate: 0.05        # steady-state FRACTION of survey time spent unlocked
+    mean_gap_s: 15.0           # mean dwell time of one dropout (~18 m at nominal speed)
+    sigma_m: 1.5                # horizontal noise while locked
+  weld:                     # a periodic joint train, NOT one of the rare point-defect types
+    pitch_m: 12.2              # girth welds every ~12 m -- a fact of how the pipe was
+                                # built, not a rare event (pre-Rig-v2 wrongly drew `weld`
+                                # ~12 TIMES TOTAL on a 2 km line via rng.choice)
+    pitch_jitter_m: 0.15
+    moment_scale_range: [5.0, 20.0]  # a joint's extra steel is 5-20x a defect's moment
+  sensor:                   # per-head imperfections a real fluxgate head has
+    gain_sigma: 0.002          # 0.2% per-head gain MISMATCH -- leaves ~100 nT of
+                                # uncancelled common-mode against a ~25 nT anomaly; the
+                                # single largest lever on gradiometric performance
+    offset_nt: 2.0
+    adc_bits: 24                # 24-bit over +/-100 uT -> LSB ~0.012 nT
+    full_scale_ut: 100.0
+    noise_nt: 5.0
   geo: {lat0: 46.958, lon0: 8.365, bearing_deg: 35.0}
 
 validate:
-  gates:                  # see validation-and-trust.md for definitions
+  gates:                  # see validation-and-trust.md for the full list + definitions
     schema: fail
     range: fail
-    chainage_monotonic: fail
-    chainage_gap: warn
-    gps_jump: warn
-    noise_floor: warn
     saturation: fail
+    sample_idx_monotonic: fail   # renamed from chainage_monotonic -- chainage_m is no
+                                   # longer a raw column, so monotonicity is checked on
+                                   # the physical key (sample_idx) instead
+    sample_idx_gap: warn          # renamed from chainage_gap for the same reason
+    gps_jump: warn
+    gps_chainage_consistency: warn  # new: cross-checks GPS against chainage_provisional_m
+    noise_floor: warn
   max_gap_m: 2.0
   max_gps_jump_m: 5.0
-  field_range_nT: [-80000.0, 80000.0]
+  field_range_nT: [20000.0, 80000.0]   # MAGNITUDE-only range: |B| is never negative, so
+                                        # the old signed bound ([-80000, 80000]) was a
+                                        # check.range gate that could never fail
 
 features:
-  version: 2             # feature_version: bump on ANY behaviour change in features.py
+  version: 3             # feature_version: bump on ANY behaviour change in features.py
   detrend: {method: robust_poly, degree: 3, window_m: 40.0}   # poly, then rolling-median high-pass
   windows_m: [2.0, 5.0, 10.0, 25.0]
   peak: {prominence_mad: 4.0, flank_fit_span: [0.5, 3.0], assign_radius_fwhm: 2.0}
@@ -140,12 +200,35 @@ CREATE TABLE survey (
   UNIQUE (content_sha256)                -- exact duplicates cannot be ingested twice
 );
 
+-- Rig-v2 (schema_version 3): bx/by/bz(+bx2/by2/bz2) are gone -- the real rig has
+-- three total-field HEADS (b_lo/b_mid/b_hi), never a vector reading. lat/lon
+-- are nullable now: GPS dropout is a real, expected acquisition state
+-- (GpsConfig), not corrupt data. t_s, girth_weld and chainage_true_m are new.
+-- chainage_true_m is TRUTH TIER, stored directly on `reading` the same way
+-- severity_smys already is (nullable there, NOT NULL here since the generator
+-- always knows it for every row). There is deliberately NO registered-chainage
+-- column here: chainage_m is a FEATURE-layer output of Stage B registration
+-- (registration.py — GPS dead-reckoning through dropout, locked to the
+-- recovered girth-weld lattice), never written to raw. See data-contract.md
+-- §1 for why `chainage_m = sample_idx * step_m` stopped being true.
 CREATE TABLE reading (
   survey_id  TEXT    NOT NULL REFERENCES survey(survey_id),
-  sample_idx INTEGER NOT NULL,           -- exact key; chainage_m = sample_idx * step_m
-  lat REAL NOT NULL, lon REAL NOT NULL,  -- SQLite REAL is float64 — required for GPS
-  bx_nt REAL NOT NULL, by_nt REAL NOT NULL, bz_nt REAL NOT NULL,
-  bx2_nt REAL, by2_nt REAL, bz2_nt REAL, -- upper sensor head; NULL until Stage 2
+  sample_idx INTEGER NOT NULL,           -- exact key; a dense TIME-sample counter
+                                          -- under Rig-v2 (walk.sample_rate_hz), not
+                                          -- a distance-grid index
+  t_s REAL NOT NULL,                     -- elapsed seconds since survey start --
+                                          -- the walk is time-sampled, not distance-sampled
+  lat REAL, lon REAL,                    -- nullable: GPS drops out in poor sky view
+                                          -- (GpsConfig.dropout_rate); the gap is NaN,
+                                          -- not synthesised through
+  b_lo_nt REAL NOT NULL, b_mid_nt REAL NOT NULL, b_hi_nt REAL NOT NULL,  -- total-field
+                                          -- |B| per head, never x/y/z
+  girth_weld INTEGER NOT NULL,           -- periodic joint train ground truth, tracked
+                                          -- separately from `defect` -- a real, strong,
+                                          -- non-cancelling source, but not damage
+  chainage_true_m REAL NOT NULL,         -- TRUTH TIER: the generator's own exact
+                                          -- along-track position; may score
+                                          -- registration, never a feature
   PRIMARY KEY (survey_id, sample_idx)
 ) WITHOUT ROWID;
 
@@ -275,17 +358,36 @@ generating ~40 lines (≈10⁷ rows) and running the same CLI over the Parquet p
 carries the second kind.
 
 **Per-survey / stateless** — legitimately recomputed at inference on the incoming survey,
-because they *are* background removal:
-- robust polynomial detrend (degree 3) or Savitzky–Golay high-pass per axis → residuals
-  `rx, ry, rz`
-- residual magnitude `|r|`, orientation (inclination, declination of the residual vector)
-- along-track derivative `dr/ds` and `d²r/ds²` (central differences)
-- vertical gradient `(b_upper − b_lower)/baseline_m` when the gradiometer is enabled
-- sliding-window stats over `windows_m`: mean, std, max|r|, peak-to-peak, kurtosis,
-  zero-crossing rate, energy
+because they *are* background removal. Rig-v2 (`feature_version` 3) replaced every
+vector-axis column (`rx/ry/rz`, `r_mag_nt`, inclination/declination, `gx/gy/gz`) with
+their scalar-rig equivalents below — there is no vector output under `rig: scalar`, so
+there is nothing left to take an orientation of:
+- robust polynomial detrend (degree 3) or Savitzky–Golay high-pass, **independently per
+  head** → three SIGNED residuals `r_lo_nt`, `r_mid_nt`, `r_hi_nt` (a total-field anomaly
+  can enhance or degrade the ambient field, so unlike the old `r_mag_nt` there is no
+  `Check.ge(0)`)
+- along-track derivative `dr_ds_nt_per_m` and `d²r_ds²_nt_per_m2` (central differences of
+  `r_mid_nt`, which takes over `r_mag_nt`'s old role as the primary signal)
+- first difference `g1_nt_per_m` (common-mode background rejection) and second difference
+  `g2_nt_per_m2 = b_hi + b_lo − 2·b_mid` (additionally cancels a *linear* background
+  gradient) — **always computed, never conditional.** Every `rig: scalar` survey has
+  exactly 3 heads (`ArrayConfig.n_heads` is a documented physical fact, not a free dial),
+  so the old "gradiometer enabled" branch is gone — there is nothing left to be
+  conditional on.
+- `standoff_est_m`: a genuine **per-row measured stand-off**, inverted from the
+  head-to-head amplitude ratio via 1/r³ — replacing the assumed-constant `depth_m` the
+  pre-Rig-v2 model normalised by
+- sliding-window stats over `windows_m` (on `r_mid_nt`): mean, std, max, peak-to-peak,
+  kurtosis, zero-crossing rate, energy
 - peak-shape features: FWHM, asymmetry, fitted decay exponent — **the interference
   discriminators**, since off-pipe sources are broader and shallower-decaying
-- stand-off normalisation: multiply amplitude features by `depth³`
+- stand-off normalisation: `r_mag_norm_nt_m3` / `peak_prominence_norm_nt_m3`, amplitude
+  multiplied by `standoff_est_m**3` — real information only since `feature_version` 3;
+  under `feature_version` 1 this used one global `depth_m` and was an exact duplicate of
+  the un-normalised column, so it was dropped at `feature_version` 2 and reinstated once
+  `standoff_est_m` made it genuine per-row information again
+- registration/DQ companions, new in Rig-v2, from Stage B (`registration.py`) rather than
+  from the field readings themselves: `dist_to_weld_m` and `gps_locked`
 
 **Fitted on train only** — serialised into the bundle, never recomputed at inference:
 - feature scaler / quantile transformer
@@ -294,8 +396,10 @@ because they *are* background removal:
 - split-conformal residual quantiles for the severity interval
 - the operating threshold chosen from the training-fold PR curve at the target dig budget
 
-A unit test asserts that `predict()` on the training set through the bundle reproduces the
-in-training predictions bit-for-bit.
+45 columns total (`features.py::feature_columns()` derives the exact ordered list from
+config — a bundle pins it and refuses to load on a mismatch). A unit test asserts that
+`predict()` on the training set through the bundle reproduces the in-training predictions
+bit-for-bit.
 
 ## Model bundle
 
@@ -371,7 +475,7 @@ raw_survey (S3 sensor) → ingested_survey → dq_report → survey_features(fv=
 s3://$LSM_BUCKET/lsm-demo/
   raw/line_id=LINE003/run_id=2/survey.parquet     # immutable, versioning enabled
   quarantine/<survey_id>/{survey.parquet,dq.json} # failed a hard gate; not deleted
-  features/fv=1/line_id=.../run_id=.../features.parquet
+  features/fv=3/line_id=.../run_id=.../features.parquet
   models/<model_version>/bundle.joblib
   models/<model_version>/{metrics.json,model_card.md}
   reports/<survey_id>/dq.json

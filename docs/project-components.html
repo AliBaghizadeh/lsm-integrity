@@ -55,7 +55,7 @@
     gap: 0.6rem;
     margin-bottom: 0.2rem;
   }
-  .row.pipeline { grid-template-columns: repeat(9, 1fr); }
+  .row.pipeline { grid-template-columns: repeat(10, 1fr); }
   .row.infra { grid-template-columns: repeat(5, 1fr); }
   .row.consumers { grid-template-columns: repeat(2, 1fr); max-width: 640px; }
   @media (max-width: 900px) {
@@ -136,15 +136,16 @@
   </div>
   <p class="diagram-link">Printable/slide version of this diagram: <code>docs/img/project-components.png</code></p>
 
-  <h2 class="section">Real gate results, at a glance</h2>
+  <h2 class="section">Real gate results, at a glance (Rig-v2, scalar rig)</h2>
   <table>
     <tr><th>Fact</th><th>Value</th></tr>
-    <tr><td>Tests</td><td>268, ruff + mypy clean</td></tr>
+    <tr><td>Tests</td><td>311, ruff + mypy clean</td></tr>
     <tr><td>Provenance on every prediction</td><td><code>pipeline_version</code> / <code>feature_version</code> / <code>schema_version</code> / <code>config_sha256</code> / <code>git_sha</code></td></tr>
-    <tr><td>Detection gate (Stage 3)</td><td>IsolationForest vs. MAD — recall parity (gap −0.006, CI [−0.067, 0.050]), did not clear the ≥0.15 margin; interference-rejection win IS significant (CI [0.007, 0.058])</td></tr>
-    <tr><td>Severity gate (Stage 4)</td><td>Passed — coverage 0.920, target band [0.87, 0.93]</td></tr>
-    <tr><td>Classification gate (Stage 5)</td><td>Did not pass — SCC recall 0.125 (click "Severity + Classify" above for why)</td></tr>
-    <tr><td>Growth gate (Stage 8)</td><td>Passed — beats the no-growth baseline well outside its CI</td></tr>
+    <tr><td>Detection gate (Stage 3)</td><td>IsolationForest vs. MAD — recall gap −0.006 [−0.061, 0.056], did not clear the ≥0.15 margin — numerically unchanged from the pre-Rig-v2 measurement</td></tr>
+    <tr><td>Severity gate (Stage 4)</td><td>Did not pass under Rig-v2 — coverage 0.689 [0.420, 0.945] vs. target band [0.87, 0.93] (was 0.920, PASS, pre-Rig-v2 — a real, reported regression)</td></tr>
+    <tr><td>Classification gate (Stage 5)</td><td>Did not pass — SCC recall 0.042 [0.000, 0.125]; demoted to a synthetic-only capability demo (no real labelled defect-type data at ROSEN)</td></tr>
+    <tr><td>Growth gate (Stage 8)</td><td>Passed — population log-growth-rate 0.1398, matches ln(1.15) exactly</td></tr>
+    <tr><td>Ablation ladder (Stage D)</td><td>Software-only additions: +0.014 [−0.028, 0.056] recall, indistinguishable from zero. Full vector hardware: recall 0.597 vs. 0.208 (~3×), false-digs ~3× lower, localisation ~10× tighter (48 cm vs. 536 cm)</td></tr>
   </table>
 
   <p class="footer">
@@ -161,8 +162,8 @@ const NODES = [
     file: "src/lsm/generate.py",
     body: [
       "The one part of this project that isn't real data — and every doc says so explicitly rather than letting a good demo imply otherwise. A dipole physics model places defects on-pipe and interference sources off-pipe (3–8 m lateral); interference is a genuinely different physical source, 1–2 orders of magnitude bigger magnetic moment, which is what gives the detector's interference-rejection story real physics behind it rather than a labeling trick.",
-      "Two real corrections were made after the initial build. There is only one 3-axis magnetometer, so the brief's \"gradiometer\" claim became the along-track derivative dB/ds until Stage 2 added a real second sensor head at a vertical baseline. The label window's half-width is derived from the physics (r_eff = √(depth² + y_off²)) instead of a constant, calibrated by sweeping against real generated data until unlabelled anomalous rows dropped to a handful of confirmed noise outliers.",
-      "Can optionally load a real USGS geomagnetic observatory trace — including a genuine G5 \"Mother's Day\" storm — instead of a synthetic sinusoid background, specifically to stress-test the detrend design against something it wasn't tuned against. It held up: background residual 7.8–8.1 nT across synthetic/storm/quiet traces, Stage 2's detectability gate holding at 3.0–3.2× contrast in all three.",
+      "Rig-v2 (2026-08-06): rebuilt around the REAL instrument after a 2nd-round interview with the LSM system's own developer (Richard Föcke). The rig is a rod carrying 3 SCALAR total-field heads (middle + two, 50 cm apart) — each reports only |B|, never x/y/z — carried by a human walker at irregular speed/stand-off, with GPS dropout wherever sky view is poor (~5% of rows). This replaced the original single 3-axis-vector-magnetometer-on-a-rail model. `rig: vector` is kept as the pre-Rig-v2 model, now purely a Stage D ablation reference arm.",
+      "Can optionally load a real USGS geomagnetic observatory trace — including a genuine G5 \"Mother's Day\" storm — instead of a synthetic sinusoid background, specifically to stress-test the detrend design against something it wasn't tuned against. It held up: background residual 7.8–8.1 nT across synthetic/storm/quiet traces, holding at 3.0–3.2× contrast in all three (pre-Rig-v2 vector-rig baseline).",
       "Known, stated limitation: defect type (SCC/weld/dent/corrosion) is assigned uniformly at random and carries zero physical signal today — see \"Severity + Classify\" for what that means for Stage 5.",
     ] },
   { id: "ingest", group: "pipeline", color: "var(--blue)", title: "Ingest", sub: "SQLite, content-hash",
@@ -179,19 +180,26 @@ const NODES = [
       "A hard failure quarantines the survey with its DQ report rather than crashing the pipeline — a nightly run that halts over one stuck sensor gets switched off by its own operators.",
       "Edge rows (first/last window-width of a survey) are kept, flagged dq_flag='edge', excluded from metrics, and scored with a widened interval — not silently dropped and not silently trusted either.",
     ] },
-  { id: "features", group: "pipeline", color: "var(--blue)", title: "Features", sub: "detrend, gradient, shape",
+  { id: "register", group: "pipeline", color: "var(--blue)", title: "Register", sub: "GPS + weld-comb → chainage",
+    file: "src/lsm/registration.py",
+    body: [
+      "New in Rig-v2, Stage B. Raw data no longer carries a usable chainage column — a walked survey has irregular speed and GPS dropout, so along-track position has to be RECONSTRUCTED, not read off a column.",
+      "Two techniques stack: (1) dead reckoning — locked GPS fixes projected onto the pipe bearing, with straight-line interpolation across dropout gaps; (2) girth-weld-comb detection — welds ~12 m apart are found by PERIODICITY alone (autocorrelating the detrended |b_mid| envelope), not a fixed amplitude/polarity template, then dead-reckoned chainage is warped onto the evenly-spaced weld lattice the autocorrelation implies.",
+      "Measured: registered chainage error ~1.40 m [1.08, 1.69] median per survey, vs. ~11.3 m [8.7, 14.1] for naive GPS dead-reckoning alone — a real, ~8× improvement. It is NOT the bottleneck standing between this corpus and centimetre-level dig marking, though — indication-level localisation error (564–636 cm) is larger than the registration residual itself, so the remaining error lives downstream, in detection/clustering precision.",
+    ] },
+  { id: "features", group: "pipeline", color: "var(--blue)", title: "Features", sub: "detrend, g1/g2, stand-off",
     file: "src/lsm/features.py",
     body: [
-      "Two-stage detrend (robust polynomial, then a 40 m rolling-median high-pass explicitly to remove whatever the polynomial can't fit), along-track and — when a second sensor head exists — vertical gradient, sliding-window stats at {2, 5, 10, 25} m, and peak-shape descriptors (FWHM, asymmetry, decay exponent).",
+      "Two-stage detrend (robust polynomial, then a 40 m rolling-median high-pass explicitly to remove whatever the polynomial can't fit), plus Rig-v2's per-head first/second differences across the 3 scalar heads (g1_nt_per_m, g2_nt_per_m2 — g1 cancels the common background, g2 additionally cancels a LINEAR background gradient g1 can't touch), a stand-off estimate inverted from the head-to-head amplitude ratio, sliding-window stats at {2, 5, 10, 25} m, and peak-shape descriptors (FWHM, asymmetry, decay exponent). 45 features/row, feature_version 3.",
       "feature_version exists because editing this file silently makes every already-stored feature stale — training/serving skew that no data check can see, since the data itself is fine.",
-      "Real EDA (Stage 2.75) found two features were exact duplicates under the current config and dropped them (feature_version 1→2), and found the ~20-feature amplitude block that separates defect-from-background almost perfectly (PR-AUC up to 0.97) is mediocre specifically at defect-vs-interference. The features that actually do that job are wide-window shape descriptors like w25m_kurt (PR-AUC 0.985).",
+      "Real EDA (Stage 2.75, pre-Rig-v2) found two features were exact duplicates under the current config and dropped them, and found the amplitude-block features that separate defect-from-background almost perfectly are mediocre specifically at defect-vs-interference — the features that actually do that job are wide-window shape descriptors like w25m_kurt.",
     ] },
   { id: "detect", group: "pipeline", color: "var(--darkblue)", title: "Detect", sub: "MAD / IsolationForest",
     file: "src/lsm/models/anomaly.py",
     body: [
       "MAD baseline (robust z-score on residual magnitude) vs. IsolationForest, both calibrated to the same nominal flagged-fraction — a fair comparison, not two differently-tuned sensitivities.",
-      "The real, honestly-reported result: recall gap −0.006, CI [−0.067, 0.050] — statistically indistinguishable, the ≥0.15-margin gate does NOT pass.",
-      "But the mechanism is real and significant: IsolationForest wastes significantly less of the dig budget on interference than MAD does (CI [0.007, 0.058], excludes zero) — traced to an EDA-driven fix, an emphasis_repeats knob that raises the selection odds of the 3 features that actually separate defect from interference, since sklearn's IsolationForest otherwise splits uniformly at random across all 46 features.",
+      "Rig-v2 (Stage D) re-measured this gate against the rebuilt scalar-rig corpus: recall gap −0.006 [−0.061, 0.056] — numerically unchanged to 3 decimal places from the original pre-Rig-v2 measurement at the same 60-defect scale. The ≥0.15-margin gate still does NOT pass. Stated plainly, not as a causal claim: the CI still straddles zero at this sample size, so whether that's coincidence or something deeper about MAD-vs-IsolationForest on this feature set is a question the 800×-scale rehearsal that resolved the equivalent pre-Rig-v2 question hasn't been re-run to answer yet.",
+      "The bigger Stage D finding is the 6-arm ablation ladder (scripts/ablation_ladder.py) — the literal answer to \"hire data scientists, or build new hardware?\" None of 5 software-only additions (head differencing g1/g2, stand-off correction, weld-comb registration) move recall by a statistically distinguishable amount over the bare middle head (cumulative software delta +0.014 [−0.028, 0.056], every arm-to-arm CI straddles zero). A genuine hardware upgrade to full vector output roughly TRIPLES recall (0.597 vs. 0.208), cuts false-digs ~3×, and cuts localisation error ~10× (48 cm vs. 536 cm). Reported plainly — this leans toward hardware, the un-convenient answer, not the one that flatters the software built here.",
     ] },
   { id: "cluster", group: "pipeline", color: "var(--darkblue)", title: "Cluster → Indications", sub: "peak + extent",
     file: "src/lsm/indications.py",
@@ -204,8 +212,8 @@ const NODES = [
     file: "src/lsm/models/severity.py, classify.py",
     body: [
       "Two independent LightGBM models score the same indication in parallel. Severity: quantile regression (0.05/0.5/0.95) wrapped in split conformal for a distribution-free 90% interval. A real bug was caught and fixed here — a naive quantile instead of the finite-sample-corrected level (Romano et al. 2019), which undercovered at 72.7% before the fix.",
-      "Classification: multiclass LightGBM + isotonic calibration, with a SHAP-based physics-consistency gate that denylists absolute chainage as a feature — proven with an engineered-leak test where a real leaky feature is deliberately planted and confirmed caught, not just an absent-name check that would pass trivially.",
-      "Known, honestly-reported limitation: SCC/weld/dent/corrosion labels are assigned uniformly at random in the generator and carry zero physical signal, so subtype recall sits near the 25% guess-floor (SCC 0.125, weld 0.111). Interference IS a real physical distinction in the generator (different source, bigger moment, off-pipe), and the model separates it well — 0.778 recall, 0.909 precision.",
+      "Classification: multiclass LightGBM + isotonic calibration, with a SHAP-based physics-consistency gate that denylists absolute chainage as a feature — proven with an engineered-leak test where a real leaky feature is deliberately planted and confirmed caught, not just an absent-name check that would pass trivially. Demoted to a synthetic-only capability demo after the interview confirmed real ROSEN surveys carry no labelled defect-type data at all.",
+      "Rig-v2 real regression, reported not softened: severity conformal coverage was 0.920 [0.867, 0.967] (PASS) pre-Rig-v2 at a comparable calibration-set size; on the rebuilt scalar rig it measures 0.689 [0.420, 0.945] (FAIL). A harder acquisition — irregular stand-off, GPS dropout, magnitude-only heads — is producing noisier severity calibration at this sample size; whether more calibration data closes the gap the way it did pre-Rig-v2 (0.727→0.920→0.896 as that corpus scaled up) is open, not yet re-run.",
     ] },
   { id: "risk", group: "pipeline", color: "var(--darkblue)", title: "Risk Rank", sub: "P(defect)×sev×consequence",
     file: "src/lsm/indications.py — attach_classification()",

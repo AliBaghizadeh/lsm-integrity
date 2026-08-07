@@ -4,14 +4,26 @@
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue)](pyproject.toml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-A physicist's end-to-end ML pipeline that turns 3-axis magnetometer + GPS survey data into a
-prioritised, risk-ranked dig list — ingest → validation → feature engineering → detection →
-severity/classification → risk ranking → growth & remaining-life, orchestrated with Dagster,
-tracked with MLflow, served through a Streamlit app, gated by CI. It exists to demonstrate
-**MLOps and ML-pipeline-engineering discipline**, not physical fidelity: real Large Stand-Off
-Magnetometry (LSM) data is proprietary, so every dataset, model, and reported number here runs
-on a physics-inspired **synthetic** generator instead — including results that don't clear
-their own gate, since nothing in this project is cherry-picked.
+A physicist's end-to-end ML pipeline that turns walked, 3-head scalar magnetometer + GPS
+survey data into a prioritised, risk-ranked dig list — ingest → validation → along-track
+registration → feature engineering → detection → severity/classification → risk ranking →
+growth & remaining-life, orchestrated with Dagster, tracked with MLflow, served through a
+Streamlit app, gated by CI. It exists to demonstrate **MLOps and ML-pipeline-engineering
+discipline**, not physical fidelity: real Large Stand-Off Magnetometry (LSM) data is
+proprietary, so every dataset, model, and reported number here runs on a physics-inspired
+**synthetic** generator instead — including results that don't clear their own gate, since
+nothing in this project is cherry-picked.
+
+**Rig-v2 (2026-08-06):** the generator, registration, and feature layers were rebuilt around
+the *real* ROSEN instrument after a second-round developer interview revealed it — a rod
+carrying three **scalar** total-field heads (never x/y/z), carried by a human walker with GPS
+dropout, not the single 3-axis vector head on a fixed grid this project originally assumed.
+Every existing gate was re-measured honestly against the rebuilt corpus, and a new 6-arm
+**ablation ladder** (`scripts/ablation_ladder.py`) answers the actual interview question —
+"hire data scientists, or build new hardware?" The honest answer: none of five software-only
+improvements move detection recall by a statistically distinguishable amount, while a genuine
+hardware upgrade to full vector output roughly triples it. Full writeup:
+[`LSM_PROJECT.md`](LSM_PROJECT.md#rig-v2-measured-results-stage-d-in-progress).
 
 ![Project components: pipeline stages, infrastructure, and consumers](img/project-components.png)
 *Pipeline stages, infrastructure, and consumers.*
@@ -33,10 +45,14 @@ their own gate, since nothing in this project is cherry-picked.
 ```
 .
 ├── src/lsm/                 the pipeline
-│   ├── generate.py          synthetic survey generator (dipole model + real background option)
+│   ├── generate.py          synthetic survey generator -- Rig-v2: 3-head scalar rig, walker
+│   │                         physics, GPS dropout (real background trace option preserved)
 │   ├── ingest.py            raw -> SQLite, content-hashed, idempotent
 │   ├── validate.py          14 data-quality checks, quarantine on hard failure
-│   ├── features.py          detrend, along-track/vertical gradient, window + peak-shape features
+│   ├── registration.py      Rig-v2: GPS dead-reckoning + girth-weld-comb detection -> chainage_m
+│   │                         (raw no longer carries a usable chainage column)
+│   ├── features.py          detrend, per-head first/second difference (g1/g2), stand-off
+│   │                         inversion, window + peak-shape features
 │   ├── indications.py       row scores -> clustered indications, severity/classify attachment
 │   ├── models/               anomaly.py (MAD/IsolationForest), severity.py (LightGBM CQR),
 │   │                         classify.py (LightGBM multiclass)
@@ -53,8 +69,9 @@ their own gate, since nothing in this project is cherry-picked.
 │   └── chart_utils.py, map_utils.py   Altair/pydeck chart builders
 ├── config/                  base.yaml (hashed into config_sha256) + dev.yaml/prod.yaml (not hashed)
 ├── serving/                 baked demo artifact: model bundles + 4 demo scenarios + manifest
-├── scripts/                 EDA, plotting, the scale rehearsal, baking the demo artifact
-├── tests/                   276 tests
+├── scripts/                 EDA, plotting, the scale rehearsal, the Stage D ablation ladder,
+│                            baking the demo artifact
+├── tests/                   311 tests
 └── .github/workflows/       ci.yml (lint+type+test, every push) / train.yml (the real promotion gate)
 ```
 
@@ -218,9 +235,9 @@ stated scope limits — not a hand-written summary.
 
 Real LSM survey data is proprietary and was never used anywhere in this project. Every
 dataset, model, and reported number here comes from a physics-inspired synthetic generator (a
-magnetic-dipole forward model over a drifting geomagnetic background, with an optional real
-USGS observatory trace used only for the background component). No proprietary or customer
-data is present in this repository.
+magnetic-dipole forward model, sensed by a walked 3-head scalar rig over a drifting geomagnetic
+background, with an optional real USGS observatory trace used only for the background
+component). No proprietary or customer data is present in this repository.
 
 ## License
 

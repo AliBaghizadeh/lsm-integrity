@@ -5,6 +5,11 @@ honest answer. Rehearse the *reasoning*, not the wording. Where the true answer 
 know yet", say so and follow with how you would find out — that is the answer a team of
 physicists respects.
 
+For the numbers in table form (all thresholds, all gate results, demo-vs-scale side by side),
+see `docs/interview-reference.md`. This file is updated through the Stage 6 scale rehearsal —
+all detection/severity/classification/growth numbers below are the final, 9,600-defect-scale
+results, not the smaller intermediate runs some of the narratives below start from.
+
 ## The framing question — "you have no real LSM data, so what is this?"
 
 > Real LSM data is proprietary, so I built a physics-inspired forward model — magnetic
@@ -16,27 +21,77 @@ physicists respects.
 > because separating a defect from benign magnetic clutter is the hard part, not fitting
 > the model.
 
+> ### ⚠ Pre-Rig-v2 baseline notice — read before rehearsing "Physics and signal" or "Modelling" below
+>
+> This file predates the 2026-08-06 developer interview (Richard Föcke) that produced
+> **Rig-v2** — see `LSM_PROJECT.md`'s "Project Context" and "Rig-v2 measured results (Stage
+> D, in progress)" sections, and `.claude/skills/lsm-integrity/SKILL.md`'s "Physics facts to
+> state correctly." The **framing question** above and the **"Process, honesty, and what was
+> new to you"**/**"MLOps"** sections below are largely evergreen — how to talk about the
+> project's discipline, not what the rig physically measures. Everything else below,
+> including every measured number, describes the **pre-Rig-v2 model**: a single vector
+> magnetometer (x/y/z) with an *optional* second head on a uniform 0.5 m distance grid, a
+> cart on rails, GPS always locked — not the current default (`data.rig: scalar`): **three
+> mandatory scalar total-field heads** on a rod carried by a human walker at irregular speed
+> and stand-off, with GPS that drops out. The single most load-bearing correction is the very
+> next answer below ("Three axes — so you can do gradiometry?"), which says a lone vector
+> magnetometer can't do gradiometry and that a second head was optional and measured *not* to
+> help. Under Rig-v2 that framing no longer applies: three heads are now a fixed physical
+> fact of the instrument, not an optional upgrade, and real gradiometry (including a genuine
+> **second difference**, `g2`, which the old two-head setup couldn't produce at all) is
+> load-bearing rather than something to justify skipping. Whether the old 1.45×-vs-3.21×
+> negative result still holds under the scalar rig is exactly what Stage D's re-measurement
+> is checking (`docs/interview-reference.md` §7/§17; `LSM_PROJECT.md`'s "Rig-v2 measured
+> results" has the gate numbers Stage D has produced so far — Stage 3/4/5 currently FAIL,
+> Stage 8 PASSes, and the 6-arm ablation ladder that would re-measure this specific
+> gradiometry question has **not yet run**). Answer live questions about the current rig from
+> SKILL.md's physics block, not from the "Physics and signal" section immediately below.
+
 ## Physics and signal
 
 **"What actually generates the signal?"** Stress magnetisation — mechanical stress changes
 local permeability and remanent magnetisation, so a stress-concentration zone perturbs the
 ambient field. I model it as a point dipole, which is the leading multipole term and right
 in the far field at ~1.5 m stand-off. It is a crude model for an extended flaw and I would
-expect the real signature to be closer to a line of dipoles or a dipole sheet.
+expect the real signature to be closer to a line of dipoles or a dipole sheet. This
+reasoning is rig-independent and still applies under Rig-v2.
 
-**"Three axes — so you can do gradiometry?"** No, and this is worth being precise about.
-Three *axes* is one vector magnetometer at one point. Gradiometry needs two spatially
-separated heads. With a single moving sensor you get the **along-track derivative** dB/ds,
-which does suppress the slowly varying background but is not common-mode rejection. Stage 2
-of my plan adds a second head at a 0.5 m vertical baseline so I can compute a true vertical
-gradient and quantify how much rejection it buys.
+**"Three axes — so you can do gradiometry?"** *(Pre-Rig-v2 answer — see the notice above.
+Under Rig-v2 the premise of this question has changed: the rig no longer has one vector head
+with an optional second, it has three mandatory scalar heads, and each head reports only
+`\|B\|`, never x/y/z, so "three axes" doesn't describe the current instrument at all. Kept
+here verbatim as the historical negative result Stage D is re-measuring, not as the current
+answer.)* No, and this is worth being precise about. Three *axes* is one vector magnetometer
+at one point. Gradiometry needs two spatially separated heads. With a single moving sensor
+you get the **along-track derivative** dB/ds, which suppresses the slowly varying background
+but is not common-mode rejection. I added a second head at a 0.5 m vertical baseline to get a
+real vertical gradient, and I measured whether it helps rather than assumed it: **it doesn't,
+here.** Detection contrast is 3.21x for a single detrended head versus 1.45x for the
+vertical-gradient difference. Subtracting cancels the background, but it also adds the noise
+of both heads together, and after detrending has already removed most of the background,
+that noise cost isn't worth paying. I'd expect gradiometry to win where the background is
+strongly non-uniform along-track — not the case here. Worth adding: my first version of this
+measurement was wrong for a boring reason — I'd built the second head from the same
+background arrays as the first, so common-mode rejection was perfect by construction, not
+because the technique worked. I only trusted the 1.45x number once I'd fixed that and the two
+heads had genuinely independent background noise.
 
 **"How do you remove the background?"** The defect residual is ~25 nT on a ~45 000 nT
-field — 0.05%. Robust polynomial detrend per axis, degree 3 over the survey, or a
-Savitzky–Golay high-pass with a ~40 m window; the window has to be long compared with a
+field — 0.05%. Two stages: a robust degree-3 polynomial per axis, then a 40 m rolling-median
+high-pass for whatever the polynomial can't fit. The window has to be long compared with a
 defect footprint (a few metres at 1.5 m stand-off) and short compared with geomagnetic
-drift. Choosing that scale separation *is* the engineering. In production I would prefer a
-real observatory trace for the diurnal variation over fitting it away.
+drift. Choosing that scale separation *is* the engineering.
+
+I didn't just assume that generalises — I checked it against a real background. My synthetic
+background is a drift plus one sine wave, which is polynomial-like by construction, so a
+bare polynomial fit it almost perfectly (residual landed exactly at my 5.0 nT noise floor).
+That's my detrender flattering itself, not evidence it works. So I pulled two real days of
+USGS magnetic observatory data — a quiet day and the May 2024 storm, the largest in 20 years —
+and ran the same detrend against real geomagnetic structure. A bare polynomial does noticeably
+worse on the real storm data (6.9–11.3 nT residual). My actual two-stage method held up:
+7.8–8.1 nT residual and 3.0–3.2x detection contrast across the synthetic, quiet, and storm
+backgrounds. It survived contact with real physics, and I only know that because I went
+looking for a way to prove myself wrong.
 
 **"How do you tell a defect from a fence post?"** Amplitude alone will not do it — an
 off-pipe source can be strong. The discriminators are geometric: dipole fields fall as
@@ -95,47 +150,68 @@ is a genuine business argument, not a research nicety.
 
 ## Modelling
 
-**"Why not just threshold?"** I do — MAD threshold is the baseline, and IsolationForest has
-to beat it by a stated margin, on the confidence interval, not the point estimate. When I
-actually ran it: **it didn't**, across three real runs, though the story gets better each
-time. First on a 1-line/12-defect corpus: recall gap -0.056, CI [-0.167, 0.056] — straddling
-zero, too little data to tell if the effect was real. Rather than accept that as the final
-word, I scaled the corpus to 5 independent lines (~60 defects — more lines, not more defects
-crammed onto one line, which I tried first and it degraded a different gate by contaminating
-background rows with neighbouring sources' field tails) specifically to narrow that CI.
-Re-ran: gap -0.028, CI [-0.083, 0.022] — about half the point estimate, about half the width,
-still just barely straddling zero, a **more precise measurement of a small real effect**, not
-"still inconclusive." I could have stopped there and called it a legitimate negative result.
-Instead I ran a real EDA (below) that found a specific, fixable mechanism, fixed it, and
-re-ran a third time: gap closed to **-0.006, CI [-0.067, 0.050]** — recall is now
-statistically indistinguishable between the two models, and the interference-rejection
-mechanism the EDA predicted turned out to be real and significant (see below). I could have
-quietly re-tuned IsolationForest until it passed the ≥0.15 margin; I reported the honest
-result — parity, not a win — instead, because that's what the gate is *for*.
+**"Why not just threshold?"** I do — MAD threshold is the baseline, and any candidate has to
+beat it by a stated margin, on the confidence interval, not the point estimate. I measured
+this four times, at increasing scale, and the honest final answer is: **it doesn't beat
+baseline, and I now know that with real confidence, not a shrug.**
 
-I went further and ran a real EDA over the 48-feature set (Stage 2.75) to stop guessing at
-that mechanism. It found the model is fit on ~20 mutually-correlated amplitude features
-(the window-statistic family, plus two features that are *exact* duplicates under the
-current config — normalising by `depth_m` is a constant scalar multiply when `depth_m` isn't
-per-row) that separate defect from background almost perfectly (PR-AUC up to 0.97) but are
-mediocre at defect-vs-interference specifically (mostly under 0.55), because interference
-genuinely produces amplitude too by design. The features that actually separate defect from
-interference are a different, smaller set — wide-window shape descriptors like `w25m_kurt`
-(PR-AUC 0.985). An isolation forest splitting roughly uniformly across 48 dimensions, a
-third of which are redundant amplitude features, has more chances to isolate on that
-dominant cluster than on the one or two shape features that would correctly reject
-interference. That's a specific, evidenced mechanism, not a hedge — so I acted on it: dropped
-the two duplicate features entirely (a real `feature_version` bump, not just excluding them
-from the model), and gave IsolationForest an `emphasis_repeats` knob that repeats
-`w25m_kurt`/`w25m_zcr`/`w10m_kurt` in its fitted matrix to raise their selection odds. Re-ran:
-recall gap closed to **-0.006, CI [-0.067, 0.050]** (was -0.028) — recall is now
-statistically indistinguishable between the two models — and the interference-attribution
-check flipped from "doesn't cleanly explain it" to **significant** (CI [0.007, 0.058],
-excludes zero): MAD now wastes significantly more of the dig budget on interference than
-IsolationForest does. The ≥0.15 recall-margin gate still doesn't pass — the honest result is
-parity, not an IsolationForest win — but "I found a specific mechanism via EDA, fixed it, and
-measurably improved the thing the fix targeted, confirmed by a CI that excludes zero" is a
-complete, evidence-driven story, end to end, not a shrug.
+1. First, 12 defects: gap -0.056, CI [-0.167, 0.056] — too little data to say anything.
+2. Scaled to 60 defects (5 independent lines, not more defects crammed onto one line, which
+   I tried first and it degraded a different gate by contaminating background rows with
+   neighbouring sources' field tails): gap -0.028, CI [-0.083, 0.022] — narrower, still
+   straddling zero, consistent with a small real effect.
+3. I ran an EDA over the 46-feature set, found a specific, fixable mechanism (below), fixed
+   it, and re-ran: gap closed to **-0.006, CI [-0.067, 0.050]**. At the time this looked like
+   the fix had worked and the two models were now roughly at parity.
+4. That reading was wrong, and I only found out because I didn't stop there. I scaled the
+   same, already-fixed pipeline to 9,600 defects (~40 independent lines, ~9.6M rows) purely to
+   get a confident answer. Result: **gap -0.029, CI [-0.033, -0.026]** — a tight interval that
+   excludes zero, landing almost exactly back at step 2's number. The apparent fix at step 3
+   was itself a small-sample coincidence, not a real improvement that held up at scale.
+
+So the current, honest conclusion is: IsolationForest is genuinely, reproducibly, if only
+slightly, worse than a robust MAD threshold on this corpus. Not a shrug, not "still not
+enough data" — a real, small, negative effect, confirmed at 800x the original scale, with a
+mechanism I can point to. The lesson from steps 3-to-4 specifically: don't treat an interval
+that only just crosses zero as proof a fix worked — confirm it at a scale that can actually
+tell "fixed" apart from "noise."
+
+**Where exactly it loses**, from the same Stage 6 comparison (both models get the same
+dig-budget of holes, so their misses are directly comparable):
+
+| Share of the dig budget | MAD | IsolationForest |
+|---|---|---|
+| Wasted on real interference | 23.3% | 23.0% |
+| Wasted on empty ground | 0.0% | 3.6% |
+| Average position error | 0.28 m | 0.42 m |
+
+MAD's mistakes are all the "designed" kind — real interference sources, which is the
+false-positive trap I built on purpose. IsolationForest makes that same mistake at almost the
+same rate, but adds a new one: 3.6% of its digs land on nothing at all, and it localises
+defects roughly 50% worse. Its one small edge on interference (0.3 points) is about ten times
+smaller than what it loses elsewhere.
+
+**Why, mechanically — one shallow reason, one structural.**
+
+Shallow: IsolationForest picks its split feature uniformly at random, and about 20 of my 46
+features are amplitude-based and mutually correlated — essentially the same signal MAD
+already thresholds on (two of them were *exact* duplicates under the current config, a real
+bug I found via EDA and fixed with a `feature_version` bump). So most splits re-derive MAD's
+own decision, with added variance from random feature selection, rather than using the
+handful of shape features (`w25m_kurt`, `w25m_zcr`, `w10m_kurt`) that actually separate a
+defect from interference. I tried fixing this directly — an `emphasis_repeats` knob that
+tiles those three features in the fitted matrix to raise their selection odds — and it's what
+produced step 3's apparent improvement. It didn't survive scaling.
+
+Structural, and the more important one: I built interference to have the *same amplitude* as
+a defect on purpose — that's the whole point of the false-positive trap. So to an
+outlier-detection method, a defect and a piece of buried junk are equally unusual; being
+unusual is the property they share, not the property that tells them apart. Only shape does
+that, and shape is exactly the information an unsupervised, amplitude-heavy method is least
+equipped to use. I know the information is genuinely present in the features, because my
+supervised classifier, seeing the exact same feature set with labels, separates interference
+from everything else at **99.9% precision**. The ceiling on an unsupervised fix here is real,
+and it's a framing problem, not a tuning problem.
 
 **"Why two stages?"** Because the unit of decision is an **indication**, not a 0.5 m
 sample. Row-level scoring, then peak clustering into indications, then per-indication
@@ -164,14 +240,30 @@ honest statement was "can't confirm calibration is good, can't rule it out eithe
 run: a plain (1-alpha) quantile for the calibration margin instead of the finite-sample-
 corrected level the theory (Romano et al. 2019) specifies, which systematically undercovers
 on small calibration sets. Fixed it, verified with unit tests that hand-check the correction
-against a naive quantile. On the later 5-line/~60-defect corpus (n=140 matched severity
-indications, same scale-up that sharpened the Stage 3 measurement above), coverage came in
-at **0.905 — inside the target band, gate passes**, with MAE roughly halved versus the
-global-mean baseline (7.2 vs 15.0 nT). Same conformal code both times; more calibration
-points is what actually closed the gap, which is the expected story for a distribution-free
-method under a genuine small-sample regime, not a coincidence. Still conditional on Stage
-3's detector, which doesn't beat baseline — a passing severity gate validates the CQR
-methodology, not the whole pipeline's choice of anomaly model.
+against a naive quantile. On a 5-line/~60-defect corpus (n=137 matched severity
+indications, same scale-up that sharpened the Stage 3 measurement above), coverage came in at
+**0.920 [0.867, 0.967]** — inside the target band, gate passes — with MAE roughly halved
+versus the global-mean baseline (7.46 vs 15.09 nT). Same conformal code both times; more
+calibration points is what actually closed the gap, which
+is the expected story for a distribution-free method under a genuine small-sample regime, not
+a coincidence. Still conditional on Stage 3's detector, which doesn't beat baseline — a
+passing severity gate validates the CQR methodology, not the whole pipeline's choice of
+anomaly model.
+
+Scaling further, to Stage 6's 9,600 defects, sharpened it again: coverage **0.896 [0.891,
+0.901]**, comfortably inside [0.87, 0.93], and MAE dropped to **3.36 nT** against a 15.0 nT
+baseline — better than the smaller-scale run, as expected with more calibration data.
+
+That run also surfaced a real bug worth being upfront about, because it's a good example of a
+failure mode no data check alone would catch. My generator sets severity to NaN off-defect. In
+36 of 18,917 matched indications (0.4%) a detected peak landed just outside a defect's exact
+label window while still inside the looser dig-matching tolerance — so it got credited as a
+match, but its true severity was NaN. One NaN reaching the conformal calibration step silently
+poisoned the *entire fold's* margin, because the quantile function that computes it propagates
+NaN. A 0.4% data issue turned into 0% coverage for that whole fold — a cliff, not a gradual
+degradation. Fixed by dropping NaN-labelled rows before calibration, with a second guard
+inside the model itself. I only found it because I checked coverage at scale rather than
+trusting that a demo-scale pass meant the mechanism was sound.
 
 **"How do you decide defect type — SCC vs weld vs dent vs corrosion?"** Multiclass LightGBM
 (isotonic-calibrated P(defect), degenerate-fold fallbacks for the small per-class counts, a
@@ -196,6 +288,22 @@ SCC, a weld anomaly, a dent, and corrosion) — a stated, scoped data gap, not a
 failure, and the same "add its baseline first, report the honest number" discipline as
 everything else in this project.
 
+One more thing worth knowing before an interview, because on the surface it looks like it
+contradicts the paragraph above: at Stage 6 scale (9,600 defects), SCC recall rose to
+**0.636 [0.620, 0.652]** — tight, and well above the ~25% you'd expect from a genuinely blind
+4-way guess. My first instinct was that more data let the model find something real. So I
+checked directly, on the actual generated files, rather than trusting the number: at true
+population scale (tens of thousands of defects per type), severity, `w25m_kurt`, `fwhm_m`,
+`r_mag_nt` and `decay_exponent` are all statistically identical across
+scc/weld/dent/corrosion — the small differences visible at demo scale (only ~15 defects per
+type) were sampling noise that washes out at scale, exactly as the "physically
+indistinguishable by construction" argument predicts. So the 0.636 recall almost certainly
+doesn't reflect real physical separation in the features. I don't have a full explanation for
+it yet — it needs a look at per-class precision and the confusion matrix, which this project
+hasn't captured — and I would say exactly that if asked, rather than present 0.636 as evidence
+the classifier works. A number that looks good deserves the same scrutiny as one that looks
+bad.
+
 **"Deep learning?"** A 1-D CNN over the residual window is a reasonable next step and I have
 it planned, but gradient boosting on well-designed physics features is the right first
 model at this data scale, it trains in seconds on 16 cores, and it is far easier to
@@ -203,12 +311,22 @@ interrogate with SHAP. I would move to a CNN when I have enough labelled indicat
 learned filters beat hand-designed shape features — and I would keep the boosted model as
 the challenger baseline, not delete it.
 
-**"Growth and remaining life?"** Three surveys with ~15% growth. Fitting twelve independent
-growth curves off three points would be over-fitting; I use partial pooling so each defect's
-rate is shrunk toward the population rate, then project to a limit state for remaining
-life, and I propagate the severity interval through so the remaining-life output is a range,
-not a date. With n=3 the honest statement is that the *method* is right and the *numbers*
-are not yet trustworthy.
+**"Growth and remaining life?"** Three surveys with ~15% growth per survey. Fitting twelve
+independent growth curves off three points each would be over-fitting, so I use partial
+pooling — each defect's own rate is shrunk toward a population rate, more so with fewer
+observations — then project to a limit state for remaining life, propagating the severity
+interval through so the output is a range, not a date. The gate compares against a no-growth
+baseline on one-step-ahead severity error, not on remaining life directly, since an
+unchanging severity implies infinite life, which has no error to compare against a finite one.
+
+It passes, and I want to be precise about what that does and doesn't prove. My generator grows
+every defect by exactly 15% per survey, with no noise in that growth law. A correctly built
+pooled estimator should recover ln(1.15) = 0.1398 almost exactly — and it does: measured
+population rate is 0.1398. That's a strong confirmation the *estimator* is implemented
+correctly. It is not evidence the method works on real defect growth, which is noisy and
+uneven, not geometric. I say that plainly in the model card next to the number: with as few
+as three observations per defect, per-defect rates are almost entirely shrunk to the
+population value, so every remaining-life figure is provisional, not a calibrated forecast.
 
 ## MLOps
 
@@ -310,48 +428,67 @@ and how you closed it is a stronger answer than implying you walked in knowing e
 this project genuinely has two candidates for this: IsolationForest, and split conformal
 prediction (CQR). If either was new to you, say so plainly and say what studying it involved.
 
-**"Walk me through something that didn't work."** Two real ones, fully reportable without
+**"Walk me through something that didn't work."** Four real ones, fully reportable without
 hedging:
-1. IsolationForest vs the MAD baseline (Stage 3) — never beat it, across three real runs.
-   First (12 defects): recall gap -0.056, CI [-0.167, 0.056]. Rather than leave it there, I
-   scaled the corpus 5x (more independent lines, not more defects packed onto one line —
-   that move alone surfaced a real data-generation bug I fixed first) specifically to
-   sharpen that CI, and re-ran: gap -0.028, CI [-0.083, 0.022] — a tighter measurement
-   confirming a real, small effect, not "still not enough data." Then I ran a real EDA over
-   the feature set, found the model was fit on ~20 redundant amplitude features that were
-   drowning out the 3 that actually separate defect from interference, fixed it (dropped 2
-   exact-duplicate features, added a knob to up-weight the other 3), and re-ran a third
-   time: gap closed to -0.006, CI [-0.067, 0.050] — recall is now statistically
-   indistinguishable between the models, and the interference-rejection mechanism the EDA
-   predicted turned out real and significant. Still doesn't clear the gate's ≥0.15 margin —
-   parity isn't a win — but reported as the actual result at every step, not tuned until it
-   passed.
+1. IsolationForest vs the MAD baseline (Stage 3) — never beat it, across four real runs at
+   increasing scale. First (12 defects): recall gap -0.056, CI [-0.167, 0.056] — too little
+   data to say anything. Scaled to 60 defects (5 independent lines, not more defects packed
+   onto one line — that move alone surfaced a real data-generation bug I fixed first): gap
+   -0.028, CI [-0.083, 0.022] — tighter, consistent with a real small effect. I then ran a
+   real EDA, found the model was fit on ~20 redundant amplitude features drowning out the 3
+   that actually separate defect from interference, fixed it (dropped 2 exact-duplicate
+   features, added a knob to up-weight the other 3), and re-ran: gap closed to -0.006, CI
+   [-0.067, 0.050]. That looked like a fix. It wasn't: scaling the same, already-fixed
+   pipeline to 9,600 defects gave gap -0.029, CI [-0.033, -0.026] — a confident, real,
+   negative result, landing almost exactly back at the pre-fix number. The honest end state
+   is "genuinely, slightly worse than baseline, confirmed at 800x scale," not "parity."
 2. Split-conformal undercoverage (Stage 4) — traced to a real bug in my own code (a naive
    quantile where the theory calls for a finite-sample-corrected one), fixed it, and the
    gate *still* didn't clear on the original 12-defect data (0.727 vs a [0.87,0.93] target,
    CI containing the target band). Left it there rather than manufacture a happy ending —
-   until the same 5x corpus scale-up used for Stage 3 gave conformal enough calibration
-   points to actually pass (0.905) on a later run. Worth being clear in an interview that
-   the fix was necessary but not sufficient by itself; scale is what closed the gap.
+   until a 5x corpus scale-up gave conformal enough calibration points to actually pass, and
+   scaling further to 9,600 defects held that pass (0.896) with MAE dropping to 3.36 nT.
+   Worth being clear that the code fix was necessary but not sufficient by itself; scale is
+   what closed the gap.
+3. The vertical gradiometer (Stage 2.5) — the standard fix for this kind of background
+   problem, and it made things worse, not better: 1.45x detection contrast versus 3.21x for a
+   single detrended head. Subtracting two heads cancels the background but adds both heads'
+   noise, and after detrending has already removed most of the background, that noise cost
+   isn't worth paying here. My first version of this measurement was actually a second bug
+   layered on top: I'd built the second head from the same background arrays as the first, so
+   common-mode rejection was perfect by construction. I only trusted the negative result once
+   I'd fixed that.
+4. A 0.4% data issue that caused a 0% result (Stage 6) — 36 of 18,917 matched severity
+   indications (0.4%) had a NaN true severity from a peak landing just outside a defect's
+   label window. One NaN reached the conformal calibration step and silently poisoned that
+   entire fold's margin — 0.4% incidence, 0% coverage for the whole fold, a cliff rather than
+   a gradual degradation. Fixed by dropping NaN rows before calibration, with a second guard
+   in the model itself. Only found because I checked the actual coverage number at scale
+   rather than assuming a demo-scale pass meant the mechanism was sound everywhere.
 
-**"How do you know your negative results aren't just bugs?"** Because each one got checked
-before being accepted, not just shrugged at: the conformal undercoverage was traced to a
-specific formula error and confirmed by hand-computing the correction on a small example and
-by inspecting per-defect coverage row by row, not by assumption. The IsolationForest result
-was checked by re-running at 5x the scale specifically to see if the effect held up or was
-noise — it held up, tighter and smaller — and then by running a real EDA to find and fix a
-specific, named mechanism (redundant amplitude features drowning out the ones that actually
-separate defect from interference), which produced a predicted, measurable, significant
-improvement on re-run rather than a shrug. A suspicious number deserves inspection; a
-genuinely small effect, once you've ruled out a bug, ruled out "just not enough data," and
-acted on the mechanism you found, is a real finding, not an excuse.
+**"How do you know your negative results aren't just bugs?"** Because I kept checking after
+the number looked better, not just when it looked bad. The conformal undercoverage was traced
+to a specific formula error, confirmed by hand-computing the correction on a small example.
+The IsolationForest gap is the sharper example: at 60 defects, after a real EDA-driven fix, it
+looked resolved — gap -0.006, CI crossing zero. I could have stopped there and called it
+fixed. Instead I scaled the same pipeline to 9,600 defects specifically to get a confident
+answer, and the "fix" reverted: gap -0.029, CI excluding zero, landing almost exactly back at
+the pre-fix estimate. That's the actual discipline — a result that only just crosses zero at
+small scale isn't confirmed until you've checked it at a scale that could actually tell fixed
+from noise, and I got the wrong answer once by not doing that soon enough.
 
-**"What would you do next with more time or data?"** Stage 6 (the full scale rehearsal —
-~40 lines, ~10⁷ rows) is the designed answer, and it's not purely hypothetical anymore: a
-first, smaller step (1→5 lines, ~60 defects) already narrowed both Stage 3's and Stage 4's
-CIs meaningfully and flipped Stage 4's gate from fail to pass, which is direct evidence that
-sample size — not the underlying models — was the binding constraint on 12 defects. Stage 6
-is the same lever, taken further.
+**"What would you do next with more time or data?"** I already took that lever as far as it
+goes — Stage 6 scaled the corpus to 9,600 defects (~800x), and it gave a definitive rather
+than a hopeful answer: severity's gate, which really was data-starved, now passes cleanly
+(0.896 coverage); detection's gate, which I'd hoped was also just data-starved, turned out not
+to be — the gap is real and confirmed, not resolved. So more of the same lever is spent. What
+is actually left: giving the four defect subtypes (SCC/weld/dent/corrosion) a real,
+distinguishing physical signature in the generator, since right now they are — correctly —
+indistinguishable by design, which caps what classification can ever achieve here; a
+supervised alternative to IsolationForest now that I know unsupervised amplitude methods have
+a real ceiling on this task; and the deploy/shadow-scoring infrastructure that's designed in
+`docs/production-architecture.md` but not built, because there's no cloud account to point it
+at.
 
 ## Questions to ask them
 

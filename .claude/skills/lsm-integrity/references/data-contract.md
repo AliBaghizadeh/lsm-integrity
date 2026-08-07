@@ -15,9 +15,25 @@ validate is a boundary where skew will appear.
 `0.5 * 3 != 1.5` in binary. A float join key produces silent partial misses between the
 reading table and any feature table computed in a different code path.
 
-**The physical key is `(survey_id, sample_idx)` with `sample_idx` an `int32`.**
-`chainage_m` is *derived*: `chainage_m = sample_idx * step_m`, stored for convenience,
-never used as a key, a join column, or a grouping boundary.
+**The physical key is `(survey_id, sample_idx)` with `sample_idx` an `int32`.** Under Rig-v2
+(`schema_version` 3) `sample_idx` is a dense, monotonic **time**-sample counter (the walk is
+sampled at a fixed rate, `walk.sample_rate_hz`, not on a distance grid) rather than a
+distance-grid index — but it stays the sole physical key regardless; nothing about joins or
+`content_sha256` changes.
+
+`chainage_m` is **no longer a raw column at all**, and no longer a simple derivation. Under the
+pre-Rig-v2 model it was `chainage_m = sample_idx * step_m`; under Rig-v2 a human walks the line
+at irregular speed, so there is no fixed step to multiply by. Instead `chainage_m` is an
+**output of Stage B registration** (`src/lsm/registration.py`: GPS dead-reckoning through
+dropout, then locked onto the recovered girth-weld lattice), written only to the **feature
+layer**, computed once per survey by `pipeline.run_feature_pipeline`. Raw carries
+`chainage_true_m` instead — a **truth-tier** column (the generator's own exact position, same
+tier as `defect`/`interference`) that may be used to *score* registration but must never become
+a feature (enforced by `features.py`'s `TRUTH_DENYLIST` / `_assert_no_truth_leakage`) — and,
+only as an interim convenience, a naive constant-speed `chainage_provisional_m`, deliberately
+*not* named `chainage_m` so nothing downstream mistakes it for the physically-final value.
+Whichever column is in play, the rule is unchanged: never a key, a join column, or a grouping
+boundary.
 
 Consequences to keep consistent:
 - Chainage blocks for `GroupKFold` are computed from `sample_idx`, integer division.
@@ -28,23 +44,29 @@ Consequences to keep consistent:
 
 ## 2. Dtypes and precision
 
-Chosen from the physics, not from habit.
+Chosen from the physics, not from habit. **Updated for Rig-v2 (`schema_version` 3)** — verified
+against `src/lsm/schemas.py`'s current `RawReadingSchema`/`FeatureFrameSchema`, not carried
+forward from the pre-Rig-v2 contract.
 
 | Column | Parquet dtype | Reasoning |
 |---|---|---|
 | `survey_id`, `line_id` | `string` (dictionary-encoded) | low cardinality |
 | `run_id` | `int16` | |
-| `sample_idx` | `int32` | exact key; 2×10⁹ samples is 10⁶ km at 0.5 m |
-| `chainage_m` | `float64` (derived) | never a key |
-| `lat`, `lon` | **`float64` — mandatory** | float32 ULP at 47° N ≈ 3.8×10⁻⁶ ° ≈ **0.42 m**, comparable to the 0.5 m sample spacing. float32 GPS would quantise the survey. |
-| `bx_nt`, `by_nt`, `bz_nt`, `bx2_nt`… | `float32` storage | ULP at 45 000 nT ≈ 0.004 nT, finer than any magnetometer's resolution |
+| `sample_idx` | `int32` | exact key; now a dense **time**-sample counter under Rig-v2, not a distance-grid index (see §1) |
+| `t_s` | `float64` | elapsed seconds since survey start — the walk is time-sampled, not distance-sampled, so this (not chainage) is the raw table's regular axis |
+| `chainage_true_m` | `float64`, **not nullable** | truth-tier only (§1) — the generator's own exact position; never a raw contract column before Rig-v2, since there was previously no distinction between "true" and "derived" chainage |
+| `chainage_m` | `float64`, **feature-layer only** — no longer a raw column | a Stage B registration output (§1); never a key |
+| `lat`, `lon` | **`float64`, nullable** (was mandatory pre-Rig-v2) | float32 ULP at 47° N ≈ 3.8×10⁻⁶ ° ≈ **0.42 m**, still too coarse even before considering nulls. Nullable because GPS genuinely drops out in poor sky view (`GpsConfig.dropout_rate`) and the gap is written as NaN, not synthesised through — a survey with mandatory lat/lon could not represent the instrument's actual failure mode. |
+| `b_lo_nt`, `b_mid_nt`, `b_hi_nt` | `float32` storage | total-field **magnitude** per head (never negative — see §4's range note), replacing the removed `bx_nt`/`by_nt`/`bz_nt`/`bx2_nt`/`by2_nt`/`bz2_nt` vector-axis columns. ULP at ~45 000 nT ≈ 0.004 nT, finer than any magnetometer's resolution. |
+| `girth_weld` | `int8` (0/1) | periodic joint train ground truth, tracked separately from `defect` — a weld is a real, strong, non-cancelling source, but not damage |
 | residuals, window features | `float32` | halves Stage-6 memory |
 | `defect` | `int8` | |
 | `defect_type` | `dictionary<string>`, **pinned category order** | see §4 |
 | `severity_smys` | `float32` | |
 | `*_at` timestamps | `timestamp[us, tz=UTC]` | §3 |
 
-**Store float32, compute float64.** Storage precision is not arithmetic precision:
+**Store float32, compute float64.** Applies unchanged to the new `b_lo/mid/hi_nt` raw columns
+and to `r_lo_nt`/`r_mid_nt`/`r_hi_nt` in the feature layer. Storage precision is not arithmetic precision:
 detrend least-squares fits, cumulative window sums and gradient differences accumulate
 error. Cast to float64 inside the transform, cast back on write. State this explicitly —
 it is the kind of detail a physicist will check.
@@ -57,8 +79,9 @@ it is the kind of detail a physicist will check.
 
 - Every physical column carries its unit as a suffix: `_m`, `_nt`, `_deg`, `_s`. No
   exceptions, no bare `chainage`. Unit conversion happens once, at ingest.
-- All names `lower_snake_case`. Sensor axes lowercase (`bx_nt`), matching the DB, with the
-  raw CSV's `Bx_nT` normalised at ingest.
+- All names `lower_snake_case`. Sensor heads lowercase (`b_lo_nt`, `b_mid_nt`, `b_hi_nt` —
+  Rig-v2's 3 total-field heads, replacing the pre-Rig-v2 vector axes `bx_nt`/`by_nt`/`bz_nt`),
+  matching the DB.
 - **All timestamps UTC, ISO-8601, `_at` suffix.** Naive local times are a data-quality
   failure, not a formatting preference — surveys are compared across years and a DST
   boundary silently reorders them.
@@ -82,10 +105,15 @@ through, not a reason to stop thinking about what it means.
 
 | Situation | Meaning | Policy |
 |---|---|---|
-| NaN in a raw field (`bx_nt`) | sensor dropout | **hard fail** — quarantine the survey |
-| `bx2_nt` NULL | no second sensor head fitted | expected; gradiometer features absent, bundle must not require them |
+| NaN in a raw head reading (`b_lo_nt`/`b_mid_nt`/`b_hi_nt`) | sensor dropout | **hard fail** — quarantine the survey |
+| NaN in `lat`/`lon` | **GPS dropout (poor sky view), Rig-v2** — expected, not a sensor fault | **not** a hard fail — a real, modelled acquisition state (`GpsConfig.dropout_rate`); Stage B registration reconstructs `chainage_m` through the gap by dead reckoning, and `gps_locked=0` on the affected feature rows carries the flag forward |
 | NaN in a window feature at survey ends | rolling window truncation | expected — see below |
 | NaN in `severity_smys` | not a defect | distinct from `0.0`; use NaN, not 0 |
+
+Pre-Rig-v2 this table also carried a `bx2_nt NULL` row ("no second sensor head fitted") for the
+old optional gradiometer. There is no equivalent under Rig-v2: `rig: scalar` always has exactly
+3 heads (`ArrayConfig.n_heads` is a documented physical fact there, not a free dial), so
+`b_lo_nt`/`b_mid_nt`/`b_hi_nt` are never independently optional the way the old second head was.
 
 **Edge policy.** Rolling windows produce NaN in the first and last *w*/2 metres. Dropping
 those rows silently discards the pipe ends; padding fabricates data. The rule: keep the

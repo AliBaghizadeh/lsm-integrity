@@ -53,11 +53,20 @@ Break any of these and the demo stops being credible.
 7. **Interference is the adversary, not noise.** Off-centreline sources are the designed
    false-positive trap. Report interference precision separately, always. A model that
    beats the MAD baseline only by flagging interference has failed.
-8. **Never key or join on a float.** The physical key is the integer `sample_idx`;
-   `chainage_m = sample_idx * step_m` is derived and is never a key, join column or
-   grouping boundary. `lat`/`lon` are float64 — mandatory, since float32 quantises GPS to
-   ~0.42 m at this latitude. Field values are float32 in storage and **float64 in
-   arithmetic**. Full contract in `references/data-contract.md`.
+8. **Never key or join on a float.** The physical key is the integer `sample_idx`, still
+   dense and monotonic under Rig-v2 — but it is now a **time-sample counter**
+   (`walk.sample_rate_hz`), not a distance-grid index. `chainage_m = sample_idx * step_m`
+   is **no longer true**: the rig is a rod carried by a human walker at irregular speed,
+   so along-track spacing is irregular by construction. Raw carries `chainage_true_m`
+   (truth tier — the generator's own exact position, may be used to score registration,
+   never as a feature) and, only as an interim convenience column, a naive
+   constant-speed `chainage_provisional_m` — deliberately **not** named `chainage_m`, so
+   nothing downstream mistakes it for a physically-final chainage. The real, registered
+   `chainage_m` is a Stage B (`registration.py`) OUTPUT, written to the feature layer,
+   built from GPS (which drops out) dead-reckoned and then locked to the recovered
+   girth-weld lattice — see `references/data-contract.md`. `lat`/`lon` are float64 and
+   **nullable**: GPS drops out in poor sky view and the gap is written as NaN, not
+   synthesised. Field values are float32 in storage and **float64 in arithmetic**.
 9. **Three versions, all explicit:** `schema_version`, `feature_version`, `model_version`.
    `feature_version` is the one that bites — edit `features.py` and every stored feature is
    silently stale, which is training/serving skew no *data* check can see. Bundles pin it
@@ -82,10 +91,28 @@ Break any of these and the demo stops being credible.
 
 ## Physics facts to state correctly
 
-- The scanner carries **one 3-axis magnetometer**. Three axes are not three sensors.
-  Without a second spatially separated sensor there is **no gradiometry** — only the
-  **along-track spatial derivative** dB/ds. Say "along-track gradient" unless the
-  two-sensor generator upgrade (Stage 2) is in place, then say "vertical gradiometer".
+- The rig (Rig-v2, confirmed by the instrument's own developer) is a rod carrying
+  **three magnetometers, 50 cm apart** (middle + two) — real gradiometry, including a
+  genuine **second difference**, not just the along-track derivative. But each head
+  reports only its **total-field magnitude `|B|`**, one scalar, never x/y/z — there is no
+  vector output anywhere in the scalar rig. Never say "one 3-axis magnetometer" or
+  "along-track gradient only"; that described the pre-Rig-v2 model.
+- **Scalar output is total-field-anomaly physics, not a format detail.** With the anomaly
+  (~25 nT) tiny against the ambient field (~48,800 nT), `|B0+dB| - |B0| ~= dB . B_hat0` to
+  <0.01 nT — you only ever see the anomaly's **projection onto the ambient field
+  direction**. Consequences to state, not hand-wave: (1) a defect whose moment is
+  near-perpendicular to `B_hat0` is nearly invisible — detection probability genuinely
+  varies with defect orientation; (2) `|B|` is **rotation-invariant**, so rod sway/tilt
+  moves head positions but cannot by itself corrupt a reading — almost certainly why the
+  instrument reports scalar in the first place; (3) anomaly *shape* depends on ambient
+  inclination and walk bearing, so shape features are bearing-dependent.
+- **Three heads give a second difference, not just a first.** With `b_lo, b_mid, b_hi` at
+  −0.5/0/+0.5 m along the mast: the first difference `(b_hi − b_lo)` cancels the
+  common-mode background (the old Stage 2 story); the second difference
+  `(b_hi + b_lo − 2*b_mid)` additionally cancels any **linear** background gradient, which
+  the first difference does not — the specific extra value the third head buys. The
+  head-to-head amplitude ratio also inverts for source distance via 1/r³, giving a
+  *measured* stand-off instead of an assumed constant one.
 - Dipole field falls off as **1/r³**. Stand-off normalisation therefore scales residual
   amplitude by `depth³`. Off-pipe interference is farther away *and lateral*, so it is
   **weaker and broader** — width/decay-shape features separate it from on-pipe defects far
@@ -110,7 +137,8 @@ raw_survey (S3 sensor) → ingested_survey → dq_report → survey_features(fv=
 python -m lsm generate    # synthetic surveys -> data/raw/*.parquet (+ S3 mirror)
 python -m lsm ingest      # raw -> SQLite (survey, reading, truth_*) with content hashing
 python -m lsm validate    # DQ gates -> dq_report table + MLflow artifact; exits non-zero on FAIL
-python -m lsm features    # background removal + window/shape features -> feature store
+python -m lsm features    # Stage B registration (chainage from GPS dead-reckoning + weld-comb
+                           # lock) THEN background removal + window/shape features -> feature store
 python -m lsm train       # MLflow-tracked; emits a versioned model bundle
 python -m lsm predict     # batch inference on a survey -> indication table + GeoJSON
 python -m lsm forecast    # per-defect growth -> remaining life
@@ -127,6 +155,7 @@ code path, both times. That symmetry is the point.
 |---|---|
 | System-level design | `docs/production-architecture.md` — environments, serving contract, delayed labels, SLOs, runbook, and what is built vs designed |
 | Orchestration | Dagster assets in `src/lsm/dagster_defs.py`, partitioned by `survey_id` |
+| Along-track registration | `src/lsm/registration.py` (Stage B) — GPS dead-reckoning through dropout + girth-weld-comb detection -> registered `chainage_m` + `dist_to_weld_m`; runs inside the `survey_features` asset, not as its own Dagster asset (see `pipeline.py::run_feature_pipeline`) |
 | The data contract | `src/lsm/schemas.py`, enforced at **every** boundary |
 | Bulk signal + labels | SQLite `data/lsm.db` (schema in `references/architecture.md`) |
 | Raw immutable surveys | `data/raw/*.parquet`, mirrored to `s3://$LSM_BUCKET/raw/` |

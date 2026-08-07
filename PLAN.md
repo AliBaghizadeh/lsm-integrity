@@ -365,6 +365,27 @@ still hold up against it.
 **Answers:** "how realistic is your synthetic data, and where does it flatter you?" — which
 is the question this whole section exists to have a worked answer for.
 
+**4. Circumferential (clock) position is not modelled at all — found 2026-08-04, not yet
+addressed.** `_build_features()` (`generate.py:132-144`) sets `y_off_m = 0.0` for *every*
+defect — always placed directly on the sensor's own path. Only *interference* sources get a
+randomised lateral offset (`y_off_m = rng.uniform(3, 8) * rng.choice([-1, 1])`, line 155), and
+that represents an object sitting beside the pipe (fence post, buried scrap), not a defect at a
+different position on the pipe wall itself. So the corpus never varies "is this defect at 3
+o'clock or 9 o'clock" for real defects — zero examples of that dimension exist to learn from.
+This is **not** caused by merging `rx/ry/rz` into `r_mag` for peak detection (Section 6) —
+keeping the three axes fully separate through detection wouldn't fix it, because the generator
+never produced that variation in the first place. `r_incl_deg`/`r_decl_deg` (dipole
+orientation) are kept as separate features and are informative about defect *type/shape*, but
+they are not a substitute for source *position*, and the corpus gives no lateral-offset target
+to regress or classify against for defects. Recovering true circumferential position in a real
+tool needs either multiple sensor heads/arrays at distinct clock positions on the crawler, or
+genuine dipole-source inversion (fit the full 3-axis field to solve for 3D source location) —
+this project does neither; it's row classification / anomaly detection against a corpus with
+zero circumferential variation, not source localisation. State this explicitly if asked "can
+this tool tell you which side of the pipe the defect is on" — the honest answer is no, and not
+as a detection-stage modelling shortcut: the generator never taught the corpus that dimension
+exists.
+
 ---
 
 ## Stage 2.75 — EDA on the feature store  *(built 2026-07-30)*

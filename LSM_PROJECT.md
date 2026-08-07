@@ -1,31 +1,37 @@
 # Above-Ground Magnetometry → Pipeline Integrity: an ML-Lifecycle Demonstrator
 
-**One line:** A physicist's end-to-end ML pipeline that turns 3-axis magnetometer + GPS data into a prioritised heat map of likely pipeline defects — built to demonstrate methodology and MLOps discipline, not physical fidelity.
+**One line:** A physicist's end-to-end ML pipeline that turns 3-head scalar (total-field) magnetometer + GPS survey data — walked by a human, not driven on rails — into a prioritised heat map of likely pipeline defects, built to demonstrate methodology and MLOps discipline, not physical fidelity.
 
 ## Project Context & Modeling Strategy
-Real Large Stand-Off Magnetometry data is highly proprietary. To enable this research and demonstration, a physics-inspired synthetic generator was built—implementing a magnetic-dipole forward model over a realistic drifting geomagnetic background. The project implements the full ML lifecycle on this dataset: raw data ingestion and validation, feature engineering (background detrending and gradients), uncertainty-calibrated modeling, anomaly tracking, and risk heat map serving.
+Real Large Stand-Off Magnetometry data is highly proprietary. To enable this research and demonstration, a physics-inspired synthetic generator was built — implementing a magnetic-dipole forward model, sensed by three total-field scalar heads on a vertical rod, over a realistic drifting geomagnetic background. **Rig-v2** (2026-08-06) rebuilt this generator around the real instrument, after a second-round interview with the LSM system's own developer (Richard Föcke) revealed it: a human walks the line at irregular speed and stand-off, GPS drops out in poor sky view, and each head reports only `|B|`, never x/y/z — replacing the original single 3-axis-vector-magnetometer-on-a-rail model. The project implements the full ML lifecycle on this dataset: raw data ingestion and validation, along-track **registration** (GPS dead-reckoning + girth-weld-comb detection — a new stage, since raw data no longer carries a usable chainage column), feature engineering (background detrending, per-head first/second differences, and stand-off inversion), uncertainty-calibrated modeling, anomaly tracking, and risk heat map serving.
 
-## What it demonstrates (the five scenarios, on one dataset)
+## What it demonstrates (six scenarios, on one dataset)
 1. **Anomaly detection** — find stress-concentration zones with mostly unsupervised methods after background removal.
 2. **Severity regression** — map the magnetic signature to a `%SMYS`-style value *with calibrated uncertainty*.
-3. **Defect classification** — SCC vs weld vs dent vs corrosion vs benign interference.
+3. **Defect classification** — SCC vs weld vs dent vs corrosion vs benign interference. **Demoted to a synthetic-only capability demonstration**, not a claim this generalises to real ROSEN data: the developer interview confirmed there is **no labelled defect-type data** on real surveys, so a supervised 5-class model cannot be trained on real ROSEN data at all. Kept because the calibration, per-class-recall discipline and SHAP physics-consistency gate around it are good MLOps worth demonstrating — not because the model itself is fit to deploy. It was already failing its own SCC-recall promotion gate before this rework (0.125, CI [0.000, 0.264]) — stated plainly because it costs nothing and buys credibility.
 4. **Risk / prioritisation** — combine severity, class and (proxy) consequence into a ranked heat map.
 5. **Growth forecasting** — three repeat surveys with growing defects → project remaining life.
+6. **Dig-feedback active learning** — with no real defect-type labels, *which segment should we dig next, and what does that dig teach the model* is the actual path to ever training a supervised model on real ROSEN data. `src/lsm/dig_feedback.py` (`record_excavation`, `recompute_coverage_from_verifications`) already exists and is treated here as a headline stage, not a stretch-goal footnote — arguably the single most directly useful thing a data scientist could hand ROSEN, since it is the mechanism by which labels would ever start to exist.
 
 ## The data
-`generate_lsm_data.py` writes `lsm_synthetic.csv` in seconds. A 2 km line sampled every 0.5 m, three surveys, 12 growing defects plus 4 off-pipe interference sources (deliberate false-positive traps).
+`python -m lsm generate` (`src/lsm/generate.py`) writes one immutable Parquet file per survey. A 2 km line, **walked** (not driven on rails) by a human at irregular speed and stand-off, sampled at a fixed 120 Hz — irregular in distance, dense and monotonic in `sample_idx` — three repeat surveys per line, 12 growing defects plus 4 off-pipe interference sources (deliberate false-positive traps), plus a periodic girth-weld train (~every 12.2 m, a fact of how the pipe was built, not a rare event). Per-survey row count is therefore far denser than the old uniform-0.5 m grid — `config/base.yaml`'s own comment on `walk.sample_rate_hz` states ~50x — a direct consequence of the real rig's sample rate, not a demo convenience; exact post-Rig-v2 row counts are Stage D's to measure, not estimated here.
 
 | column | meaning |
 |---|---|
-| `run_id` | survey index 0–2 (defects grow ~15% per survey) |
-| `chainage_m` | distance along the pipe |
-| `lat`, `lon` | GPS along a fixed bearing near Stans |
-| `Bx_nT`, `By_nT`, `Bz_nT` | 3-axis field: large background + drift + defect dipoles + noise |
-| `defect` | 1 within ±2 m of a true defect, else 0 |
-| `defect_type` | scc / weld / dent / corrosion / none |
+| `sample_idx` | dense, monotonic integer key — now a **time**-sample counter, not a distance-grid index |
+| `t_s` | elapsed seconds since survey start — the walk is time-sampled, not distance-sampled |
+| `chainage_true_m` | the generator's own exact along-track position — **truth tier**, may score registration, never a feature |
+| `lat`, `lon` | GPS fixes, **nullable float64** — NaN during GPS dropout (poor sky view), not synthesised through |
+| `b_lo_nt`, `b_mid_nt`, `b_hi_nt` | total-field **magnitude** `\|B\|` from each of 3 heads (−0.5 m / 0 / +0.5 m on the rod) — never x/y/z; large background + drift + defect dipoles + noise |
+| `defect` | 1 within the label window of a true defect, else 0 |
+| `defect_type` | scc / weld / dent / corrosion / none — see the classification demotion note above |
 | `severity_smys` | proxy severity (~20–95), grows across surveys |
+| `interference` | 1 for an off-pipe false-positive-trap source |
+| `girth_weld` | 1 for the periodic joint train — a real, strong, non-cancelling source, but not damage |
 
-Signal-to-check: after a cubic detrend, defect residuals are ~25 nT against ~4 nT elsewhere — learnable, but only *after* you remove the background. That background-removal step is the whole point, and interference makes naive thresholding fail.
+`chainage_m` — distance along the pipe, used everywhere downstream — is **no longer a raw column**. Under an irregular human walk there is no physically-final chainage until Stage B's registration (`src/lsm/registration.py`) reconstructs it from GPS dead-reckoning plus girth-weld-comb detection; it is written to the feature layer, never to raw.
+
+Signal-to-check: after the two-stage detrend, defect residuals are still visible against the background, but the exact contrast is being re-measured for the scalar rig (Stage D, in progress — see "Rig-v2 measured results" near the end of this document for the gate numbers measured so far, and note the 6-arm ablation ladder that would give a direct contrast comparison has not yet run). The pre-Rig-v2 vector-rig numbers (25.05 nT residual, 3.02–3.21× contrast) are a historical baseline, not current. Background removal is still the whole point of the project, and interference still makes naive thresholding fail.
 
 **Optional realism:** swap the synthetic background for a real geomagnetic trace (BGS/NOAA observatory) so you can say the ambient field is real. Nice-to-have, not required.
 
@@ -34,9 +40,10 @@ Signal-to-check: after a cubic detrend, defect residuals are ~25 nT against ~4 n
 lsm-integrity-demo/
 ├── data/                    # generated CSVs (gitignored)
 ├── src/
-│   ├── generate_lsm_data.py # the generator (done)
-│   ├── validate.py          # schema + range + GPS-continuity checks
-│   ├── features.py          # background removal, gradients, window stats
+│   ├── generate_lsm_data.py # the generator: 3-head scalar rig, human walker, GPS dropout, weld train (done)
+│   ├── validate.py          # schema + range + GPS-dropout-aware + weld/saturation checks
+│   ├── registration.py      # NEW: GPS dead-reckoning + girth-weld-comb detection -> registered chainage_m
+│   ├── features.py          # background removal per head, first/second head-differences (g1/g2), stand-off inversion, window stats
 │   ├── train.py             # anomaly + regression + classification, MLflow-tracked
 │   └── forecast.py          # per-defect growth → remaining life
 ├── app/streamlit_app.py     # map + anomaly overlay + risk heat map
@@ -49,7 +56,7 @@ lsm-integrity-demo/
 ## Lifecycle steps (where the effort goes)
 **1 · Validation** — schema/dtypes, physical range checks on each axis, chainage/GPS continuity and monotonicity, per-axis noise sanity, and an interference flag. Log a short data-quality report. *This is what signals real experience — do it first and visibly.*
 
-**2 · Features** — remove the background (polynomial/robust detrend or high-pass), compute 3-sensor **gradients** (common-mode rejection sharpens local anomalies), field magnitude/orientation, sliding-window mean/std/peak, and normalise by depth/stand-off. Keep a clear feature table.
+**2 · Features** — remove the background (two-stage robust-polynomial + rolling-median detrend, per head), compute the **first difference** across the 3 heads (`g1`, common-mode background rejection) and the **second difference** (`g2`, the third head's specific value: cancels a *linear* background gradient that `g1` cannot), invert the head-to-head amplitude ratio for a genuine per-row **measured stand-off** (`standoff_est_m`), sliding-window mean/std/peak, and normalise amplitude by that measured stand-off rather than an assumed constant depth. 45 columns total (`src/lsm/features.py::feature_columns()`). Keep a clear feature table.
 
 **3 · Modelling** — split **grouped by chainage segment** so neighbours never leak across train/test.
 - Unsupervised: robust-MAD threshold + IsolationForest on residual features (baseline).
@@ -68,13 +75,15 @@ Python · numpy/pandas · scikit-learn · LightGBM · MLflow · Streamlit · pyt
 
 ## Key Engineering & Physics Insights
 - **Preprocessing Focus:** The majority of LSM data analysis complexity lies in data validation and ambient background removal, rather than standard model optimization.
-- **Sensor Configuration & Gradiometry:** A single 3-axis magnetometer allows calculation of the along-track spatial derivative ($dB/ds$). Adding a second sensor head (0.5 m vertical baseline) introduces true vertical gradiometry. In testing, this setup provided ~10 dB common-mode rejection. However, the vertical gradiometer showed a worse detection contrast (2.3× vs 4.5× for single-head detrending) because the difference operation accumulates sensor noise ($\sigma\sqrt{2}$) after detrending. The gradiometer is primarily beneficial when the ambient background is highly non-uniform along-track, and because it requires no fitting window, avoiding edge-row loss.
+- **Sensor Configuration & Gradiometry (Rig-v2, corrected after a developer interview):** the real rig carries **three scalar total-field magnetometers** (middle + two, 50 cm apart) — each head outputs only `|B|`, never x/y/z, so what is actually measured is the *total-field anomaly*, `|B0+dB| − |B0| ≈ dB·B̂0`: only the projection of a defect's field onto the ambient field direction is visible. Three heads give both a **first difference** (`g1`, common-mode background rejection — the old two-head story) and a **second difference** (`g2 = b_hi + b_lo − 2·b_mid`, which additionally cancels a *linear* background gradient — the specific extra value the third head buys over a two-head gradiometer). The head-to-head amplitude ratio also inverts via 1/r³ for a genuine per-row measured stand-off. `|B|` is rotation-invariant, so rod sway/tilt moves head positions but never corrupts a reading by itself — almost certainly why the real instrument reports scalar in the first place. Whether/how much this configuration outperforms the pre-Rig-v2 vector-head model (which measured 2.3× vs 4.5× contrast for a two-head gradiometer vs single-head detrending) is exactly what Stage D's 6-arm ablation ladder is re-measuring; that older comparison is a historical baseline now, not the current default model's result — see "Rig-v2 measured results" below.
 - **Interference Separation:** Incorporating synthetic external magnetic interference sources is necessary to evaluate the model's ability to distinguish true localized stress defects from benign external objects.
 - **Uncertainty Quantification:** Point predictions are insufficient for pipeline safety assessments. Predictive outputs must include calibrated uncertainty intervals to assess structural excavation risk.
 - **Temporal Analysis:** Fusing repeat surveys allows modeling of defect growth over time, enabling remaining life projections.
 
 ## Stretch (only if you have spare time)
-Real observatory background; a tiny ILI-vs-LSM "data fusion" mock; conformal prediction for the regression; a simple active-learning demo ("which segment should we dig next?").
+Real observatory background; a tiny ILI-vs-LSM "data fusion" mock; conformal prediction for the regression.
+
+(The dig-feedback active-learning loop — "which segment should we dig next, and what does that dig teach the model" — used to be listed here. It has been promoted to a headline stage, scenario 6 above: with no labelled real defect-type data, it is the actual path to ever training a supervised model on real ROSEN data, not a nice-to-have.)
 
 ## Insights & Additions from Literature (NeurIPS 2020)
 Based on *Mitra et al.*'s workshop paper on ML-based LSM anomaly detection (real experimental
@@ -183,20 +192,29 @@ and has been corrected.
     *   *Accuracy:* Lateral accuracy within 100 mm (0.33 ft); mapping accuracy ±5% of actual position.
     *   *Performance:* Probability of Detection (POD) >80% at a 95% confidence level, **explicitly stated "in the absence of magnetic interference."**
     *   *Output:* Identifies Stress Concentration Zones (SCZs) and reports stress magnitude in MPa or %SMYS.
-*   **Project alignment, precisely stated (not simplified):** these specs define the physical bounds the synthetic generator was built to respect (standoff distances, lateral resolution, noise regime). On the *measured* comparison: this project's real recall-at-dig-budget is ~64% (both the MAD baseline and IsolationForest), which sits below the flyer's 80% figure — but the comparison is **not apples-to-apples**, because this project's evaluation corpus *always* includes interference by design (it's the deliberate false-positive trap the whole project is built to stress-test), while the flyer's 80% figure explicitly excludes interference. The honest statement is "64% under a harder condition their own spec doesn't cover," not a direct miss against their number.
+*   **Project alignment, precisely stated (not simplified):** these specs define the physical bounds the synthetic generator was built to respect (standoff distances, lateral resolution, noise regime). On the *measured* comparison, two numbers now exist and must not be conflated: the **pre-Rig-v2** model measured recall-at-dig-budget at ~64% (both MAD and IsolationForest, at Stage 6 scale — see `docs/interview-reference.md` §10), while the **Rig-v2** scalar rig, re-measured by Stage D at demo scale (60 defects), measures **recall@budget 0.144 (MAD) / 0.139 (IsolationForest)** — see `LSM_PROJECT.md`'s own "Rig-v2 measured results" section above. Both sit below the flyer's 80% figure — the comparison is **not apples-to-apples** either way, because this project's evaluation corpus *always* includes interference by design (it's the deliberate false-positive trap the whole project is built to stress-test), while the flyer's 80% figure explicitly excludes interference. The Rig-v2 number is also not apples-to-apples against the pre-Rig-v2 64%: less information per scalar sample, a harder walked/GPS-dropout acquisition, and — not yet ruled out — Stage D has not run the 800×-scale rehearsal that would show whether 0.144 is itself depressed by small-sample variance the way early pre-Rig-v2 measurements were. The honest statement is "both numbers are under a harder condition their own spec doesn't cover, and the two project numbers are not yet directly comparable to each other," not a direct read of either against the flyer's 80%.
 
 ### 5. My own interview-prep synthesis (not a ROSEN document)
 Built for the 2nd-round interview (5 Aug 2026, Richard Föcke, Head of NDT Apps & Products) from
 the flyer plus general domain reasoning — notes to prepare with, not something ROSEN
 published. Its own 7-stage framing of the pipeline (**1** ingest & integrate → **2** register/align
 → **3** signal processing & features → **4** label from digs → **5** model → **6** calibrate +
-uncertainty → **7** serve heat map) maps closely onto this project's actual stage structure, with
-one honest, deliberate gap worth naming proactively rather than hoping it doesn't come up:
-*   **Stage 2, "register/align," has no counterpart here.** This project's synthetic generator
-    keeps every defect's chainage position exactly fixed across a line's repeat runs, so there is
-    no misalignment for a registration step to fix. Real LSM data (odometer slip, GPS drift
-    between runs) would need one — this demonstrator doesn't simulate that failure mode, so it
-    doesn't build the fix either.
+uncertainty → **7** serve heat map) maps closely onto this project's actual stage structure. One
+gap this synthesis originally named honestly (below) has since been **resolved** by the same
+developer interview that motivated the Rig-v2 rework — worth stating plainly, since it's a real,
+good update, not something to downplay:
+*   **Stage 2, "register/align" — RESOLVED, not a gap anymore.** This was true when written: the
+    old synthetic generator kept every defect's chainage position exactly fixed across a line's
+    repeat runs, so there was no misalignment for a registration step to fix. Rig-v2 (2026-08-06)
+    changed the underlying physics: the generator now models a human walker at irregular speed
+    with GPS that drops out, so raw data no longer carries a usable chainage column at all (see
+    "Project Context" above). That forced exactly the registration stage this synthesis flagged
+    as missing: `src/lsm/registration.py` (Stage B) reconstructs along-track position via GPS
+    dead-reckoning through dropout, then locks it to the recovered girth-weld lattice (welds
+    ~12 m apart, detected by periodicity rather than amplitude template, since each joint's extra
+    steel has arbitrary orientation) — the same registration concept this synthesis's own
+    7-stage framing named as stage 2. The gap closed because the physics forced the issue, not
+    because a feature was retrofitted for its own sake.
 *   **Its "recall/POD, PR-AUC, sizing error, calibrated uncertainty, cost-sensitive evaluation"
     metrics guidance is genuinely what this project already does** (Stage 3's recall-at-budget +
     false-dig-rate + PR-AUC-as-diagnostic, Stage 4's split-conformal calibration, both reported
@@ -205,3 +223,234 @@ one honest, deliberate gap worth naming proactively rather than hoping it doesn'
     this project's **Stage 8, a CLI stub, not built** — and forecasting is separately named as
     required experience in the actual job posting, which makes this the more load-bearing gap
     of the two, not just a nice-to-have.
+
+---
+
+## Rig-v2 measured results (Stage D, in progress)
+
+Rig-v2 (2026-08-06) rebuilt the generator, registration and feature layers around the real
+instrument (see "Project Context" above). Stage D re-ran the production training pipeline
+against the rebuilt scalar-rig corpus and re-measured every existing gate. The numbers below
+are real CLI output, captured directly — not estimates, not projected from the pre-Rig-v2
+model.
+
+**Do not read the historical numbers in `docs/interview-reference.md` (25.05 nT residual,
+3.02–3.21× contrast, the pre-Rig-v2 IsolationForest/MAD recall table, etc.) as current.** They
+were measured on the pre-Rig-v2 vector-head model and are kept there, explicitly labelled, as a
+historical/comparison baseline — specifically, the value Stage D's ablation arm 6 ("what would
+a hardware upgrade to full vector output buy") compares against.
+
+### Gate results (measured, Stage D re-run against the Rig-v2 scalar corpus)
+
+| Stage | Model | Baseline | Result | Gate | Verdict |
+|---|---|---|---|---|---|
+| 3 · Detect | IsolationForest | MAD | recall gap **−0.006** [−0.061, 0.056] | ≥0.15 at CI lower bound | **FAIL** |
+| 4 · Severity | LightGBM CQR | global-mean | coverage **0.689** [0.420, 0.945] | in [0.87, 0.93] | **FAIL** |
+| 5 · Classify | LightGBM multiclass | majority-class | SCC recall **0.042** [0.000, 0.125] | ≥0.90 at CI lower bound | **FAIL** |
+| 8 · Growth | pooled log-linear | no-growth | log-growth-rate **0.1398** (n=14 defects) | beats no-growth baseline | **PASS** |
+
+Raw output:
+
+```
+=== Stage 3: MAD baseline vs IsolationForest (grouped CV, out-of-fold) ===
+MAD baseline:            recall@budget 0.144 [0.067,0.233]  false-dig 0.827 [0.773,0.874] (interference 0.067 [0.027,0.113])  localisation 6.359m [4.358,8.228]  PR-AUC 0.043
+IsolationForest:          recall@budget 0.139 [0.067,0.222]  false-dig 0.833 [0.767,0.893] (interference 0.053 [0.020,0.080])  localisation 5.644m [4.013,7.484]  PR-AUC 0.037
+Recall gap (IF - MAD): -0.006 [-0.061, 0.056] -- Stage 3 gate (>=0.15 at CI lower bound): DOES NOT PASS
+(60 physical defects, 15 surveys evaluated)
+
+=== Stage 4: severity -- LightGBM CQR vs global-mean baseline ===
+Global-mean:  coverage@90% 0.589 [0.313,0.865]  MAE 29.087 [19.006,38.649]
+LightGBM CQR: coverage@90% 0.689 [0.420,0.945]  MAE 28.952 [20.548,38.243]
+Stage 4 gate (coverage in [0.87,0.93]): DOES NOT PASS
+(n=293 matched, severity-labelled indications)
+
+=== Stage 5: classification -- LightGBM multiclass vs majority-class baseline ===
+Majority baseline: interference recall 1.000, everything else 0.000
+LightGBM: SCC recall 0.042 [0.000,0.125]
+Stage 5 gate: DOES NOT PASS
+(n=376 matched, classifiable indications)
+
+=== Stage 8 (forecast): growth ===
+population log-growth-rate: 0.1398 (n=14 defects) -- matches ln(1.15)=0.1398 exactly
+gate (beats no-growth baseline): PASSED
+```
+
+### What these numbers say, honestly
+
+- **Stage 3 (detection) is numerically almost unchanged.** The IsolationForest-vs-MAD recall
+  gap is **−0.006 [−0.061, 0.056]** under Rig-v2 — the same value, to three decimal places, as
+  the pre-Rig-v2 measurement at the same 60-defect scale (also −0.006, see
+  `docs/interview-reference.md` §10 / §11). Stated plainly, as "unchanged," not as a causal
+  claim: the CI still straddles zero at this sample size, so this could be a small-sample
+  coincidence, or it could reflect something about MAD-vs-IsolationForest on this feature set
+  that doesn't actually depend on scalar vs. vector sensing. Telling those apart would need the
+  same kind of 800×-scale rehearsal that resolved the equivalent pre-Rig-v2 question (Stage 6:
+  −0.006 at 60 defects → −0.029 [−0.033, −0.026] at 9,600), which Stage D has not yet run.
+  Either way the gate verdict is unchanged: **FAIL**.
+- **Stage 4 (severity conformal coverage) genuinely regressed**, and this is reported as a real
+  finding, not softened: **0.920 [0.867, 0.967] PASS** pre-Rig-v2, at a comparable ~137-matched-
+  indication scale (`docs/interview-reference.md` §10/§14), versus **0.689 [0.420, 0.945] FAIL**
+  under Rig-v2 at n=293. A harder, GPS-dropout, irregular-stand-off scalar rig is producing
+  noisier severity calibration at this sample size. Whether more calibration data closes this
+  the way it closed the equivalent pre-Rig-v2 gap (0.727 → 0.920 → 0.896 as the corpus scaled
+  up) is an open question Stage D has not yet answered — flagged here rather than assumed.
+- **Stage 5 (SCC classification)** was already failing its gate pre-Rig-v2 (0.125 [0.000,
+  0.264], demo scale) and is still failing, slightly worse, under Rig-v2 (0.042 [0.000, 0.125]).
+  Consistent with the classification-demotion decision above: neither rig's synthetic
+  defect-type assignment carries a real physical signal for a classifier to separate on, so an
+  unchanged failing verdict is the expected result, not a new problem introduced by Rig-v2.
+- **Stage 8 (growth) still passes**, recovering `ln(1.15) = 0.1398` almost exactly — this is an
+  estimator-correctness check on a deterministic growth law, not a claim about real defect
+  physics, and it is unaffected by which rig generated the underlying residuals. An unchanged
+  pass here is expected, not newsworthy.
+
+### Ablation ladder — measured
+
+The 6-arm ablation ladder (middle head only → +first difference `g1` → +second difference `g2`
+→ +stand-off inversion → +weld-comb registration → full vector output as arm 6, the "what would
+a hardware upgrade buy" comparison) has now run end to end (`scripts/ablation_ladder.py`), on a
+real, non-toy corpus: 2 lines at the production per-line density (2000 m, 12 defects, 4
+interference, 3 runs — a deliberate scale-down from the full 5-line default purely for runtime,
+documented in the script's own module docstring; not yet re-run at 5 lines).
+
+| Arm | recall @ dig budget | false-dig rate | localisation error (cm) |
+|---|---|---|---|
+| 1 · mid-head only, GPS chainage | 0.194 [0.069, 0.333] | 0.767 [0.717, 0.833] | 617 [379, 859] |
+| 2 · + first difference `g1` | 0.208 [0.083, 0.375] | 0.750 [0.717, 0.783] | 425 [244, 632] |
+| 3 · + second difference `g2` | 0.194 [0.069, 0.361] | 0.767 [0.733, 0.800] | 306 [158, 490] |
+| 4 · + stand-off inversion/normalisation | 0.222 [0.083, 0.389] | 0.733 [0.700, 0.767] | 439 [235, 670] |
+| 5 · + weld-comb registration | 0.208 [0.069, 0.361] | 0.750 [0.717, 0.783] | 536 [321, 745] |
+| 6 · full 3-axis vector output (hardware) | **0.597 [0.430, 0.764]** | **0.272 [0.233, 0.311]** | **48 [40, 58]** |
+
+Arm-to-arm recall deltas (paired bootstrap over the SAME defect set for arms 1-5; arm 5→6 is
+**not** a paired comparison — `rig: vector` is a structurally different corpus/generator, so only
+CI overlap is meaningful there, not a paired delta):
+
+```
+1->2                         0.014 [-0.042, 0.083]
+2->3                         -0.014 [-0.056, 0.028]
+3->4                         0.028 [-0.028, 0.097]
+4->5                         -0.014 [-0.042, 0.000]
+1->5 (software total)        0.014 [-0.028, 0.056]
+5->6 (hardware headline)     software 0.208 [0.069, 0.361] vs hardware 0.597 [0.430, 0.764]
+                              -- independent CIs, point gap +0.389
+```
+
+**The honest, unflattering answer: none of arms 2-5 move recall by a statistically distinguishable
+amount over arm 1's floor.** Every arm-to-arm software delta's CI straddles zero, including the
+cumulative "1→5" software total (+0.014 [-0.028, 0.056]). This is the plan's own explicitly
+anticipated possible outcome ("If they do not [close most of the gap], that is a finding worth
+delivering too — do not tune it toward the convenient answer") — and it is what was measured, not
+what would make the best story. Arm 6 (full vector output, i.e. a genuine hardware upgrade) is
+where the real movement is: recall roughly triples (point estimate 0.597 vs 0.208), false-dig rate
+drops by nearly 3x (0.272 vs 0.750), and localisation error drops by roughly 10x (48 cm vs 536 cm)
+— consistent with the underlying physics (a vector head recovers the anomaly's DIRECTION, which a
+scalar total-field magnitude structurally cannot, per generate.py's own module docstring). Two
+honest caveats on that comparison: (1) it is not a paired delta (independent corpora, so read it
+as "the two CIs barely overlap on recall and don't overlap at all on false-dig/localisation," not
+as a formal hypothesis test), and (2) `rig: vector`'s reference arm has none of the scalar rig's
+walk/GPS-dropout/sensor-calibration-noise physics, so part of its localisation advantage in
+particular reflects a simpler, more idealised world, not purely "vector vs scalar sensing" in
+isolation — reported plainly rather than adjusted for, since disentangling the two would need a
+walked, GPS-dropout **vector**-rig generator that does not currently exist.
+
+**What arms 2-5 individually show, read across the point estimates (none reach significance, but
+the direction is at least worth stating and not over-claiming beyond):** `g1`/`g2` and stand-off
+normalisation each nudge the point estimate up or sideways by ~0.01-0.03 recall, and weld-comb
+registration (arm 5) does NOT improve recall over arm 4 at all (point estimate goes slightly
+*down*, -0.014) — registration's real, measured value is in localisation (see below), not
+detection recall, which matches its own design intent (Stage B answers "where," not "was there a
+defect there at all").
+
+### Localisation, in the unit that actually matters: centimetres
+
+`localisation_errors_cm` (new in `evaluate.py`/`train.py`) reports the SAME matched-indication
+distance the metre-unit number already used, just in the unit the ~1 cm dig-marking requirement
+is actually stated in. On the full production corpus (5 lines, the real gate re-run, not the
+ablation ladder's 2-line scale-down):
+
+```
+MAD baseline:      localisation error (cm)   635.9 [435.8, 822.8]
+IsolationForest:    localisation error (cm)   564.4 [401.3, 748.4]
+```
+
+**Not close to 1 cm.** Three separate, honestly-reported measurements chain together to explain
+why:
+- **Naive GPS-only dead reckoning** (no registration at all, `chainage_provisional_m` vs
+  `chainage_true_m`, measured directly against every production raw survey): per-survey median
+  error **~11.3 m** [8.7, 14.1].
+- **Registered chainage** (`registration.register_survey`, the real weld-comb-locked output):
+  per-survey median error **~1.40 m** [1.08, 1.69] — a genuine ~8x improvement over naive GPS,
+  consistent with (and slightly better than) `tests/test_registration.py`'s own demonstrated
+  2.7x-12.7x range on a shorter 500 m test survey (0.57-2.03 m median across seeds). Registration
+  is real and it works; it just does not reach cm-level at this survey length/weld density.
+- **Indication-level localisation error** (564-636 cm) is **larger than the pure registration
+  residual** (~140 cm) — meaning the dominant remaining error is downstream of registration:
+  which row a detector's peak lands on, and `MATCH_TOLERANCE_M`'s generous 15 m credit radius
+  (revisited and kept, see `train.py`'s own comment on `MATCH_TOLERANCE_M`: the champion bundle's
+  actual matched-defect distances top out at 12.65 m with nothing observed between there and the
+  15 m cutoff, so the tolerance is not currently the thing inflating this number). Registration
+  buys real, measured accuracy; it is not yet the bottleneck standing between this corpus and a
+  cm-level dig mark — detection/clustering precision is.
+
+### POD vs defect-moment angle to B_hat0
+
+`scripts/pod_by_angle.py` measures the module docstring's central claim directly (a defect whose
+magnetic moment is near-perpendicular to `B_hat0 = unit(background_nT)` is nearly invisible to a
+scalar rig) rather than leaving it as prose, on 120 physical defects (10 lines, 3 runs each,
+config/base.yaml density):
+
+```
+Spearman correlation(angle_cos, detected_fraction)   = +0.162 (p=0.078)
+Spearman correlation(angle_cos, mean_peak_z)         = +0.163 (p=0.075)
+Spearman correlation(angle_cos, peak_z_per_severity) = +0.183 (p=0.045)  <- severity-normalised
+
+Detection rate by angle bin:            near-perpendicular 0.250 [0.13,0.38] | mid 0.217 [0.12,0.33] | near-parallel 0.392 [0.26,0.53]
+Severity-normalised peak SNR by bin:    near-perpendicular 0.078 [0.06,0.11] | mid 0.069 [0.05,0.09] | near-parallel 0.092 [0.07,0.11]
+```
+
+A real, positive, population-level relationship exists between `|cos(angle to B_hat0)|` and
+detectability — reaching conventional significance (p=0.045) once severity (a 4x confound, 20-80
+range) is normalised out — and the near-parallel bin is clearly the most detectable of the three.
+It is **not** a clean monotonic relationship (the "mid" bin is slightly, not significantly, lower
+than "near-perpendicular" in both views) — expected, not a bug: unlike
+`tests/test_generate.py`'s own null-anomaly unit test (which places the observation point exactly
+along the moment's own axis to get an EXACT null), a real along-track survey pass sweeps the
+sensor-to-source direction through many angles as the walker goes by, diluting the idealised
+single-geometry relationship into a real-but-noisy population trend, not a deterministic one. The
+physics claim is confirmed at population scale, honestly reported with its actual noise, not
+overstated.
+
+---
+
+## Open questions for ROSEN (Rig-v2 assumptions)
+
+The developer interview (5 Aug 2026, Richard Föcke) supplied the real rig description, but a
+handful of the numbers given admit more than one honest reading, and Rig-v2 had to pick one to
+build against without being able to ask ROSEN directly. Written up here with the reasoning
+already used, not as vague hedges:
+
+- **Is the ~100 µT sensor figure the ADC's full-scale range, or a noise/resolution figure?**
+  The code assumes **full-scale range** (`SensorConfig.full_scale_ut`, `src/lsm/config.py`) and
+  models 24-bit ADC quantization over it — Earth's field is ~50 µT, so ±100 µT is a standard
+  fluxgate range, and this is almost certainly what was meant. If it were actually a noise floor
+  instead, the instrument would be unusable for 25 nT anomalies — implausible, but worth
+  confirming rather than assuming.
+- **Is the ~1 cm figure the dig-marking accuracy target, or the along-track sample spacing?**
+  Both are modelled (`registration.py` exists to hit the first; 120 Hz at ~1.2 m/s gives the
+  second incidentally), but only the accuracy-target reading drove the registration design
+  (Stage B, weld-comb detection locking GPS dead-reckoning to a centimetre-level lattice).
+- **Is the rod vertical, or across-track (horizontal)?** Assumed **vertical**
+  (`ArrayConfig.orientation`, the code's Stage-A "Decisions taken"). Vertical gives stand-off
+  inversion and a genuine curvature term (`g2`); horizontal would trade that for lateral-offset
+  estimation instead. The code deliberately raises `NotImplementedError` rather than silently
+  guessing if `orientation != "vertical"` is ever set — a deliberate choice to surface this as an
+  open question rather than paper over it.
+- **Are the three heads factory-matched or field-calibrated?** This is the single largest lever
+  on gradiometric performance: `SensorConfig.gain_sigma` models a 0.2% per-head gain mismatch,
+  which leaves ~100 nT of uncancelled common-mode signal against a ~25 nT anomaly — verified
+  directly in
+  `tests/test_generate.py::test_gain_mismatch_leaves_the_predicted_common_mode_residual`.
+- **Is walk speed logged via an odometer/IMU, or is dead reckoning
+  (`src/lsm/registration.py`) truly GPS-only?** An odometer would make Stage B's registration
+  substantially more accurate than pure GPS dead-reckoning through dropout.
