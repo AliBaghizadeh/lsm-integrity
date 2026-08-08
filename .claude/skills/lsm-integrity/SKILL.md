@@ -186,11 +186,18 @@ code path, both times. That symmetry is the point.
 
 ## Working conventions
 
-- Training runs in the `ml_gpu` conda env: **Python 3.12.13, dagster 1.13.15, mlflow 3.13.0,
-  lightgbm 4.6.0**. The local venv is Python 3.13 — that mismatch is a real skew risk, so
-  pin one Python version across training, local and the app runtime, and make
-  `bundle.load()` **hard-fail** on a LightGBM/numpy/sklearn version mismatch rather than
-  just recording versions.
+- Training nominally runs in the `ml_gpu` conda env: **Python 3.12.13, dagster 1.13.15,
+  mlflow 3.13.0, lightgbm 4.6.0**. **On this machine, `ml_gpu` has a broken numpy install**
+  (a bare `b @ b` matmul on a 100×100 array crashes the process outright — confirmed
+  independent of any project code, likely an MKL/OpenBLAS DLL collision, not fixed). **Use
+  `C:\Users\aliba\.conda\envs\llm_gpu2\python.exe` instead** for everything on this project —
+  lightgbm/mlflow/dagster were `pip install`ed into it directly (this downgraded pandas
+  3.0.3→2.3.3 as a side effect, accepted rather than fought — mlflow's own dependency pin
+  required it). State this explicitly to any fresh agent/session working on this repo; it has
+  no way to know otherwise and will waste time chasing a phantom bug if it tries `ml_gpu`
+  first. The local venv is Python 3.13 — that mismatch is a real skew risk, so pin one Python
+  version across training, local and the app runtime, and make `bundle.load()` **hard-fail**
+  on a LightGBM/numpy/sklearn version mismatch rather than just recording versions.
 - No `make` on this machine — the Typer CLI is the entry point; `Makefile` targets are thin
   wrappers only.
 - **LightGBM throughout** — industry default, materially faster on the Stage-6 row counts,

@@ -17,8 +17,10 @@ is **built** here versus **designed** here.
 **Settled stack:** LightGBM for all models; **Dagster** for orchestration; MLflow 3 for
 tracking and the registry (**aliases, not the removed stages**); SQLite for metadata +
 Parquet for bulk signal; S3 for artifacts; GitHub Actions for CI/CD; Streamlit on Hugging
-Face Spaces for the demo. Training env: `ml_gpu` (Python 3.12.13, dagster 1.13.15,
-mlflow 3.13.0, lightgbm 4.6.0).
+Face Spaces for the demo. Training env: nominally `ml_gpu` (Python 3.12.13, dagster 1.13.15,
+mlflow 3.13.0, lightgbm 4.6.0) — **but `ml_gpu` has a broken numpy install on this machine
+(confirmed, unrelated to project code); use `C:\Users\aliba\.conda\envs\llm_gpu2\python.exe`
+instead for everything, see `SKILL.md`'s "Working conventions" for the full note.**
 
 **Design centre:** the primary workload is **backfill over an existing archive**, not
 steady-state scoring. Anywhere the plan looks over-engineered for 12,000 rows, that is why.
@@ -29,7 +31,7 @@ Use the cut lines.
 
 ---
 
-## Current status (as of 2026-07-30)
+## Current status (as of 2026-08-08)
 
 | Stage | Status |
 |---|---|
@@ -37,66 +39,61 @@ Use the cut lines.
 | 1 — Ingest and validation | Done |
 | 1.5 — Orchestration and backfill | Done |
 | 2 — Features, gradiometer | Done |
-| 2.5 — Data fidelity | Done, all 3 items |
-| 2.75 — EDA on the feature store | Done, findings acted on and re-run for real — see below |
-| 3 — Detection (MAD vs IsolationForest) | Built, **recall gap closed to -0.006 (was -0.056) after the EDA fix — gate still does not pass on the 0.15 margin, but interference-rejection is now a significant IsolationForest win** |
-| 4 — Severity (LightGBM CQR + conformal) | Built, **run for real at 5x scale — gate PASSES** |
-| 4.5 — Demo app | Local app built and headlessly verified (2026-07-30) — HF Spaces deploy deferred, see below |
-| 5 — Classification and risk ranking | Not started |
-| 6 — Scale rehearsal | Not started |
-| 7 — CI/CD and release gate | Partially built (`ci.yml` + `train.yml`; `deploy.yml`/S3/rollback deferred, see Stage 7) |
-| 8 — Growth, remaining life, monitoring | Not started |
+| 2.5 — Data fidelity | Done, all 3 items (2026-07-29) |
+| 2.75 — EDA on the feature store | Done, findings acted on and re-run for real (2026-07-30) |
+| 3 — Detection (MAD vs IsolationForest) | Done. Pre-Rig-v2: recall gap closed to -0.006 after the EDA fix, confirmed at 800× scale (-0.029 [-0.033,-0.026], still a real small negative effect). **Re-measured under Rig-v2 (2026-08-06): -0.006 [-0.061, 0.056], numerically unchanged — gate still does not pass the 0.15 margin.** |
+| 4 — Severity (LightGBM CQR + conformal) | Done pre-Rig-v2 (gate PASSED, coverage 0.920). **Re-measured under Rig-v2: coverage 0.689 — gate now FAILS, a real reported regression on the harder scalar-rig acquisition, not smoothed over.** |
+| 4.5 — Demo app | Built, headlessly verified, and iterated through several real-use feedback rounds (last: 2026-08-07/08 — Rig-v2 row-count/GPS-dropout fixes, see below). HF Spaces deploy still deferred, see next-steps. |
+| 5 — Classification and risk ranking | Done (2026-07-30). Demoted to a synthetic-only capability demo after the ROSEN developer interview confirmed no real labelled defect-type data exists — kept for the MLOps discipline around it (calibration, SHAP physics-consistency gate), not as a real-world claim. Gate did not pass pre-Rig-v2 (SCC recall 0.125) or under Rig-v2 (0.042) — expected, not new. |
+| 6 — Scale rehearsal | Done (2026-07-31), pre-Rig-v2, ~9.6M rows. **Rig-v2 has not yet re-run this at scale** — see next-steps. |
+| 7 — CI/CD and release gate | `ci.yml` + `train.yml` built and green/red as designed; `deploy.yml`/S3/rollback still deferred pending a cloud-account decision (unchanged since 2026-07-30). |
+| 8 — Growth, remaining life, monitoring | Done (2026-07-31). Gate passes pre- and post-Rig-v2 (recovers `ln(1.15)=0.1398` either way) — an estimator-correctness check, not affected by which rig produced the residuals. |
+| **Rig-v2** — rebuild around the real ROSEN instrument | **Done (2026-08-06/07).** A 2nd-round developer interview revealed the real rig: 3 scalar total-field heads (never x/y/z), human walker, GPS dropout — not the single 3-axis vector head this project originally assumed. Rebuilt the generator/schema (Stage A), added a new registration stage (Stage B, `src/lsm/registration.py`), rewrote features for per-head g1/g2 differences (Stage C), re-measured every gate honestly and built a 6-arm ablation ladder answering "software or hardware?" (Stage D — **software: +0.014 [-0.028,0.056], indistinguishable from zero; hardware: recall roughly triples**), and updated every doc (Stage E). Full detail: `LSM_PROJECT.md`'s "Rig-v2 measured results" section. |
+| **Post-Rig-v2 app fixes** | Done (2026-08-07/08). Rig-v2 changed a raw survey from ~4,000 to ~200,000 rows and introduced real GPS dropout — the app wasn't updated for either, causing two real bugs: the map rendered broken/random lines (NaN GPS coordinates fed straight to pydeck) and the app was very slow (full-resolution signal charts melted into Vega-Lite on every rerun). Both fixed; `docs/app-walkthrough.md` and the app's own "How it works" tab updated to include the new Register stage and current numbers. |
 
-170/170 tests pass, ruff + mypy clean. Git repo: 13 commits, clean working tree, **not yet
-pushed anywhere** (no remote configured).
+Stages 0–2 have no individually-recorded completion date: this repo's first commit
+(`d34084e`, 2026-07-30) already bundled Stages 0–4 together as an initial import, so no
+finer-grained per-stage date exists in git history for the earliest stages. Everything from
+Stage 2.5 onward has a real recorded date, either from this table's own prior entries or
+from `git log`.
 
-**What's needed next, roughly in order of what unblocks the most:**
+311/311 tests pass, ruff + mypy clean. GitHub (`AliBaghizadeh/lsm-integrity`, private) is a
+**curated public snapshot**, not a mirror of this local repo's full history — internal
+planning/interview docs (`PLAN.md`, `LSM_PROJECT.md`, `docs/`, `.claude/`, `reports/`) are
+deliberately excluded from every push, same convention as the very first push. See this
+project's Claude Code memory for the exact exclude list and the rebuild procedure; local
+`master` does not track `origin/main` on purpose, so a plain `git push` can't leak the
+private history.
 
-1. **Stage 3's negative result — now a well-understood, well-improved, still-not-passing
-   result, not a mystery.** Three real `lsm train` runs tell one consistent story:
-   - 12-defect corpus: recall gap -0.056, CI [-0.167, 0.056] — too wide to tell if the
-     effect was real.
-   - 5-line/~60-defect corpus (`n_lines` 1→5, more independent lines rather than more
-     defects crammed onto one line, which degraded a different gate — see `generate.py`):
-     recall gap **-0.028**, CI **[-0.083, 0.022]** — about half the width, still a small
-     real effect, root cause not yet attributable.
-   - Same 5-line corpus, after Stage 2.75's EDA-driven fix (dropped 2 exact-duplicate
-     features, `feature_version` 1→2; gave IsolationForest an `emphasis_repeats` knob to
-     stop the redundant amplitude block from drowning out the 3 features — `w25m_kurt`
-     above all — that actually separate defect from interference): recall gap **-0.006**,
-     CI **[-0.067, 0.050]** — recall is now statistically indistinguishable between the two
-     models. More importantly, the interference-rejection mechanism **reversed and became
-     significant**: MAD now wastes significantly more of the dig budget on interference than
-     IsolationForest does (interference-dig-fraction gap CI [0.007, 0.058], excludes zero) —
-     `train.py`'s own attribution check confirms it, the opposite of the pattern before the
-     fix. **Gate still does not pass** (needs a ≥0.15 recall-gap margin; the honest result is
-     parity, not an IsolationForest win) — but "feature engineering informed by real EDA
-     measurably improved interference rejection, confirmed by a significant CI, even though
-     it didn't clear an arbitrary recall-margin bar" is a strong, reportable interview answer
-     in its own right. Full detail in Stage 2.75 and Stage 3 below.
-   - **Bonus, same 5-line corpus:** Stage 4's severity gate PASSES (coverage 0.905→0.920
-     across the two re-runs, both inside [0.87, 0.93], up from 0.727 on the 12-defect
-     corpus) — the same extra data that sharpened Stage 3 gave conformal calibration enough
-     held-out points to hit its target band.
-2. **`README.md` — done (2026-07-30).** Quickstart, the honest Stage 3/4 result summary,
-   repo layout, testing instructions.
-3. **`LICENSE` — done (2026-07-30).** MIT.
-4. **Push to GitHub.** Repo is local-only. Needs a GitHub repo created and a remote added —
-   your call on timing, and I won't do this without you explicitly asking, same as any
-   other publish-facing action.
-5. **Stage 4.5 (demo app) — the local app is built and headlessly verified; HF Spaces
-   deploy is what's left, and it's blocked on item 6.** `streamlit run app/demo_app.py` (or
-   `lsm serve`) launches it directly; see the Stage 4.5 section below for the full writeup,
-   including two real bugs headless testing caught before Ali ever had to.
-6. **A cloud-account decision for the rest of Stage 7 (and for Stage 4.5's HF Spaces
-   deploy).** S3 + GitHub OIDC are designed but not built (no cloud account exists today,
-   `storage.s3.enabled: false` throughout) — decide whether this demonstrator stays
-   local-only (defensible on its own terms, and now includes a fully working local demo) or
-   is worth standing up real infrastructure for.
-7. **Stages 5, 6, 8** — classification/risk ranking, a full scale rehearsal (the ~60-defect,
-   5-line corpus above is a step in that direction, not the Stage 6 rehearsal itself — both
-   Stage 3 and 4's CIs are still wide enough to be worth narrowing further), and
-   growth/remaining-life/monitoring. Not started.
+**What's actually left open, roughly in order of what unblocks the most:**
+
+1. **A cloud-account decision** — still the single blocker on the rest of Stage 7 (S3 +
+   GitHub OIDC, designed in `docs/production-architecture.md` but not built,
+   `storage.s3.enabled: false` throughout) and on Stage 4.5's Hugging Face Spaces deploy.
+   Unchanged since 2026-07-30: decide whether this demonstrator stays local-only (defensible
+   on its own terms, has a fully working local demo) or is worth standing up real
+   infrastructure for.
+2. **Rig-v2's own explicitly-flagged not-yet-run items** (all stated honestly in
+   `LSM_PROJECT.md`, not hidden):
+   - The 800×-scale rehearsal that resolved the pre-Rig-v2 Stage 3 "is this gap real"
+     question has not been re-run under Rig-v2 — the current -0.006 [-0.061, 0.056] result
+     is demo-scale only, so whether it's a stable small effect or sample-size noise is
+     still open.
+   - The 6-arm ablation ladder ran at a 2-line scale-down (`ABLATION_N_LINES`) for runtime,
+     not the full 5-line default — easy to re-run larger.
+   - Whether more calibration data closes Stage 4's Rig-v2 severity-coverage regression
+     (0.920→0.689) the way it closed the equivalent pre-Rig-v2 gap is unanswered.
+**Historical negative result that motivated Stage 3's design (kept for context):** three
+`lsm train` runs pre-Rig-v2 told one consistent story before the current -0.006 result —
+12-defect corpus recall gap -0.056 CI [-0.167, 0.056] (too wide to trust), 5-line/~60-defect
+corpus -0.028 CI [-0.083, 0.022] (about half the width, still real), then after Stage 2.75's
+EDA-driven fix (dropped 2 duplicate features, gave IsolationForest an `emphasis_repeats`
+knob) -0.006 CI [-0.067, 0.050] with the interference-rejection mechanism reversing and
+becoming significant (CI [0.007, 0.058], excludes zero) — the gate still didn't pass, but
+"EDA-informed feature engineering measurably improved interference rejection, confirmed by a
+significant CI, even without clearing an arbitrary recall-margin bar" was a strong result in
+its own right, and remains the mechanism story behind the now-Rig-v2-re-measured number
+above.
 
 ---
 
@@ -145,7 +142,7 @@ bootstrap CI, not as a caveat in prose.
 
 ---
 
-## Stage 0 — Skeleton and reproducibility  *(~half a day)*
+## Stage 0 — Skeleton and reproducibility  *(built, bundled into the initial commit)*
 
 Make the repo runnable by someone else, on one command, before there is anything to run.
 
@@ -179,7 +176,7 @@ same code config hashes identically under `dev` and `prod`.
 
 ---
 
-## Stage 1 — Ingest and validation  *(~1 day)* — do this first and make it visible
+## Stage 1 — Ingest and validation  *(built, bundled into the initial commit)* — do this first and make it visible
 
 The stage that signals real experience. It comes before any modelling.
 
@@ -216,7 +213,7 @@ and lands in quarantine. Clean data passes with zero `fail`.
 
 ---
 
-## Stage 1.5 — Orchestration and backfill  *(~1 day)* — the biggest single gap to close
+## Stage 1.5 — Orchestration and backfill  *(built, bundled into the initial commit)* — the biggest single gap to close
 
 Eight CLI subcommands run in order by a human is a *script*, not a pipeline. The primary
 workload here is backfill over an archive, and backfill is exactly what needs a task graph.
@@ -246,7 +243,7 @@ fails at 3am?"
 
 ---
 
-## Stage 2 — Features, and the gradiometer upgrade  *(~1 day)*
+## Stage 2 — Features, and the gradiometer upgrade  *(built, bundled into the initial commit; the two-head gradiometer story here is superseded by Rig-v2's three-head g1/g2 differences — see `LSM_PROJECT.md`'s "Rig-v2 measured results")*
 
 - Extend `generate.py` with `gradiometer.enabled` — a second sensor head at
   `baseline_m` above the first, filling `bx2/by2/bz2`. Same dipole model, different
@@ -673,7 +670,7 @@ which does not beat baseline — see Stage 3's gate result above.
 
 ---
 
-## Stage 4.5 — The demo app *(a consumer, not the serving layer)*  *(~1 day)*
+## Stage 4.5 — The demo app *(a consumer, not the serving layer)*  *(built 2026-07-30, iterated through multiple feedback rounds through 2026-08-08 — see "Current status" above)*
 
 **The serving layer is the batch scoring job** — the `indications` asset writing to the
 `indication` table and `indications.geojson`, with a versioned output schema, a consumer
@@ -802,7 +799,7 @@ buried anomaly was genuinely there rather than just asserted, the app never expl
 
 ---
 
-## Stage 5 — Classification and risk ranking  *(~1 day)*
+## Stage 5 — Classification and risk ranking  *(built 2026-07-30; demoted to a synthetic-only capability demo post-Rig-v2, see "Current status" above)*
 
 - LightGBM multiclass over indications: scc / weld / dent / corrosion / **interference** as
   an explicit class. Isotonic calibration, reliability diagram, Brier score.
@@ -871,7 +868,7 @@ reliability diagram, how often the degenerate-calibration fallback fires) still 
 
 ---
 
-## Stage 6 — Scale rehearsal  *(~1 day)* — the answer to "millions of rows"
+## Stage 6 — Scale rehearsal  *(built 2026-07-31, pre-Rig-v2 vector rig; not yet re-run under Rig-v2, see "Current status" above)* — the answer to "millions of rows"
 
 The single most valuable stage for their stated situation, and the one most people skip.
 
@@ -1019,7 +1016,7 @@ between.
 
 ---
 
-## Stage 8 — Growth, remaining life, and monitoring  *(~1 day)*
+## Stage 8 — Growth, remaining life, and monitoring  *(built 2026-07-31)*
 
 - Match indications across surveys by chainage (this is a small alignment problem in
   miniature — record the match residual).

@@ -183,33 +183,38 @@ _STAGES = [
     ("2. Validate", "lsm.validate",
      ("14 data-quality checks (below). A hard failure quarantines the survey and "
      "stops the pipeline here -- see tab 6 for what that looks like for real.")),
-    ("3. Features", "lsm.features",
-     ("Per-survey detrend, along-track/vertical gradient, sliding-window stats, "
-     "peak-shape descriptors (FWHM, asymmetry, decay exponent).")),
+    ("3. Register", "lsm.registration",
+     ("GPS dead-reckoning + girth-weld-comb detection -> chainage_m. Raw no longer "
+     "carries a usable position column -- the walker's speed is irregular and GPS "
+     "drops out, so along-track position has to be reconstructed, not read off.")),
+    ("4. Features", "lsm.features",
+     ("Per-survey detrend, per-head first/second difference (g1/g2), stand-off "
+     "inversion, sliding-window stats, peak-shape descriptors (FWHM, asymmetry, "
+     "decay exponent).")),
 ]
 _STAGES_2 = [
-    ("4. Detect", "lsm.models.anomaly / lsm.indications",
+    ("5. Detect", "lsm.models.anomaly / lsm.indications",
      ("MAD baseline or IsolationForest scores every row; contiguous flagged rows "
      "cluster into one indication.")),
-    ("5. Severity + Classify", "lsm.models.severity / lsm.models.classify",
+    ("6. Severity + Classify", "lsm.models.severity / lsm.models.classify",
      ("Two independent models score the SAME indication in parallel: a calibrated "
      "5/50/95% severity interval, and a defect-type class + confidence.")),
-    ("6. Risk rank", "lsm.indications.attach_classification",
+    ("7. Risk rank", "lsm.indications.attach_classification",
      ("risk_score = calibrated P(defect) x severity x a stated consequence proxy. "
-     "Tab 4's table is sorted by this.")),
+     "Tab 5's table is sorted by this.")),
 ]
 
 _DQ_CHECKS = [
     ("schema", "Column presence/dtypes/units/enum values against the declared data contract."),
-    ("range", "bx/by/bz stay inside the sensor's physical field range."),
-    ("saturation", "No stuck sensor / ADC rail -- N+ consecutive identical raw values on any axis."),
+    ("range", "b_lo/mid/hi (the rod's three scalar heads) each stay inside the sensor's physical field range."),
+    ("saturation", "No stuck sensor / ADC rail -- N+ consecutive identical raw values on any head."),
     ("sample_idx_monotonic", "sample_idx strictly increasing, no reordering."),
     ("sample_idx_gap", "No missing samples beyond the allowed spacing tolerance."),
     ("duplicate_sample_idx", "No repeated sample_idx within one survey."),
     ("duplicate_content", "This survey's content hash doesn't already exist under a different run -- a re-export."),
     ("survey_overlap", "Cross-correlation against other accepted runs of the same line -- an overlapping re-run neither hash catches."),
-    ("gps_jump", "No physically-impossible lat/lon jump between consecutive samples."),
-    ("gps_chainage_consistency", "GPS-derived distance agrees with the recorded chainage_m."),
+    ("gps_jump", "No physically-impossible lat/lon jump between consecutive locked GPS fixes."),
+    ("gps_chainage_consistency", "GPS-derived path length over locked stretches agrees with the true along-track distance over those same rows."),
     ("noise_floor", "Raw-signal noise sits within the expected sensor-floor band."),
     ("background_regime", "This run's background statistics haven't shifted from the line's prior accepted runs."),
     ("interference_density", "The fraction of interference-like readings is within the expected range."),
@@ -217,14 +222,14 @@ _DQ_CHECKS = [
 ]
 
 with overview:
-    st.subheader("One survey, six stages")
+    st.subheader("One survey, seven stages")
     st.caption(
         "Every scenario below runs this same path, live or precomputed -- this tab is a map "
         "of it, not a beat of its own. A hard validation failure is the one place the path "
         "stops early (tab 6)."
     )
 
-    row1 = st.columns([3, 1, 3, 1, 3])
+    row1 = st.columns([3, 1, 3, 1, 3, 1, 3])
     for i, (name, module, desc) in enumerate(_STAGES):
         with row1[i * 2], st.container(border=True):
             st.markdown(f"**{name}**")
@@ -233,6 +238,8 @@ with overview:
     with row1[1]:
         st.markdown("### →")
     with row1[3]:
+        st.markdown("### →")
+    with row1[5]:
         st.markdown("### →")
 
     st.markdown("**↓**")
