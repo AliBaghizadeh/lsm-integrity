@@ -1,5 +1,5 @@
-# ROSEN brand accent (matches rosen-group.com's #1395D9) -- overrides
-# Streamlit's default red (#FF4B4B) for selected segmented_control options,
-# primary buttons, sliders, and every other widget that uses primaryColor.
+# Custom accent colour -- overrides Streamlit's default red (#FF4B4B) for
+# selected segmented_control options, primary buttons, sliders, and every
+# other widget that uses primaryColor.
 [theme]
 primaryColor = "#1395D9"
