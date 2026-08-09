@@ -141,9 +141,15 @@ def test_build_features_defect_count_survives_into_generated_labels(cfg, tmp_pat
 def test_build_features_raises_loudly_when_too_dense_to_place(cfg):
     """Too many features for the line length must fail loudly, not silently
     corrupt spacing by giving up the constraint.
+
+    n_defects=300 alone needs >= 300*(2*label_window_scale*depth_m + margin)
+    = 300*8 = 2400 m of minimum spacing on a line with ~1900 m usable after
+    edge margins -- mathematically infeasible regardless of RNG trajectory,
+    deliberately not a knife-edge count that depends on exactly how many
+    retries a specific seed happens to burn before giving up.
     """
-    cfg.base.data.n_defects = 80
-    cfg.base.data.n_interference = 20
+    cfg.base.data.n_defects = 300
+    cfg.base.data.n_interference = 0
     rng = np.random.default_rng(cfg.seed)
     with pytest.raises(RuntimeError):
         _build_features(cfg.base.data, rng)

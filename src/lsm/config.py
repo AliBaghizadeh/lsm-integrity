@@ -178,7 +178,14 @@ class DataConfig(BaseModel):
     noise_nT: float
     n_defects: int
     n_interference: int
-    interference_moment_scale: float = 1.0
+    # A range, not a fixed constant -- the developer team's follow-up point:
+    # real external interference is "a bit weaker in most cases" than a
+    # single uniform 50x figure implies, and its strength varies source to
+    # source independently of distance (distance/geometry is already
+    # captured by y_off_m's own 3-8 m draw in _build_features -- this scales
+    # the MOMENT on top of that, not instead of it). Drawn once per
+    # interference source in _build_features, not once per survey.
+    interference_moment_scale_range: tuple[float, float] = (30.0, 50.0)
     label_window_scale: float
     n_runs: int
     growth: float

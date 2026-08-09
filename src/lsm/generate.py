@@ -218,12 +218,33 @@ def _sample_spaced_chainage(
     )
 
 
+# Per-type severity (dipole moment magnitude) ranges -- developer-team
+# follow-up feedback: the team does not trust a SHAPE distinction between
+# defect types (a point-dipole model has no principled way to fake one
+# honestly, since footprint width is governed by depth/offset, and every
+# defect sits at y_off_m=0), but each type DOES plausibly carry a different
+# INTENSITY. Physics-inspired reasoning, not calibrated to real ROSEN data:
+# dent = a sharp mechanical stress concentration, the strongest signature;
+# SCC = fine, branching cracks, more diffuse, weakest; corrosion = gradual
+# metal loss, moderate; weld (workmanship anomaly at a joint, distinct from
+# the periodic girth-weld TRAIN in _build_welds) = the best-controlled
+# class per train.py's own consequence-proxy comment, so the smallest/most
+# consistent range. Replaces the old single shared 20-80 range every type
+# drew from, which carried zero physical signal by construction.
+DEFECT_SEVERITY_RANGES: dict[str, tuple[float, float]] = {
+    "dent": (40.0, 80.0),
+    "corrosion": (20.0, 70.0),
+    "scc": (15.0, 50.0),
+    "weld": (15.0, 45.0),
+}
+
+
 def _build_features(cfg: DataConfig, rng: np.random.Generator) -> list[dict]:
     """Defects and interference sources -- unchanged by Rig-v2. Girth welds are
     a structurally different (periodic, not rejection-sampled) source train,
     built separately by `_build_welds`.
     """
-    types = ["scc", "weld", "dent", "corrosion"]
+    types = list(DEFECT_SEVERITY_RANGES)
     feats = []
     placed: list[tuple[float, float]] = []  # (chainage_m, half_width_m), for spacing checks
     # y_off_m=0 for every defect, so r_eff=depth_m and the half-width is the
@@ -233,12 +254,13 @@ def _build_features(cfg: DataConfig, rng: np.random.Generator) -> list[dict]:
     for _ in range(cfg.n_defects):
         chainage = _sample_spaced_chainage(rng, 50, cfg.length_m - 50, defect_half_width, placed)
         placed.append((chainage, defect_half_width))
+        defect_type = rng.choice(types)
         feats.append(
             {
                 "chainage_m": chainage,
                 "y_off_m": 0.0,
-                "type": rng.choice(types),
-                "severity": rng.uniform(20, 80),
+                "type": defect_type,
+                "severity": rng.uniform(*DEFECT_SEVERITY_RANGES[defect_type]),
                 "orientation": rng.normal(0, 1, 3),
                 "is_defect": True,
             }
@@ -250,19 +272,24 @@ def _build_features(cfg: DataConfig, rng: np.random.Generator) -> list[dict]:
         # scale factor 1/r^3 from 3-8 m lateral puts every interference source
         # below the ~8 nT noise floor (a source at 5.5 m lateral peaks at 0.9 nT
         # for a defect-scale moment), and the "designed false-positive trap"
-        # traps nothing. Scaled this way it arrives at DEFECT-COMPARABLE
+        # traps nothing. Scaled this way it arrives at roughly DEFECT-COMPARABLE
         # amplitude but visibly BROADER, which is the discrimination the whole
         # project turns on: shape separates it, amplitude does not.
+        # The scale itself is drawn per-source, not fixed -- developer-team
+        # follow-up: real interference runs "a bit weaker in most cases," and
+        # its strength varies independently of distance (y_off_m's own 3-8 m
+        # draw already covers distance; this varies the moment on top of it).
         y_off_m = rng.uniform(3, 8) * rng.choice([-1, 1])
         half_width = cfg.label_window_scale * float(np.hypot(cfg.depth_m, y_off_m))
         chainage = _sample_spaced_chainage(rng, 50, cfg.length_m - 50, half_width, placed)
         placed.append((chainage, half_width))
+        moment_scale = rng.uniform(*cfg.interference_moment_scale_range)
         feats.append(
             {
                 "chainage_m": chainage,
                 "y_off_m": y_off_m,
                 "type": "interference",
-                "severity": rng.uniform(30, 90) * cfg.interference_moment_scale,
+                "severity": rng.uniform(30, 90) * moment_scale,
                 "orientation": rng.normal(0, 1, 3),
                 "is_defect": False,
             }

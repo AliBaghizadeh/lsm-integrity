@@ -28,9 +28,15 @@ data:
   # Interference sources are large steel objects, not defects. Their moment is
   # scaled so that at a typical 3-8 m lateral offset they arrive at roughly
   # defect-comparable amplitude -- (5.5/1.5)^3 ~ 50 for the 1/r^3 falloff. Set
-  # this to 1.0 and every interference source drops below the noise floor, which
-  # makes the false-positive trap invisible and its precision metric vacuous.
-  interference_moment_scale: 50.0
+  # this to [1.0, 1.0] and every interference source drops below the noise
+  # floor, which makes the false-positive trap invisible and its precision
+  # metric vacuous.
+  # Drawn per-source from this RANGE, not a fixed constant -- the developer
+  # team's follow-up: real interference is "a bit weaker in most cases," and
+  # its strength varies source to source independently of distance (distance
+  # is already captured by y_off_m's own 3-8 m draw; this scales the moment
+  # on top of that).
+  interference_moment_scale_range: [30.0, 50.0]
   # Stage 2.5 item 2: half-width = label_window_scale * r_eff, where
   # r_eff = sqrt(depth_m^2 + y_off_m^2) is the dipole source-to-sensor distance --
   # the same physics that sets field amplitude (1/r^3) also sets the anomaly's

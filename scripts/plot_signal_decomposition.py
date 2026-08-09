@@ -107,14 +107,26 @@ def build(cfg, seed: int) -> dict:
         (defect_sources if f["is_defect"] else interference_sources).append((src, moment))
 
     B_background = B_bg.copy()
-    B_plus_welds = B_background + _field_sum(obs_mid, weld_sources, n)
-    B_plus_interference = B_plus_welds + _field_sum(obs_mid, interference_sources, n)
-    B_plus_defects = B_plus_interference + _field_sum(obs_mid, defect_sources, n)  # clean, pre-sensor
+    # Full cumulative build (for the raw-signal/residual panels) ...
+    B_full = (
+        B_background
+        + _field_sum(obs_mid, weld_sources, n)
+        + _field_sum(obs_mid, interference_sources, n)
+        + _field_sum(obs_mid, defect_sources, n)
+    )
+    # ... and each category ISOLATED against background alone (for panel 2) --
+    # NOT cumulative, so welds' sheer numeric density (~163/line) can't drown
+    # out interference/defects' much rarer (4, 12 total) but individually
+    # comparable-or-larger contributions the way a cumulative build does.
+    B_welds_only = B_background + _field_sum(obs_mid, weld_sources, n)
+    B_interference_only = B_background + _field_sum(obs_mid, interference_sources, n)
+    B_defects_only = B_background + _field_sum(obs_mid, defect_sources, n)
 
     mag_background = np.linalg.norm(B_background, axis=1)
-    mag_welds = np.linalg.norm(B_plus_welds, axis=1)
-    mag_interference = np.linalg.norm(B_plus_interference, axis=1)
-    mag_full_clean = np.linalg.norm(B_plus_defects, axis=1)
+    mag_welds_only = np.linalg.norm(B_welds_only, axis=1)
+    mag_interference_only = np.linalg.norm(B_interference_only, axis=1)
+    mag_defects_only = np.linalg.norm(B_defects_only, axis=1)
+    mag_full_clean = np.linalg.norm(B_full, axis=1)
 
     b_mid_noisy = _apply_sensor(rng, mag_full_clean, data_cfg.sensor, n)
     r_mid = detrend_axis(s_true, b_mid_noisy, cfg.base.features)
@@ -122,8 +134,9 @@ def build(cfg, seed: int) -> dict:
     return {
         "s_true": s_true,
         "mag_background": mag_background,
-        "mag_welds": mag_welds,
-        "mag_interference": mag_interference,
+        "mag_welds_only": mag_welds_only,
+        "mag_interference_only": mag_interference_only,
+        "mag_defects_only": mag_defects_only,
         "mag_full_clean": mag_full_clean,
         "b_mid_noisy": b_mid_noisy,
         "r_mid": r_mid,
@@ -160,17 +173,21 @@ def plot(result: dict, zoom: tuple[float, float], save: Path | None) -> None:
                  "are girth welds (up to 20x a defect's moment), not defects or interference")
     ax.set_ylabel("field (nT)")
 
-    # 2. Cumulative contribution build-up as small multiples (sharing one
-    # y-scale), ZOOMED to the same window as panel 4 -- tried at full 2000 m
-    # first and it wasn't useful: welds alone (163 of them) already fill the
-    # view at that scale, so "+interference" and "+defects" were visually
-    # indistinguishable from "+welds" except by eye-hunting individual pixels.
-    # Zoomed, each stage's own marginal contribution is actually visible.
+    # 2. Each source ISOLATED against background alone (NOT cumulative), small
+    # multiples sharing one y-scale, zoomed to the same window as panel 4.
+    # A cumulative build (background -> +welds -> +welds+interference ->
+    # +everything) was tried first and was misleading: ~24 welds fall in any
+    # 300 m window vs. ~1 interference source and ~1 defect, so a cumulative
+    # sum makes the later, rarer additions nearly invisible next to welds'
+    # sheer numeric density -- reading as "they're all the same" when what's
+    # actually true is "welds are far more NUMEROUS, not indistinguishable."
+    # Isolating each category against the same background baseline makes
+    # each one's own contribution directly comparable.
     stage_specs = [
         ("background\nonly", result["mag_background"], BG_COLOR),
-        ("+ girth\nwelds", result["mag_welds"], WELD_STAGE_COLOR),
-        ("+ inter-\nference", result["mag_interference"], INTERFERENCE_STAGE_COLOR),
-        ("+ defects\n(= full)", result["mag_full_clean"], DEFECT_STAGE_COLOR),
+        ("welds\nonly", result["mag_welds_only"], WELD_STAGE_COLOR),
+        ("interference\nonly", result["mag_interference_only"], INTERFERENCE_STAGE_COLOR),
+        ("defects\nonly", result["mag_defects_only"], DEFECT_STAGE_COLOR),
     ]
     med_bg = np.median(result["mag_background"])
     zoom_mask = (s >= zoom[0]) & (s <= zoom[1])
@@ -183,9 +200,9 @@ def plot(result: dict, zoom: tuple[float, float], save: Path | None) -> None:
         ax.set_ylim(*ylim)
         ax.set_ylabel(label, fontsize=8, rotation=0, ha="right", va="center")
         if i == 0:
-            ax.set_title(f"2. Contribution build-up (clean physics, no sensor noise), zoomed to "
-                         f"{zoom[0]:.0f}-{zoom[1]:.0f} m -- same y-scale throughout, deviation from "
-                         f"background's own median")
+            ax.set_title(f"2. Each source ISOLATED against background alone (not cumulative -- "
+                         f"welds are far more NUMEROUS per km, not indistinguishable from the "
+                         f"others), zoomed to {zoom[0]:.0f}-{zoom[1]:.0f} m, same y-scale throughout")
         if i < len(stage_specs) - 1:
             ax.set_xticklabels([])
 

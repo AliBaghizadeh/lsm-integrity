@@ -45,7 +45,7 @@ data:
   # defect-comparable amplitude -- (5.5/1.5)^3 ~ 50 for the 1/r^3 falloff. Set
   # this to 1.0 and every interference source drops below the noise floor, which
   # makes the false-positive trap invisible and its precision metric vacuous.
-  interference_moment_scale: 50.0
+  interference_moment_scale_range: [30.0, 50.0]
   # Stage 2.5 item 2: half-width = label_window_scale * r_eff, where
   # r_eff = sqrt(depth_m^2 + y_off_m^2) is the dipole source-to-sensor distance --
   # the same physics that sets field amplitude (1/r^3) also sets the anomaly's
