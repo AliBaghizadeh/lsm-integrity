@@ -1,6 +1,7 @@
-import sys
-import subprocess
 import pathlib
+import subprocess
+import sys
+
 import markdown
 
 CHROME = r"C:\Program Files\Google\Chrome\Application\chrome.exe"

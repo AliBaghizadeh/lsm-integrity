@@ -81,7 +81,7 @@ from lsm.features import (
     detrend_axis,
     window_name,
 )
-from lsm.generate import generate_all, unit
+from lsm.generate import generate_all
 from lsm.registration import _dead_reckon_chainage, register_survey
 from lsm.truth import build_truth_registry
 

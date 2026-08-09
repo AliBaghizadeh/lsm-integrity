@@ -364,7 +364,7 @@ def _detect_weld_comb(
     # mean) over a window several pitches wide -- wide enough to leave the
     # periodic comb itself alone while removing slower background drift.
     window_m = max(5.0 * pitch_prior_m, 10 * _GRID_DX_M)
-    window_samples = int(round(window_m / _GRID_DX_M))
+    window_samples = round(window_m / _GRID_DX_M)
     window_samples = min(window_samples, len(b_grid) - 1)
     window_samples = max(window_samples, 3)
     if window_samples % 2 == 0:
@@ -442,7 +442,8 @@ def _detect_weld_comb(
     # rather than detect against a baseline known to be wrong there.
     edge_margin_m = window_m / 2.0
 
-    detected, k_index = [], []
+    detected_list: list[float] = []
+    k_index_list: list[int] = []
     for k, c in enumerate(candidates):
         if c - half_window < grid[0] or c + half_window > grid[-1]:
             continue  # partial period at the very edge -- skip rather than guess
@@ -453,10 +454,10 @@ def _detect_weld_comb(
         if hi_i <= lo_i:
             continue
         local = envelope[lo_i:hi_i]
-        detected.append(float(grid[lo_i + int(np.argmax(local))]))
-        k_index.append(k)
+        detected_list.append(float(grid[lo_i + int(np.argmax(local))]))
+        k_index_list.append(k)
 
-    if len(detected) < 2:
+    if len(detected_list) < 2:
         return np.array([]), np.array([]), pitch_estimate, "fewer than 2 welds survived edge trimming"
 
     # Refine pitch/phase by least-squares fitting detected position ~ index,
@@ -468,8 +469,8 @@ def _detect_weld_comb(
     # WORSE than the naive baseline on a 500 m/41-weld survey). Averaging
     # over every detected weld cancels that bias the same way any regression
     # beats a single two-point slope estimate.
-    detected = np.array(detected)
-    k_index = np.array(k_index, dtype=float)
+    detected = np.array(detected_list)
+    k_index = np.array(k_index_list, dtype=float)
     refined_pitch, refined_phase = np.polyfit(k_index, detected, 1)
 
     # One robust re-fit pass: an isolated bad detection (a defect or

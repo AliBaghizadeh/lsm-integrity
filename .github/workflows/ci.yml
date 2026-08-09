@@ -39,7 +39,7 @@ jobs:
         # visible in the log.
         run: python -m pip_audit || true
 
-      - name: "pytest (146 tests: unit, leakage, determinism, bundle round-trip, golden regression)"
+      - name: "pytest (311 tests: unit, leakage, determinism, bundle round-trip, golden regression)"
         run: pytest -q
 
       - name: CLI smoke run (generate -> ingest -> features, real base.yaml)

@@ -8,6 +8,8 @@ data/quarantine/
 data/models/
 data/reports/
 data/lsm.db
+data/lsm.db-shm
+data/lsm.db-wal
 mlruns/
 mlruns.db
 # Stage 6 scale rehearsal: ~2-4 GB, regenerated locally, never committed.

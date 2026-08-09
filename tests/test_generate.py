@@ -7,7 +7,13 @@ import pandas as pd
 import pytest
 
 from lsm.config import SensorConfig
-from lsm.generate import _apply_sensor, _build_features, dipole_field, generate_all, unit
+from lsm.generate import (
+    _apply_sensor,
+    _build_features,
+    dipole_field,
+    generate_all,
+    unit,
+)
 
 
 def test_generate_is_deterministic_given_same_seed(tiny_cfg, tmp_path):

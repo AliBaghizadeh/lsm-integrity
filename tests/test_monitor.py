@@ -10,7 +10,13 @@ from pathlib import Path
 import numpy as np
 
 from lsm.db import connect
-from lsm.generate import _build_features, _build_welds, _make_run, generate_all, load_survey_result
+from lsm.generate import (
+    _build_features,
+    _build_welds,
+    _make_run,
+    generate_all,
+    load_survey_result,
+)
 from lsm.monitor import monitor_report_to_text, monitor_survey
 from lsm.pipeline import run_feature_pipeline, run_survey_pipeline
 from lsm.predict import predict_survey

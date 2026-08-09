@@ -198,8 +198,8 @@ def main() -> None:
         f"{len(per_defect)} physical defects, {N_LINES} lines, {cfg.base.data.n_runs} runs each.", "",
         f"Spearman correlation(angle_cos, detected_fraction)   = {corr_binary:+.3f} (p={p_binary:.4f})",
         f"Spearman correlation(angle_cos, mean_peak_z)         = {corr_z:+.3f} (p={p_z:.4f})",
-        f"Spearman correlation(angle_cos, peak_z_per_severity) = {corr_zn:+.3f} (p={p_zn:.4f}) "
-        "-- severity-normalised, isolates the angle effect from the severity confound",
+        (f"Spearman correlation(angle_cos, peak_z_per_severity) = {corr_zn:+.3f} (p={p_zn:.4f}) "
+         "-- severity-normalised, isolates the angle effect from the severity confound"),
         "",
         "```", per_defect.sort_values("angle_cos").to_string(index=False), "```", "",
     ]
