@@ -9,42 +9,42 @@ ABLATION LADDER -- IsolationForest, grouped CV, out-of-fold
 ====================================================================================================
 
 1. mid-head only, GPS chainage
-  recall @ dig budget      0.194 [0.069, 0.333]
-  false-dig rate           0.767 [0.717, 0.833]
-  localisation error (cm)  617.069 [378.531, 858.758]
+  recall @ dig budget      0.153 [0.056, 0.278]
+  false-dig rate           0.817 [0.767, 0.867]
+  localisation error (cm)  854.041 [616.818, 1071.638]
 
 2. + first difference g1
-  recall @ dig budget      0.208 [0.083, 0.375]
-  false-dig rate           0.750 [0.717, 0.783]
-  localisation error (cm)  424.585 [243.952, 632.201]
+  recall @ dig budget      0.208 [0.083, 0.347]
+  false-dig rate           0.750 [0.683, 0.817]
+  localisation error (cm)  950.933 [773.046, 1123.970]
 
 3. + second difference g2
-  recall @ dig budget      0.194 [0.069, 0.361]
-  false-dig rate           0.767 [0.733, 0.800]
-  localisation error (cm)  306.191 [157.895, 489.903]
+  recall @ dig budget      0.208 [0.097, 0.347]
+  false-dig rate           0.750 [0.650, 0.800]
+  localisation error (cm)  913.105 [720.401, 1111.684]
 
 4. + stand-off inversion/normalisation
-  recall @ dig budget      0.222 [0.083, 0.389]
-  false-dig rate           0.733 [0.700, 0.767]
-  localisation error (cm)  439.233 [235.166, 669.837]
+  recall @ dig budget      0.222 [0.097, 0.361]
+  false-dig rate           0.733 [0.667, 0.783]
+  localisation error (cm)  886.996 [718.933, 1049.934]
 
 5. + weld-comb registration
-  recall @ dig budget      0.208 [0.069, 0.361]
-  false-dig rate           0.750 [0.717, 0.783]
-  localisation error (cm)  535.702 [320.796, 744.704]
+  recall @ dig budget      0.208 [0.097, 0.347]
+  false-dig rate           0.750 [0.683, 0.800]
+  localisation error (cm)  828.953 [659.269, 988.585]
 
 6. full 3-axis vector output (hardware)
-  recall @ dig budget      0.597 [0.430, 0.764]
-  false-dig rate           0.272 [0.233, 0.311]
-  localisation error (cm)  48.256 [40.116, 57.558]
+  recall @ dig budget      0.611 [0.444, 0.764]
+  false-dig rate           0.211 [0.128, 0.300]
+  localisation error (cm)  46.591 [38.636, 55.682]
 
 ----------------------------------------------------------------------------------------------------
 Arm-to-arm recall deltas (paired bootstrap where the defect universe is shared; arm 5->6 is NOT paired -- rig:vector is a structurally different corpus/generator, compare via CI overlap only, not a paired delta):
-  1->2                         0.014 [-0.042, 0.083]
-  2->3                         -0.014 [-0.056, 0.028]
-  3->4                         0.028 [-0.028, 0.097]
+  1->2                         0.056 [0.014, 0.111]
+  2->3                         0.000 [-0.056, 0.056]
+  3->4                         0.014 [-0.056, 0.083]
   4->5                         -0.014 [-0.042, 0.000]
-  1->5 (software total)        0.014 [-0.028, 0.056]
+  1->5 (software total)        0.056 [0.014, 0.111]
 
-  5->6 (hardware headline)     software 0.208 [0.069, 0.361] vs hardware 0.597 [0.430, 0.764] -- independent CIs, point gap +0.389 (NOT a paired delta -- see note above)
+  5->6 (hardware headline)     software 0.208 [0.097, 0.347] vs hardware 0.611 [0.444, 0.764] -- independent CIs, point gap +0.403 (NOT a paired delta -- see note above)
 ```

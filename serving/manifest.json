@@ -1,75 +1,75 @@
 {
-  "baked_from_pipeline_version": "2026.08.06-519f7a95-dirty",
+  "baked_from_pipeline_version": "2026.08.09-2661562e",
   "feature_version": 3,
   "schema_version": 3,
-  "config_sha256": "54d903ccb8c1b6ad48250fd3f09b99460395b186a4ccea40791bd1aac0678087",
+  "config_sha256": "3b57dd5cb61a17740d0e6d944651941a457ddc3d434b76459bc414ba8ba21509",
   "pipeline_release": {
-    "pipeline_version": "2026.08.06-519f7a95-dirty",
-    "anomaly_version": "anomaly-if-2026.08.06-519f7a95-dirty",
-    "severity_version": "severity-lgbm-2026.08.06-519f7a95-dirty",
-    "classify_version": "classify-lgbm-2026.08.06-519f7a95-dirty",
-    "growth_version": "growth-eb-2026.08.06-519f7a95-dirty",
+    "pipeline_version": "2026.08.09-2661562e",
+    "anomaly_version": "anomaly-if-2026.08.09-2661562e",
+    "severity_version": "severity-lgbm-2026.08.09-2661562e",
+    "classify_version": "classify-lgbm-2026.08.09-2661562e",
+    "growth_version": "growth-eb-2026.08.09-2661562e",
     "feature_version": 3,
     "schema_version": 3,
     "container_digest": "local-dev",
-    "released_at": "2026-08-06T17:13:20.317226+00:00",
+    "released_at": "2026-08-09T18:26:16.269735+00:00",
     "alias": "challenger"
   },
   "model_run": {
-    "anomaly-if-2026.08.06-519f7a95-dirty": {
-      "model_version": "anomaly-if-2026.08.06-519f7a95-dirty",
+    "anomaly-if-2026.08.09-2661562e": {
+      "model_version": "anomaly-if-2026.08.09-2661562e",
       "task": "anomaly",
-      "mlflow_run_id": "102cad7f08d7446e80cb6925d50e613b",
-      "git_sha": "519f7a956e59541b24cbba7a09e1a6e55c81b38d-dirty",
-      "config_sha256": "54d903ccb8c1b6ad48250fd3f09b99460395b186a4ccea40791bd1aac0678087",
-      "data_sha256": "77583fabceaf7e4cb42005b273771469ae7d8fd0bc908190da600f4b6bf4427f",
+      "mlflow_run_id": "8765d24bf64542319111206fa4be6313",
+      "git_sha": "2661562e481338799b30c3977286e0280feb5398",
+      "config_sha256": "3b57dd5cb61a17740d0e6d944651941a457ddc3d434b76459bc414ba8ba21509",
+      "data_sha256": "f6bcaf15108757d1cb493379fc189e544dcee4157c43692b665482f16080985f",
       "feature_version": 3,
-      "truth_as_of": "2026-08-06T17:13:20.317226+00:00",
-      "trained_at": "2026-08-06T17:13:20.317226+00:00",
-      "metrics_json": "{\"recall_at_budget\": [0.13888888888888887, 0.06666666666666667, 0.2222222222222222], \"false_dig_rate\": [0.8333333333333335, 0.7666666666666667, 0.8933333333333332], \"interference_dig_fraction\": [0.05333333333333333, 0.020000000000000004, 0.08000000000000003], \"localisation_error_m\": [5.644114701385829, 4.013262119406511, 7.484339189390843], \"pr_auc\": 0.03747769027851135}",
-      "artifact_uri": "data\\models\\anomaly-if-2026.08.06-519f7a95-dirty\\bundle.joblib",
+      "truth_as_of": "2026-08-09T18:26:16.269735+00:00",
+      "trained_at": "2026-08-09T18:26:16.269735+00:00",
+      "metrics_json": "{\"recall_at_budget\": [0.10555555555555556, 0.044305555555555674, 0.18333333333333332], \"false_dig_rate\": [0.8733333333333334, 0.8066666666666668, 0.9268333333333334], \"interference_dig_fraction\": [0.08666666666666667, 0.04666666666666667, 0.12666666666666665], \"localisation_error_m\": [9.21550519368805, 7.808077120200972, 10.599066208576891], \"localisation_error_cm\": [921.550519368805, 780.8077120200973, 1059.9066208576894], \"pr_auc\": 0.03429560672140916}",
+      "artifact_uri": "data\\models\\anomaly-if-2026.08.09-2661562e\\bundle.joblib",
       "final_test_uses": 0
     },
-    "severity-lgbm-2026.08.06-519f7a95-dirty": {
-      "model_version": "severity-lgbm-2026.08.06-519f7a95-dirty",
+    "severity-lgbm-2026.08.09-2661562e": {
+      "model_version": "severity-lgbm-2026.08.09-2661562e",
       "task": "severity",
-      "mlflow_run_id": "102cad7f08d7446e80cb6925d50e613b",
-      "git_sha": "519f7a956e59541b24cbba7a09e1a6e55c81b38d-dirty",
-      "config_sha256": "54d903ccb8c1b6ad48250fd3f09b99460395b186a4ccea40791bd1aac0678087",
-      "data_sha256": "77583fabceaf7e4cb42005b273771469ae7d8fd0bc908190da600f4b6bf4427f",
+      "mlflow_run_id": "8765d24bf64542319111206fa4be6313",
+      "git_sha": "2661562e481338799b30c3977286e0280feb5398",
+      "config_sha256": "3b57dd5cb61a17740d0e6d944651941a457ddc3d434b76459bc414ba8ba21509",
+      "data_sha256": "f6bcaf15108757d1cb493379fc189e544dcee4157c43692b665482f16080985f",
       "feature_version": 3,
-      "truth_as_of": "2026-08-06T17:13:20.317226+00:00",
-      "trained_at": "2026-08-06T17:13:20.317226+00:00",
-      "metrics_json": "{\"coverage\": [0.68906941266209, 0.42000000000000004, 0.9453852021357741], \"mae\": [28.95217491834626, 20.54804002276855, 38.242730252769825], \"interval_width\": [72.86715755232574, 62.82920104151366, 82.10515112425765]}",
-      "artifact_uri": "data\\models\\severity-lgbm-2026.08.06-519f7a95-dirty\\bundle.joblib",
+      "truth_as_of": "2026-08-09T18:26:16.269735+00:00",
+      "trained_at": "2026-08-09T18:26:16.269735+00:00",
+      "metrics_json": "{\"coverage\": [0.6184835221974256, 0.385746640900464, 0.8344721310965424], \"mae\": [14.170367017097142, 9.797189281897596, 18.85122312111856], \"interval_width\": [37.580947372437706, 31.32338336903044, 43.62307733466631]}",
+      "artifact_uri": "data\\models\\severity-lgbm-2026.08.09-2661562e\\bundle.joblib",
       "final_test_uses": 0
     },
-    "classify-lgbm-2026.08.06-519f7a95-dirty": {
-      "model_version": "classify-lgbm-2026.08.06-519f7a95-dirty",
+    "classify-lgbm-2026.08.09-2661562e": {
+      "model_version": "classify-lgbm-2026.08.09-2661562e",
       "task": "classify",
-      "mlflow_run_id": "102cad7f08d7446e80cb6925d50e613b",
-      "git_sha": "519f7a956e59541b24cbba7a09e1a6e55c81b38d-dirty",
-      "config_sha256": "54d903ccb8c1b6ad48250fd3f09b99460395b186a4ccea40791bd1aac0678087",
-      "data_sha256": "77583fabceaf7e4cb42005b273771469ae7d8fd0bc908190da600f4b6bf4427f",
+      "mlflow_run_id": "8765d24bf64542319111206fa4be6313",
+      "git_sha": "2661562e481338799b30c3977286e0280feb5398",
+      "config_sha256": "3b57dd5cb61a17740d0e6d944651941a457ddc3d434b76459bc414ba8ba21509",
+      "data_sha256": "f6bcaf15108757d1cb493379fc189e544dcee4157c43692b665482f16080985f",
       "feature_version": 3,
-      "truth_as_of": "2026-08-06T17:13:20.317226+00:00",
-      "trained_at": "2026-08-06T17:13:20.317226+00:00",
-      "metrics_json": "{\"per_class_recall\": {\"scc\": [0.04166666666666667, 0.0, 0.125], \"weld\": [0.0, 0.0, 0.0], \"dent\": [0.0, 0.0, 0.0], \"corrosion\": [0.3035714285714286, 0.05357142857142857, 0.625], \"interference\": [0.3261724386724386, 0.12219246031746034, 0.5367410714285714]}, \"interference_precision\": [0.3888888888888889, 0.16666666666666666, 0.6111111111111112], \"brier\": [0.9930816821800643, 0.8997781551716442, 1.0741721761804612]}",
-      "artifact_uri": "data\\models\\classify-lgbm-2026.08.06-519f7a95-dirty\\bundle.joblib",
+      "truth_as_of": "2026-08-09T18:26:16.269735+00:00",
+      "trained_at": "2026-08-09T18:26:16.269735+00:00",
+      "metrics_json": "{\"per_class_recall\": {\"scc\": [0.022727272727272728, 0.0, 0.06818181818181818], \"weld\": [0.25833333333333336, 0.040625000000000945, 0.525], \"dent\": [0.14444444444444443, 0.0, 0.34444444444444444], \"corrosion\": [0.17094017094017092, 0.0, 0.40170940170940167], \"interference\": [0.5107503607503608, 0.2575505050505051, 0.7552038239538239]}, \"interference_precision\": [0.3333333333333333, 0.16666666666666666, 0.5], \"brier\": [0.9280477448383068, 0.8189983720115317, 1.0375193608950875]}",
+      "artifact_uri": "data\\models\\classify-lgbm-2026.08.09-2661562e\\bundle.joblib",
       "final_test_uses": 0
     },
-    "growth-eb-2026.08.06-519f7a95-dirty": {
-      "model_version": "growth-eb-2026.08.06-519f7a95-dirty",
+    "growth-eb-2026.08.09-2661562e": {
+      "model_version": "growth-eb-2026.08.09-2661562e",
       "task": "growth",
-      "mlflow_run_id": "489196fe6fc74598811348848c575940",
-      "git_sha": "519f7a956e59541b24cbba7a09e1a6e55c81b38d-dirty",
-      "config_sha256": "54d903ccb8c1b6ad48250fd3f09b99460395b186a4ccea40791bd1aac0678087",
-      "data_sha256": "77583fabceaf7e4cb42005b273771469ae7d8fd0bc908190da600f4b6bf4427f",
+      "mlflow_run_id": "8d8bddbf7b2440d28a0574631b65aa23",
+      "git_sha": "2661562e481338799b30c3977286e0280feb5398",
+      "config_sha256": "3b57dd5cb61a17740d0e6d944651941a457ddc3d434b76459bc414ba8ba21509",
+      "data_sha256": "f6bcaf15108757d1cb493379fc189e544dcee4157c43692b665482f16080985f",
       "feature_version": 3,
-      "truth_as_of": "2026-08-06T17:14:33.048449+00:00",
-      "trained_at": "2026-08-06T17:14:33.048449+00:00",
-      "metrics_json": "{\"population_log_rate\": 0.13976194237515885, \"mae\": [1.3703324189659075e-14, 8.120488408686859e-15, 2.0821439810398638e-14], \"baseline_mae\": [10.033625404925584, 7.746707711680393, 12.928691049834347], \"gate_passed\": true}",
-      "artifact_uri": "data\\models\\growth-eb-2026.08.06-519f7a95-dirty\\bundle.joblib",
+      "truth_as_of": "2026-08-09T18:28:38.604888+00:00",
+      "trained_at": "2026-08-09T18:28:38.604888+00:00",
+      "metrics_json": "{\"population_log_rate\": 0.13976194237515843, \"mae\": [1.5158245029548804e-14, 1.2316074086508404e-14, 1.8000415972589204e-14], \"baseline_mae\": [9.461321209791295, 8.014278082034812, 10.941588640064005], \"gate_passed\": true}",
+      "artifact_uri": "data\\models\\growth-eb-2026.08.09-2661562e\\bundle.joblib",
       "final_test_uses": 0
     }
   },
@@ -97,7 +97,7 @@
   ],
   "corrupted_scenario_dq_report": {
     "survey_id": "LINEDEMO_R0",
-    "checked_at": "2026-08-06T17:15:33.769029+00:00",
+    "checked_at": "2026-08-09T18:41:56.204262+00:00",
     "results": [
       {
         "check_name": "schema",
@@ -167,9 +167,9 @@
       {
         "check_name": "gps_jump",
         "status": "warn",
-        "n_affected": 11592,
+        "n_affected": 12126,
         "detail": {
-          "max_jump_m": 44.522603450945816
+          "max_jump_m": 45.00291605534329
         }
       },
       {
@@ -177,7 +177,7 @@
         "status": "warn",
         "n_affected": 1,
         "detail": {
-          "relative_error": 249.85910526182357
+          "relative_error": 260.280443656265
         }
       },
       {
@@ -185,9 +185,9 @@
         "status": "warn",
         "n_affected": 1,
         "detail": {
-          "b_lo_nt": 2115.776913163045,
-          "b_mid_nt": 5.009271568325507,
-          "b_hi_nt": 5.009625430066298
+          "b_lo_nt": 2115.7653614535966,
+          "b_mid_nt": 5.010779424348596,
+          "b_hi_nt": 5.009161136089831
         }
       },
       {
@@ -202,9 +202,9 @@
       {
         "check_name": "interference_density",
         "status": "pass",
-        "n_affected": 2327,
+        "n_affected": 8242,
         "detail": {
-          "fraction": 0.011515697375193
+          "fraction": 0.04078502009065537
         }
       },
       {

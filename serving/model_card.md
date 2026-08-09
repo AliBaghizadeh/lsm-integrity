@@ -1,4 +1,4 @@
-# Model card -- pipeline 2026.08.06-519f7a95-dirty
+# Model card -- pipeline 2026.08.09-2661562e
 
 **This is a synthetic demonstrator.** All defects, interference sources and survey data are generated, not from a real pipeline. The metrics below describe performance on that synthetic data only and are not a claim about real-world detection performance.
 
@@ -6,10 +6,10 @@
 Detects candidate pipeline defects from magnetometer survey residuals and estimates their severity, ranked for dig-budget-constrained inspection planning. Not validated against real inspection outcomes.
 
 ## Provenance
-- generated: 2026-08-06T17:13:45.073307+00:00
-- git_sha: 519f7a956e59541b24cbba7a09e1a6e55c81b38d-dirty
-- config_sha256: 54d903ccb8c1b6ad48250fd3f09b99460395b186a4ccea40791bd1aac0678087
-- data_sha256: 77583fabceaf7e4cb42005b273771469ae7d8fd0bc908190da600f4b6bf4427f
+- generated: 2026-08-09T18:26:45.604226+00:00
+- git_sha: 2661562e481338799b30c3977286e0280feb5398
+- config_sha256: 3b57dd5cb61a17740d0e6d944651941a457ddc3d434b76459bc414ba8ba21509
+- data_sha256: f6bcaf15108757d1cb493379fc189e544dcee4157c43692b665482f16080985f
 - feature_version: 3
 - schema_version: 3
 
@@ -17,37 +17,38 @@ Detects candidate pipeline defects from magnetometer survey residuals and estima
 - 15 surveys, 60 physical defects (the same defects are re-observed across a line's multiple surveys, not independent instances)
 
 ## Detection (Stage 3): IsolationForest vs MAD baseline
-- recall @ dig budget: IsolationForest 0.139 [0.067, 0.222], MAD 0.144 [0.067, 0.233]
-- false-dig rate: IsolationForest 0.833 [0.767, 0.893], MAD 0.827 [0.773, 0.874]
-- of which interference: IsolationForest 0.053 [0.020, 0.080], MAD 0.067 [0.027, 0.113]
-- localisation error (m): IsolationForest 5.644 [4.013, 7.484], MAD 6.359 [4.358, 8.228]
-- recall gap (IsolationForest - MAD): -0.006 [-0.061, 0.056]
+- recall @ dig budget: IsolationForest 0.106 [0.044, 0.183], MAD 0.106 [0.044, 0.183]
+- false-dig rate: IsolationForest 0.873 [0.807, 0.927], MAD 0.873 [0.800, 0.933]
+- of which interference: IsolationForest 0.087 [0.047, 0.127], MAD 0.053 [0.020, 0.087]
+- localisation error (m): IsolationForest 9.216 [7.808, 10.599], MAD 6.758 [4.930, 8.569]
+- localisation error (cm): IsolationForest 921.551 [780.808, 1059.907], MAD 675.770 [493.038, 856.926] -- the ~1 cm dig-marking requirement's own unit (Rig-v2 plan), what Stage B weld-comb registration was built to reach
+- recall gap (IsolationForest - MAD): 0.000 [-0.050, 0.061]
 - **gate (>= 0.15 recall gap at the CI lower bound): DID NOT PASS**
 - attributable to interference rejection: no
 
 ## Severity (Stage 4): LightGBM quantile + split conformal vs global-mean baseline
-- coverage @ 90% nominal: model 0.689 [0.420, 0.945], baseline 0.589 [0.313, 0.865]
-- MAE: model 28.952 [20.548, 38.243], baseline 29.087 [19.006, 38.649]
-- mean interval width: model 72.867 [62.829, 82.105], baseline 69.910 [61.160, 78.399]
+- coverage @ 90% nominal: model 0.618 [0.386, 0.834], baseline 0.667 [0.400, 0.867]
+- MAE: model 14.170 [9.797, 18.851], baseline 12.942 [8.801, 17.215]
+- mean interval width: model 37.581 [31.323, 43.623], baseline 38.872 [34.250, 43.917]
 - **gate (coverage in [0.87, 0.93]): DID NOT PASS**
-- n matched, severity-labelled indications: 293
+- n matched, severity-labelled indications: 555
 
 ## Classification (Stage 5): LightGBM multiclass + isotonic calibration vs majority-class baseline
 
 Per-class recall (model / baseline):
-- scc **(protected, gate below)**: 0.042 [0.000, 0.125] / 0.000 [0.000, 0.000]
-- weld: 0.000 [0.000, 0.000] / 0.000 [0.000, 0.000]
-- dent: 0.000 [0.000, 0.000] / 0.000 [0.000, 0.000]
-- corrosion: 0.304 [0.054, 0.625] / 0.000 [0.000, 0.000]
-- interference: 0.326 [0.122, 0.537] / 1.000 [1.000, 1.000]
+- scc **(protected, gate below)**: 0.023 [0.000, 0.068] / 0.273 [0.000, 0.545]
+- weld: 0.258 [0.041, 0.525] / 0.000 [0.000, 0.000]
+- dent: 0.144 [0.000, 0.344] / 0.000 [0.000, 0.000]
+- corrosion: 0.171 [0.000, 0.402] / 0.000 [0.000, 0.000]
+- interference: 0.511 [0.258, 0.755] / 0.455 [0.182, 0.727]
 
-- interference precision: model 0.389 [0.167, 0.611], baseline 0.318 [0.182, 0.477]
-- Brier score (lower is better): model 0.993 [0.900, 1.074], baseline 0.805 [0.732, 0.872]
+- interference precision: model 0.333 [0.167, 0.500], baseline 0.263 [0.105, 0.474]
+- Brier score (lower is better): model 0.928 [0.819, 1.038], baseline 0.832 [0.778, 0.877]
 - **recall gate (SCC recall >= 0.90 at the CI lower bound): DID NOT PASS**
 - **physics-consistency gate (no absolute-position feature in the top-10 by contribution): PASSED**
-  - top features by contribution: ['w5m_kurt', 'w10m_mean_nt', 'w25m_mean_nt', 'w10m_energy_nt2', 'r_mid_nt', 'w10m_zcr', 'w5m_ptp_nt', 'w25m_kurt', 'w25m_energy_nt2', 'd2r_ds2_nt_per_m2']
+  - top features by contribution: ['w25m_zcr', 'w25m_std_nt', 'w25m_max_nt', 'w25m_energy_nt2', 'w25m_mean_nt', 'peak_distance_m', 'w10m_ptp_nt', 'w10m_mean_nt', 'r_hi_nt', 'w10m_max_nt']
 - **overall Stage 5 gate: DID NOT PASS**
-- n matched, classifiable indications: 376
+- n matched, classifiable indications: 330
 
 **`risk_score` = calibrated P(defect) x predicted severity x consequence proxy.** The consequence proxy below is a STATED ENGINEERING-JUDGMENT ranking, not derived from real consequence-of-failure data (population density, product type, MAOP) -- there is none in this synthetic project. It is meant to be replaced wholesale once that data exists, not treated as a calibrated output:
 
@@ -60,10 +61,10 @@ Per-class recall (model / baseline):
 ## Growth & remaining life (Stage 8): partially-pooled log-linear growth vs 'no growth' baseline
 
 - population log-growth-rate: 0.1398 (synthetic ground truth: ln(1.15) = 0.1398)
-- one-step-ahead severity MAE at the held-out run: model 0.000 [0.000, 0.000], no-growth baseline 10.034 [7.747, 12.929]
-- gap (baseline - model): 10.034 [7.729, 12.568]
+- one-step-ahead severity MAE at the held-out run: model 0.000 [0.000, 0.000], no-growth baseline 9.461 [8.014, 10.942]
+- gap (baseline - model): 9.461 [8.017, 10.843]
 - **gate (model beats the no-growth baseline at the CI lower bound): PASSED**
-- n defects evaluated: 14 (of 69 matched, multi-run severity observations)
+- n defects evaluated: 15 (of 87 matched, multi-run severity observations)
 - assumed limit state: 100.0 %SMYS, assumed survey interval: 5.0 years -- STATED ENGINEERING JUDGMENT, not derived from data: `surveyed_at` carries no real elapsed calendar time between a line's runs in this synthetic generator (see config/base.yaml's model.growth comment).
 - **honest scope statement: with as few as 3 observations per defect, per-defect growth rates are almost entirely population-shrunk, not independently fitted -- the method is right for this sample size, but every remaining-life number here is provisional, not a calibrated forecast.**
 - growth-rate ESTIMATION uncertainty is not propagated into the remaining-life interval -- only the current severity's own conformal interval is (a stated, deliberate scope limit, not an oversight).

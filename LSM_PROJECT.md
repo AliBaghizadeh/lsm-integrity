@@ -192,7 +192,7 @@ and has been corrected.
     *   *Accuracy:* Lateral accuracy within 100 mm (0.33 ft); mapping accuracy ±5% of actual position.
     *   *Performance:* Probability of Detection (POD) >80% at a 95% confidence level, **explicitly stated "in the absence of magnetic interference."**
     *   *Output:* Identifies Stress Concentration Zones (SCZs) and reports stress magnitude in MPa or %SMYS.
-*   **Project alignment, precisely stated (not simplified):** these specs define the physical bounds the synthetic generator was built to respect (standoff distances, lateral resolution, noise regime). On the *measured* comparison, two numbers now exist and must not be conflated: the **pre-Rig-v2** model measured recall-at-dig-budget at ~64% (both MAD and IsolationForest, at Stage 6 scale — see `docs/interview-reference.md` §10), while the **Rig-v2** scalar rig, re-measured by Stage D at demo scale (60 defects), measures **recall@budget 0.144 (MAD) / 0.139 (IsolationForest)** — see `LSM_PROJECT.md`'s own "Rig-v2 measured results" section above. Both sit below the flyer's 80% figure — the comparison is **not apples-to-apples** either way, because this project's evaluation corpus *always* includes interference by design (it's the deliberate false-positive trap the whole project is built to stress-test), while the flyer's 80% figure explicitly excludes interference. The Rig-v2 number is also not apples-to-apples against the pre-Rig-v2 64%: less information per scalar sample, a harder walked/GPS-dropout acquisition, and — not yet ruled out — Stage D has not run the 800×-scale rehearsal that would show whether 0.144 is itself depressed by small-sample variance the way early pre-Rig-v2 measurements were. The honest statement is "both numbers are under a harder condition their own spec doesn't cover, and the two project numbers are not yet directly comparable to each other," not a direct read of either against the flyer's 80%.
+*   **Project alignment, precisely stated (not simplified):** these specs define the physical bounds the synthetic generator was built to respect (standoff distances, lateral resolution, noise regime). On the *measured* comparison, two numbers now exist and must not be conflated: the **pre-Rig-v2** model measured recall-at-dig-budget at ~64% (both MAD and IsolationForest, at Stage 6 scale — see `docs/interview-reference.md` §10), while the **Rig-v2** scalar rig, re-measured by Stage D at demo scale (60 defects, post interference/defect physics refinement), measures **recall@budget 0.106 (MAD) / 0.106 (IsolationForest)** — see `LSM_PROJECT.md`'s own "Rig-v2 measured results" section above. Both sit below the flyer's 80% figure — the comparison is **not apples-to-apples** either way, because this project's evaluation corpus *always* includes interference by design (it's the deliberate false-positive trap the whole project is built to stress-test), while the flyer's 80% figure explicitly excludes interference. The Rig-v2 number is also not apples-to-apples against the pre-Rig-v2 64%: less information per scalar sample, a harder walked/GPS-dropout acquisition, and — not yet ruled out — Stage D has not run the 800×-scale rehearsal that would show whether 0.106 is itself depressed by small-sample variance the way early pre-Rig-v2 measurements were. The honest statement is "both numbers are under a harder condition their own spec doesn't cover, and the two project numbers are not yet directly comparable to each other," not a direct read of either against the flyer's 80%.
 
 ### 5. My own interview-prep synthesis (not a ROSEN document)
 Built for the 2nd-round interview (5 Aug 2026, Richard Föcke, Head of NDT Apps & Products) from
@@ -230,9 +230,13 @@ good update, not something to downplay:
 
 Rig-v2 (2026-08-06) rebuilt the generator, registration and feature layers around the real
 instrument (see "Project Context" above). Stage D re-ran the production training pipeline
-against the rebuilt scalar-rig corpus and re-measured every existing gate. The numbers below
-are real CLI output, captured directly — not estimates, not projected from the pre-Rig-v2
-model.
+against the rebuilt scalar-rig corpus and re-measured every existing gate. **A second round of
+developer-team follow-up feedback (2026-08-09)** then refined two specific pieces of the
+generator's physics — interference amplitude and defect-type severity, both detailed in
+"Interference/defect physics refinement" below — and everything in this section was
+**re-measured a second time** against the refined corpus. Unless stated otherwise, every number
+below is the current, post-refinement measurement; the numbers below are real CLI output,
+captured directly — not estimates, not projected.
 
 **Do not read the historical numbers in `docs/interview-reference.md` (25.05 nT residual,
 3.02–3.21× contrast, the pre-Rig-v2 IsolationForest/MAD recall table, etc.) as current.** They
@@ -240,127 +244,165 @@ were measured on the pre-Rig-v2 vector-head model and are kept there, explicitly
 historical/comparison baseline — specifically, the value Stage D's ablation arm 6 ("what would
 a hardware upgrade to full vector output buy") compares against.
 
-### Gate results (measured, Stage D re-run against the Rig-v2 scalar corpus)
+### Interference/defect physics refinement (2026-08-09)
+
+Two corrections from the developer team's follow-up feedback, both implemented in
+`generate.py::_build_features` and re-measured end to end:
+
+1. **Interference amplitude was a single fixed 50× moment-scale constant** applied to every
+   interference source. The team's point: real interference runs "a bit weaker in most cases,"
+   and its strength varies source to source *independently of distance* — distance is already
+   captured by `y_off_m`'s own 3–8 m draw. Replaced with `interference_moment_scale_range:
+   [30.0, 50.0]`, drawn per source.
+2. **All 4 defect types (SCC/weld/dent/corrosion) shared one severity range** (20–80),
+   carrying zero distinguishing physical signal by construction — a known limitation stated
+   plainly since before Rig-v2. The team does not trust a *shape* distinction (a point-dipole
+   model has no principled way to fake one honestly — footprint width is governed by
+   depth/offset, and every defect sits at `y_off_m=0`), but does expect *intensity* to differ
+   by type. Added `DEFECT_SEVERITY_RANGES`: dent 40–80 (sharp mechanical stress concentration,
+   strongest), corrosion 20–70 (gradual metal loss, moderate), SCC 15–50 (fine diffuse cracks,
+   weakest), weld 15–45 (best-controlled workmanship class per the consequence-proxy table
+   below).
+
+(`stress_polarity: random` — tension enhancing or degrading the signal — was already the
+default before this round; no change needed there.)
+
+### Gate results (measured, current — post interference/defect refinement)
 
 | Stage | Model | Baseline | Result | Gate | Verdict |
 |---|---|---|---|---|---|
-| 3 · Detect | IsolationForest | MAD | recall gap **−0.006** [−0.061, 0.056] | ≥0.15 at CI lower bound | **FAIL** |
-| 4 · Severity | LightGBM CQR | global-mean | coverage **0.689** [0.420, 0.945] | in [0.87, 0.93] | **FAIL** |
-| 5 · Classify | LightGBM multiclass | majority-class | SCC recall **0.042** [0.000, 0.125] | ≥0.90 at CI lower bound | **FAIL** |
-| 8 · Growth | pooled log-linear | no-growth | log-growth-rate **0.1398** (n=14 defects) | beats no-growth baseline | **PASS** |
+| 3 · Detect | IsolationForest | MAD | recall gap **0.000** [−0.050, 0.061] | ≥0.15 at CI lower bound | **FAIL** |
+| 4 · Severity | LightGBM CQR | global-mean | coverage **0.618** [0.386, 0.834] | in [0.87, 0.93] | **FAIL** |
+| 5 · Classify | LightGBM multiclass | majority-class | SCC recall **0.023** [0.000, 0.068] | ≥0.90 at CI lower bound | **FAIL** |
+| 8 · Growth | pooled log-linear | no-growth | log-growth-rate **0.1398** (n=15 defects) | beats no-growth baseline | **PASS** |
 
 Raw output:
 
 ```
 === Stage 3: MAD baseline vs IsolationForest (grouped CV, out-of-fold) ===
-MAD baseline:            recall@budget 0.144 [0.067,0.233]  false-dig 0.827 [0.773,0.874] (interference 0.067 [0.027,0.113])  localisation 6.359m [4.358,8.228]  PR-AUC 0.043
-IsolationForest:          recall@budget 0.139 [0.067,0.222]  false-dig 0.833 [0.767,0.893] (interference 0.053 [0.020,0.080])  localisation 5.644m [4.013,7.484]  PR-AUC 0.037
-Recall gap (IF - MAD): -0.006 [-0.061, 0.056] -- Stage 3 gate (>=0.15 at CI lower bound): DOES NOT PASS
+MAD baseline:            recall@budget 0.106 [0.044,0.183]  false-dig 0.873 [0.800,0.933] (interference 0.053 [0.020,0.087])  localisation 6.758m [4.930,8.569]  PR-AUC 0.033
+IsolationForest:          recall@budget 0.106 [0.044,0.183]  false-dig 0.873 [0.807,0.927] (interference 0.087 [0.047,0.127])  localisation 9.216m [7.808,10.599]  PR-AUC 0.034
+Recall gap (IF - MAD): 0.000 [-0.050, 0.061] -- Stage 3 gate (>=0.15 at CI lower bound): DOES NOT PASS
+Interference-dig-fraction gap (MAD - IF): -0.033 [-0.060, 0.000] -- not clearly attributable to interference rejection at this confidence level
 (60 physical defects, 15 surveys evaluated)
 
 === Stage 4: severity -- LightGBM CQR vs global-mean baseline ===
-Global-mean:  coverage@90% 0.589 [0.313,0.865]  MAE 29.087 [19.006,38.649]
-LightGBM CQR: coverage@90% 0.689 [0.420,0.945]  MAE 28.952 [20.548,38.243]
-Stage 4 gate (coverage in [0.87,0.93]): DOES NOT PASS
-(n=293 matched, severity-labelled indications)
+Global-mean:  coverage@90% 0.667 [0.400,0.867]  MAE 12.942 [8.801,17.215]
+LightGBM CQR: coverage@90% 0.618 [0.386,0.834]  MAE 14.170 [9.797,18.851]
+Stage 4 gate (coverage in [0.87,0.93]): DOES NOT PASS -- model now UNDERPERFORMS the baseline on both coverage and MAE
+(n=555 matched, severity-labelled indications)
 
 === Stage 5: classification -- LightGBM multiclass vs majority-class baseline ===
-Majority baseline: interference recall 1.000, everything else 0.000
-LightGBM: SCC recall 0.042 [0.000,0.125]
+Majority baseline: recall scc 0.273, interference 0.455, everything else 0.000
+LightGBM: recall scc 0.023 [0.000,0.068], weld 0.258 [0.041,0.525], dent 0.144 [0.000,0.344], corrosion 0.171 [0.000,0.402], interference 0.511 [0.258,0.755]
+interference precision: model 0.333 [0.167,0.500] vs baseline 0.263 [0.105,0.474]
+physics-consistency gate (no absolute-position feature in top-10): PASSES
 Stage 5 gate: DOES NOT PASS
-(n=376 matched, classifiable indications)
+(n=330 matched, classifiable indications)
 
 === Stage 8 (forecast): growth ===
-population log-growth-rate: 0.1398 (n=14 defects) -- matches ln(1.15)=0.1398 exactly
+population log-growth-rate: 0.1398 (n=15 defects) -- matches ln(1.15)=0.1398 exactly
 gate (beats no-growth baseline): PASSED
 ```
 
 ### What these numbers say, honestly
 
-- **Stage 3 (detection) is numerically almost unchanged.** The IsolationForest-vs-MAD recall
-  gap is **−0.006 [−0.061, 0.056]** under Rig-v2 — the same value, to three decimal places, as
-  the pre-Rig-v2 measurement at the same 60-defect scale (also −0.006, see
-  `docs/interview-reference.md` §10 / §11). Stated plainly, as "unchanged," not as a causal
-  claim: the CI still straddles zero at this sample size, so this could be a small-sample
-  coincidence, or it could reflect something about MAD-vs-IsolationForest on this feature set
-  that doesn't actually depend on scalar vs. vector sensing. Telling those apart would need the
-  same kind of 800×-scale rehearsal that resolved the equivalent pre-Rig-v2 question (Stage 6:
-  −0.006 at 60 defects → −0.029 [−0.033, −0.026] at 9,600), which Stage D has not yet run.
-  Either way the gate verdict is unchanged: **FAIL**.
-- **Stage 4 (severity conformal coverage) genuinely regressed**, and this is reported as a real
-  finding, not softened: **0.920 [0.867, 0.967] PASS** pre-Rig-v2, at a comparable ~137-matched-
-  indication scale (`docs/interview-reference.md` §10/§14), versus **0.689 [0.420, 0.945] FAIL**
-  under Rig-v2 at n=293. A harder, GPS-dropout, irregular-stand-off scalar rig is producing
-  noisier severity calibration at this sample size. Whether more calibration data closes this
-  the way it closed the equivalent pre-Rig-v2 gap (0.727 → 0.920 → 0.896 as the corpus scaled
-  up) is an open question Stage D has not yet answered — flagged here rather than assumed.
-- **Stage 5 (SCC classification)** was already failing its gate pre-Rig-v2 (0.125 [0.000,
-  0.264], demo scale) and is still failing, slightly worse, under Rig-v2 (0.042 [0.000, 0.125]).
-  Consistent with the classification-demotion decision above: neither rig's synthetic
-  defect-type assignment carries a real physical signal for a classifier to separate on, so an
-  unchanged failing verdict is the expected result, not a new problem introduced by Rig-v2.
-- **Stage 8 (growth) still passes**, recovering `ln(1.15) = 0.1398` almost exactly — this is an
-  estimator-correctness check on a deterministic growth law, not a claim about real defect
-  physics, and it is unaffected by which rig generated the underlying residuals. An unchanged
-  pass here is expected, not newsworthy.
+- **Stage 3 (detection) verdict is unchanged, and the recall gap moved to almost exactly
+  zero.** IsolationForest and MAD now tie on the point estimate — **0.000 [−0.050, 0.061]** —
+  versus −0.006 before this refinement and −0.006 under the original pre-Rig-v2 model (three
+  independent measurements landing within 0.006 of each other). The CI still straddles zero at
+  this sample size either way, so "the two methods are indistinguishable here" continues to be
+  the honest read, not "IsolationForest lost its edge" or "IsolationForest caught up" — neither
+  is supported. One new wrinkle: IsolationForest's interference false-dig rate is now *worse*
+  than MAD's (0.087 vs 0.053) — the interference-rejection mechanism that was significant
+  before this refinement (CI [0.007, 0.058], excluding zero) is now inconclusive (CI
+  [−0.060, 0.000], touching zero) — reported honestly rather than claiming a mechanism the
+  data no longer clearly supports. Gate verdict: **FAIL**, unchanged.
+- **Stage 4 (severity) got worse again, and now fails a stronger way: the model underperforms
+  its own baseline.** Coverage before this refinement was 0.689 [0.420, 0.945] (still failing
+  the [0.87, 0.93] band, but *beating* the 0.589 global-mean baseline). Now it's **0.618
+  [0.386, 0.834] against a baseline of 0.667** — the model is worse than just predicting the
+  global mean, on both coverage and MAE. The likely mechanism: severity is now genuinely
+  type-dependent (dent skews high, SCC/weld skew low), which makes the population more
+  heterogeneous — harder for both estimators, but the LightGBM CQR model still needs enough
+  matched, severity-labelled examples per type to actually learn the split, and n=555 at demo
+  scale may not be enough yet. Stated as an open question, not assumed answered.
+- **Stage 5 (SCC classification) verdict is unchanged, but a real secondary finding emerged.**
+  SCC recall is still ~0 (0.023, down from 0.042) — expected, since SCC's severity range
+  (15–50) overlaps heavily with weld's (15–45) by design, so they remain genuinely hard to
+  separate. But **weld/dent/corrosion recall are no longer near-zero** (0.258 / 0.144 / 0.171,
+  versus effectively 0 before) — making severity type-correlated gave the classifier a real,
+  if partial and indirect, statistical handle on type through severity-correlated features,
+  even with no explicit shape signal. Interference precision also improved (0.333 vs 0.263
+  baseline). The physics-consistency gate still passes. Overall Stage 5 gate: **FAIL**,
+  unchanged, but for a more nuanced reason than "carries zero signal" — it now carries a little,
+  just not enough for the four rarer types, and not close to enough for SCC specifically.
+- **Stage 8 (growth) still passes**, recovering `ln(1.15) = 0.1398` almost exactly — unaffected
+  by interference/defect amplitude changes, as expected, since it depends only on the
+  deterministic growth law applied to whichever severity a defect starts at.
 
-### Ablation ladder — measured
+### Ablation ladder — measured, and the headline finding changed
 
 The 6-arm ablation ladder (middle head only → +first difference `g1` → +second difference `g2`
 → +stand-off inversion → +weld-comb registration → full vector output as arm 6, the "what would
-a hardware upgrade buy" comparison) has now run end to end (`scripts/ablation_ladder.py`), on a
-real, non-toy corpus: 2 lines at the production per-line density (2000 m, 12 defects, 4
-interference, 3 runs — a deliberate scale-down from the full 5-line default purely for runtime,
-documented in the script's own module docstring; not yet re-run at 5 lines).
+a hardware upgrade buy" comparison) has run end to end twice — once under the original Rig-v2
+physics, once more after the 2026-08-09 interference/defect refinement — on a real, non-toy
+corpus: 2 lines at the production per-line density (2000 m, 12 defects, 4 interference, 3 runs
+— a deliberate scale-down from the full 5-line default purely for runtime, documented in the
+script's own module docstring; not yet re-run at 5 lines).
 
 | Arm | recall @ dig budget | false-dig rate | localisation error (cm) |
 |---|---|---|---|
-| 1 · mid-head only, GPS chainage | 0.194 [0.069, 0.333] | 0.767 [0.717, 0.833] | 617 [379, 859] |
-| 2 · + first difference `g1` | 0.208 [0.083, 0.375] | 0.750 [0.717, 0.783] | 425 [244, 632] |
-| 3 · + second difference `g2` | 0.194 [0.069, 0.361] | 0.767 [0.733, 0.800] | 306 [158, 490] |
-| 4 · + stand-off inversion/normalisation | 0.222 [0.083, 0.389] | 0.733 [0.700, 0.767] | 439 [235, 670] |
-| 5 · + weld-comb registration | 0.208 [0.069, 0.361] | 0.750 [0.717, 0.783] | 536 [321, 745] |
-| 6 · full 3-axis vector output (hardware) | **0.597 [0.430, 0.764]** | **0.272 [0.233, 0.311]** | **48 [40, 58]** |
+| 1 · mid-head only, GPS chainage | 0.153 [0.056, 0.278] | 0.817 [0.767, 0.867] | 854 [617, 1072] |
+| 2 · + first difference `g1` | **0.208 [0.083, 0.347]** | 0.750 [0.683, 0.817] | 951 [773, 1124] |
+| 3 · + second difference `g2` | 0.208 [0.097, 0.347] | 0.750 [0.650, 0.800] | 913 [720, 1112] |
+| 4 · + stand-off inversion/normalisation | 0.222 [0.097, 0.361] | 0.733 [0.667, 0.783] | 887 [719, 1050] |
+| 5 · + weld-comb registration | 0.208 [0.097, 0.347] | 0.750 [0.683, 0.800] | 829 [659, 989] |
+| 6 · full 3-axis vector output (hardware) | **0.611 [0.444, 0.764]** | **0.211 [0.128, 0.300]** | **47 [39, 56]** |
 
 Arm-to-arm recall deltas (paired bootstrap over the SAME defect set for arms 1-5; arm 5→6 is
 **not** a paired comparison — `rig: vector` is a structurally different corpus/generator, so only
 CI overlap is meaningful there, not a paired delta):
 
 ```
-1->2                         0.014 [-0.042, 0.083]
-2->3                         -0.014 [-0.056, 0.028]
-3->4                         0.028 [-0.028, 0.097]
+1->2                         0.056 [0.014, 0.111]
+2->3                         0.000 [-0.056, 0.056]
+3->4                         0.014 [-0.056, 0.083]
 4->5                         -0.014 [-0.042, 0.000]
-1->5 (software total)        0.014 [-0.028, 0.056]
-5->6 (hardware headline)     software 0.208 [0.069, 0.361] vs hardware 0.597 [0.430, 0.764]
-                              -- independent CIs, point gap +0.389
+1->5 (software total)        0.056 [0.014, 0.111]
+5->6 (hardware headline)     software 0.208 [0.097, 0.347] vs hardware 0.611 [0.444, 0.764]
+                              -- independent CIs, point gap +0.403
 ```
 
-**The honest, unflattering answer: none of arms 2-5 move recall by a statistically distinguishable
-amount over arm 1's floor.** Every arm-to-arm software delta's CI straddles zero, including the
-cumulative "1→5" software total (+0.014 [-0.028, 0.056]). This is the plan's own explicitly
-anticipated possible outcome ("If they do not [close most of the gap], that is a finding worth
-delivering too — do not tune it toward the convenient answer") — and it is what was measured, not
-what would make the best story. Arm 6 (full vector output, i.e. a genuine hardware upgrade) is
-where the real movement is: recall roughly triples (point estimate 0.597 vs 0.208), false-dig rate
-drops by nearly 3x (0.272 vs 0.750), and localisation error drops by roughly 10x (48 cm vs 536 cm)
-— consistent with the underlying physics (a vector head recovers the anomaly's DIRECTION, which a
-scalar total-field magnitude structurally cannot, per generate.py's own module docstring). Two
-honest caveats on that comparison: (1) it is not a paired delta (independent corpora, so read it
-as "the two CIs barely overlap on recall and don't overlap at all on false-dig/localisation," not
-as a formal hypothesis test), and (2) `rig: vector`'s reference arm has none of the scalar rig's
-walk/GPS-dropout/sensor-calibration-noise physics, so part of its localisation advantage in
-particular reflects a simpler, more idealised world, not purely "vector vs scalar sensing" in
-isolation — reported plainly rather than adjusted for, since disentangling the two would need a
-walked, GPS-dropout **vector**-rig generator that does not currently exist.
+**The finding changed in a way worth stating precisely, not glossing over: the software total
+is now statistically significant.** Under the original Rig-v2 measurement, every arm-to-arm
+delta's CI straddled zero, including the cumulative software total (+0.014 [−0.028, 0.056]).
+Under the refined interference/defect physics, arm 1→2 (adding the first difference `g1`) shows
+a real jump — **+0.056 [0.014, 0.111], excluding zero** — and because arms 2 through 5 each
+individually straddle zero, that entire cumulative software gain traces back to `g1` alone, not
+to stand-off correction or registration. This is **not** the "no software arm reaches
+significance" finding reported before this refinement, and this document said that plainly
+enough that it needs correcting plainly now, not quietly. What has **not** changed: hardware
+still buys far more than software did. Arm 6 (full vector output) reaches recall 0.611 against
+software's best of 0.208 — a point gap of +0.403, more than 7× the size of the entire
+significant software gain — and false-dig rate (0.211 vs 0.750) and localisation error (47 cm vs
+536-951 cm across the software arms) both improve by large margins hardware-side, matching the
+same physics reasoning as before (a vector head recovers the anomaly's DIRECTION, which a scalar
+total-field magnitude structurally cannot). Two honest caveats on the arm 5→6 comparison,
+unchanged from before: (1) it is not a paired delta (independent corpora — read it as "the two
+CIs barely overlap on recall and don't overlap at all on false-dig/localisation," not a formal
+hypothesis test), and (2) `rig: vector`'s reference arm has none of the scalar rig's
+walk/GPS-dropout/sensor-calibration-noise physics, so part of its advantage reflects a simpler,
+more idealised world, not purely vector-vs-scalar sensing in isolation.
 
-**What arms 2-5 individually show, read across the point estimates (none reach significance, but
-the direction is at least worth stating and not over-claiming beyond):** `g1`/`g2` and stand-off
-normalisation each nudge the point estimate up or sideways by ~0.01-0.03 recall, and weld-comb
-registration (arm 5) does NOT improve recall over arm 4 at all (point estimate goes slightly
-*down*, -0.014) — registration's real, measured value is in localisation (see below), not
-detection recall, which matches its own design intent (Stage B answers "where," not "was there a
-defect there at all").
+**Revised bottom line for "software or hardware": mostly hardware, with one real software win.**
+`g1` (the first difference across heads) is a genuine, measured, significant improvement and
+costs nothing extra in hardware — it should be kept regardless. But it accounts for the entire
+software gain; `g2`, stand-off correction, and registration do not add measurably more to
+*detection* on top of it (registration's real value is in localisation, not recall — see below,
+unchanged from the original finding). And the one step that would matter most — a genuine
+hardware upgrade to full vector sensing — still dwarfs everything software can do with the
+existing three-head rod.
 
 ### Localisation, in the unit that actually matters: centimetres
 
@@ -370,12 +412,15 @@ is actually stated in. On the full production corpus (5 lines, the real gate re-
 ablation ladder's 2-line scale-down):
 
 ```
-MAD baseline:      localisation error (cm)   635.9 [435.8, 822.8]
-IsolationForest:    localisation error (cm)   564.4 [401.3, 748.4]
+MAD baseline:      localisation error (cm)   675.8 [493.0, 856.9]
+IsolationForest:    localisation error (cm)   921.6 [780.8, 1059.9]
 ```
 
-**Not close to 1 cm.** Three separate, honestly-reported measurements chain together to explain
-why:
+**Not close to 1 cm, and IsolationForest's localisation got measurably worse under the refined
+physics** (921.6 cm vs 564.4 cm before) — consistent with its interference false-dig rate also
+rising (see above): a detector matching more/different rows changes which peak gets credited as
+the "location," not just whether a defect is found at all. Three separate, honestly-reported
+measurements chain together to explain the overall gap to 1 cm:
 - **Naive GPS-only dead reckoning** (no registration at all, `chainage_provisional_m` vs
   `chainage_true_m`, measured directly against every production raw survey): per-survey median
   error **~11.3 m** [8.7, 14.1].
@@ -401,25 +446,30 @@ scalar rig) rather than leaving it as prose, on 120 physical defects (10 lines, 
 config/base.yaml density):
 
 ```
-Spearman correlation(angle_cos, detected_fraction)   = +0.162 (p=0.078)
-Spearman correlation(angle_cos, mean_peak_z)         = +0.163 (p=0.075)
-Spearman correlation(angle_cos, peak_z_per_severity) = +0.183 (p=0.045)  <- severity-normalised
+Spearman correlation(angle_cos, detected_fraction)   = +0.240 (p=0.0083)
+Spearman correlation(angle_cos, mean_peak_z)         = +0.178 (p=0.0512)
+Spearman correlation(angle_cos, peak_z_per_severity) = +0.203 (p=0.0265)  <- severity-normalised
 
-Detection rate by angle bin:            near-perpendicular 0.250 [0.13,0.38] | mid 0.217 [0.12,0.33] | near-parallel 0.392 [0.26,0.53]
-Severity-normalised peak SNR by bin:    near-perpendicular 0.078 [0.06,0.11] | mid 0.069 [0.05,0.09] | near-parallel 0.092 [0.07,0.11]
+Detection rate by angle bin:            near-perpendicular 0.242 [0.13,0.35] | mid 0.233 [0.12,0.36] | near-parallel 0.492 [0.34,0.64]
+Severity-normalised peak SNR by bin:    near-perpendicular 0.086 [0.07,0.11] | mid 0.079 [0.06,0.10] | near-parallel 0.122 [0.10,0.15]
 ```
 
 A real, positive, population-level relationship exists between `|cos(angle to B_hat0)|` and
-detectability — reaching conventional significance (p=0.045) once severity (a 4x confound, 20-80
-range) is normalised out — and the near-parallel bin is clearly the most detectable of the three.
-It is **not** a clean monotonic relationship (the "mid" bin is slightly, not significantly, lower
-than "near-perpendicular" in both views) — expected, not a bug: unlike
-`tests/test_generate.py`'s own null-anomaly unit test (which places the observation point exactly
-along the moment's own axis to get an EXACT null), a real along-track survey pass sweeps the
-sensor-to-source direction through many angles as the walker goes by, diluting the idealised
-single-geometry relationship into a real-but-noisy population trend, not a deterministic one. The
-physics claim is confirmed at population scale, honestly reported with its actual noise, not
-overstated.
+detectability — now reaching conventional significance on the raw detection-rate correlation
+itself (p=0.0083, not just the severity-normalised view), and stronger than the original Rig-v2
+measurement across the board (detected_fraction correlation +0.240 vs +0.162 before;
+peak_z_per_severity +0.203 vs +0.183 before) — likely because defect severity is no longer drawn
+from one shared 20-80 range but from type-specific ranges (see the physics refinement above),
+which changes the severity confound's exact shape without changing the underlying angle
+relationship being measured. The near-parallel bin is clearly the most detectable of the three
+(detection rate 0.492 vs 0.242/0.233). It is **not** a clean monotonic relationship (the "mid"
+bin is slightly, not significantly, lower than "near-perpendicular" in both views) — expected,
+not a bug: unlike `tests/test_generate.py`'s own null-anomaly unit test (which places the
+observation point exactly along the moment's own axis to get an EXACT null), a real along-track
+survey pass sweeps the sensor-to-source direction through many angles as the walker goes by,
+diluting the idealised single-geometry relationship into a real-but-noisy population trend, not
+a deterministic one. The physics claim is confirmed at population scale, honestly reported with
+its actual noise, not overstated.
 
 ---
 

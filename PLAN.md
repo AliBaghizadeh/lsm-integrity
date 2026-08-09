@@ -31,7 +31,7 @@ Use the cut lines.
 
 ---
 
-## Current status (as of 2026-08-08)
+## Current status (as of 2026-08-09)
 
 | Stage | Status |
 |---|---|
@@ -41,14 +41,15 @@ Use the cut lines.
 | 2 — Features, gradiometer | Done |
 | 2.5 — Data fidelity | Done, all 3 items (2026-07-29) |
 | 2.75 — EDA on the feature store | Done, findings acted on and re-run for real (2026-07-30) |
-| 3 — Detection (MAD vs IsolationForest) | Done. Pre-Rig-v2: recall gap closed to -0.006 after the EDA fix, confirmed at 800× scale (-0.029 [-0.033,-0.026], still a real small negative effect). **Re-measured under Rig-v2 (2026-08-06): -0.006 [-0.061, 0.056], numerically unchanged — gate still does not pass the 0.15 margin.** |
-| 4 — Severity (LightGBM CQR + conformal) | Done pre-Rig-v2 (gate PASSED, coverage 0.920). **Re-measured under Rig-v2: coverage 0.689 — gate now FAILS, a real reported regression on the harder scalar-rig acquisition, not smoothed over.** |
-| 4.5 — Demo app | Built, headlessly verified, and iterated through several real-use feedback rounds (last: 2026-08-07/08 — Rig-v2 row-count/GPS-dropout fixes, see below). HF Spaces deploy still deferred, see next-steps. |
-| 5 — Classification and risk ranking | Done (2026-07-30). Demoted to a synthetic-only capability demo after the ROSEN developer interview confirmed no real labelled defect-type data exists — kept for the MLOps discipline around it (calibration, SHAP physics-consistency gate), not as a real-world claim. Gate did not pass pre-Rig-v2 (SCC recall 0.125) or under Rig-v2 (0.042) — expected, not new. |
-| 6 — Scale rehearsal | Done (2026-07-31), pre-Rig-v2, ~9.6M rows. **Rig-v2 has not yet re-run this at scale** — see next-steps. |
-| 7 — CI/CD and release gate | `ci.yml` + `train.yml` built and green/red as designed; `deploy.yml`/S3/rollback still deferred pending a cloud-account decision (unchanged since 2026-07-30). |
-| 8 — Growth, remaining life, monitoring | Done (2026-07-31). Gate passes pre- and post-Rig-v2 (recovers `ln(1.15)=0.1398` either way) — an estimator-correctness check, not affected by which rig produced the residuals. |
-| **Rig-v2** — rebuild around the real ROSEN instrument | **Done (2026-08-06/07).** A 2nd-round developer interview revealed the real rig: 3 scalar total-field heads (never x/y/z), human walker, GPS dropout — not the single 3-axis vector head this project originally assumed. Rebuilt the generator/schema (Stage A), added a new registration stage (Stage B, `src/lsm/registration.py`), rewrote features for per-head g1/g2 differences (Stage C), re-measured every gate honestly and built a 6-arm ablation ladder answering "software or hardware?" (Stage D — **software: +0.014 [-0.028,0.056], indistinguishable from zero; hardware: recall roughly triples**), and updated every doc (Stage E). Full detail: `LSM_PROJECT.md`'s "Rig-v2 measured results" section. |
+| 3 — Detection (MAD vs IsolationForest) | Done. Pre-Rig-v2: recall gap closed to -0.006 after the EDA fix, confirmed at 800× scale (-0.029 [-0.033,-0.026], still a real small negative effect). Rig-v2 (2026-08-06): -0.006 [-0.061, 0.056], numerically unchanged. **Re-measured again post interference/defect physics refinement (2026-08-09): 0.000 [-0.050, 0.061] — MAD and IsolationForest now tie on the point estimate. Gate still does not pass the 0.15 margin, all three times.** |
+| 4 — Severity (LightGBM CQR + conformal) | Done pre-Rig-v2 (gate PASSED, coverage 0.920). Rig-v2: coverage 0.689 — gate FAILED, but still beat its own baseline (0.589). **Re-measured post physics refinement (2026-08-09): coverage 0.618 vs a baseline of 0.667 — the model now UNDERPERFORMS its own baseline, a further real regression, not smoothed over.** |
+| 4.5 — Demo app | Built, headlessly verified, and iterated through several real-use feedback rounds (last: 2026-08-07/08 — Rig-v2 row-count/GPS-dropout fixes; rebaked again 2026-08-09 for the physics refinement, see below). HF Spaces deploy still deferred, see next-steps. |
+| 5 — Classification and risk ranking | Done (2026-07-30). Demoted to a synthetic-only capability demo after the ROSEN developer interview confirmed no real labelled defect-type data exists. Gate did not pass pre-Rig-v2 (SCC recall 0.125), under Rig-v2 (0.042), or post physics refinement (0.023) — expected, not new. **But a real secondary finding emerged 2026-08-09: making severity type-correlated gave the classifier actual non-zero recall on weld/dent/corrosion (0.258/0.144/0.171, up from ~0) — SCC alone stays unrecoverable, by design (its severity range overlaps weld's).** |
+| 6 — Scale rehearsal | Done (2026-07-31), pre-Rig-v2, ~9.6M rows. **Not yet re-run at scale under either Rig-v2 or the 2026-08-09 physics refinement** — see next-steps. |
+| 7 — CI/CD and release gate | `ci.yml` + `train.yml` built. `ci.yml` was actually RED on every push from 2026-08-07 to 2026-08-08 (6 real ruff/mypy issues in the Rig-v2 commits, never verified after pushing) — found and fixed 2026-08-08, confirmed green since. `deploy.yml`/S3/rollback still deferred pending a cloud-account decision. |
+| 8 — Growth, remaining life, monitoring | Done (2026-07-31). Gate passes pre-Rig-v2, under Rig-v2, and post physics refinement (recovers `ln(1.15)=0.1398` all three times) — an estimator-correctness check, unaffected by rig or defect/interference amplitude changes. |
+| **Rig-v2** — rebuild around the real ROSEN instrument | **Done (2026-08-06/07).** A 2nd-round developer interview revealed the real rig: 3 scalar total-field heads (never x/y/z), human walker, GPS dropout — not the single 3-axis vector head this project originally assumed. Rebuilt the generator/schema (Stage A), added a new registration stage (Stage B, `src/lsm/registration.py`), rewrote features for per-head g1/g2 differences (Stage C), re-measured every gate and built a 6-arm ablation ladder answering "software or hardware?" (Stage D), and updated every doc (Stage E). **Superseded by the 2026-08-09 refinement below on the specific "software vs hardware" number** — see next row. |
+| **Interference/defect physics refinement** | **Done (2026-08-09).** Further developer-team feedback: interference amplitude was one fixed 50× constant for every source (team: real interference runs weaker, non-uniformly, independent of distance) — replaced with a per-source `interference_moment_scale_range: [30, 50]`. All 4 defect types shared one severity range (team distrusts a shape distinction but expects intensity to differ by type) — added `DEFECT_SEVERITY_RANGES` (dent 40-80, corrosion 20-70, SCC 15-50, weld 15-45). Full regenerate → retrain → re-measure cycle run against the refined corpus. **Headline change: the ablation ladder's software total is now statistically significant (+0.056 [0.014, 0.111], was +0.014 [-0.028,0.056]/not significant before) — traced entirely to arm 1→2 (`g1`, the first difference). Hardware still dominates (arm 6 recall 0.611 vs software's 0.208, point gap +0.403, ~7× the software gain) — the strategic "hardware over software" conclusion is unchanged, but "no software arm reaches significance" is no longer accurate and has been corrected everywhere it was stated.** Full detail: `LSM_PROJECT.md`'s "Rig-v2 measured results" section. |
 | **Post-Rig-v2 app fixes** | Done (2026-08-07/08). Rig-v2 changed a raw survey from ~4,000 to ~200,000 rows and introduced real GPS dropout — the app wasn't updated for either, causing two real bugs: the map rendered broken/random lines (NaN GPS coordinates fed straight to pydeck) and the app was very slow (full-resolution signal charts melted into Vega-Lite on every rerun). Both fixed; `docs/app-walkthrough.md` and the app's own "How it works" tab updated to include the new Register stage and current numbers. |
 
 Stages 0–2 have no individually-recorded completion date: this repo's first commit
@@ -73,16 +74,20 @@ private history.
    Unchanged since 2026-07-30: decide whether this demonstrator stays local-only (defensible
    on its own terms, has a fully working local demo) or is worth standing up real
    infrastructure for.
-2. **Rig-v2's own explicitly-flagged not-yet-run items** (all stated honestly in
-   `LSM_PROJECT.md`, not hidden):
+2. **Explicitly-flagged not-yet-run items, still open after two re-measurement rounds** (all
+   stated honestly in `LSM_PROJECT.md`, not hidden):
    - The 800×-scale rehearsal that resolved the pre-Rig-v2 Stage 3 "is this gap real"
-     question has not been re-run under Rig-v2 — the current -0.006 [-0.061, 0.056] result
-     is demo-scale only, so whether it's a stable small effect or sample-size noise is
-     still open.
+     question has not been re-run under either Rig-v2 or the 2026-08-09 physics refinement —
+     the current 0.000 [-0.050, 0.061] result is demo-scale only, so whether it's a stable
+     null effect or sample-size noise is still open.
    - The 6-arm ablation ladder ran at a 2-line scale-down (`ABLATION_N_LINES`) for runtime,
-     not the full 5-line default — easy to re-run larger.
-   - Whether more calibration data closes Stage 4's Rig-v2 severity-coverage regression
-     (0.920→0.689) the way it closed the equivalent pre-Rig-v2 gap is unanswered.
+     not the full 5-line default, both times — easy to re-run larger, and now more
+     interesting to since the software-total finding flipped to significant.
+   - Whether more calibration data closes Stage 4's severity-coverage regression is now a
+     bigger open question than before: coverage went 0.920 (pre-Rig-v2, PASS) → 0.689
+     (Rig-v2, FAIL but beat baseline) → 0.618 (physics refinement, FAIL and now UNDER
+     baseline) — three points trending the wrong way, not yet explained by more than "harder
+     acquisition, smaller/more heterogeneous calibration sets."
 **Historical negative result that motivated Stage 3's design (kept for context):** three
 `lsm train` runs pre-Rig-v2 told one consistent story before the current -0.006 result —
 12-defect corpus recall gap -0.056 CI [-0.167, 0.056] (too wide to trust), 5-line/~60-defect
