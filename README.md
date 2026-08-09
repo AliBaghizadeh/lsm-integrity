@@ -20,9 +20,10 @@ x/y/z), carried by a human walker with GPS dropout, not the single 3-axis vector
 fixed grid this project originally assumed. Every existing gate was re-measured honestly
 against the rebuilt corpus, and a new 6-arm **ablation ladder**
 (`scripts/ablation_ladder.py`) answers a real instrumentation question — "improve the
-software, or upgrade the hardware?" The honest answer: none of five software-only
-improvements move detection recall by a statistically distinguishable amount, while a genuine
-hardware upgrade to full vector output roughly triples it.
+software, or upgrade the hardware?" The honest answer: one software step (a first-difference
+across heads) gives a real, statistically significant recall gain, but a genuine hardware
+upgrade to full vector output still buys roughly seven times more than the entire software
+gain combined.
 
 ![Project components: pipeline stages, infrastructure, and consumers](img/project-components.png)
 *Pipeline stages, infrastructure, and consumers.*
