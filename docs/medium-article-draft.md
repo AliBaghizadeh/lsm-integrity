@@ -236,6 +236,37 @@ Even with that caveat, the reading is uncomfortable in the same way the earlier 
 
 That is arguably more useful to tell an instrumentation company than "my model works." It tells them where the next dollar should go.
 
+## More feedback came in, and one number flipped
+
+I want to show you what the signal actually looks like, broken into its physical pieces, before I get to what changed.
+
+![From raw field to isolated defect signal](img/signal_decomposition.png)
+*Same survey, five views: the raw field (background hides everything), each source's own contribution isolated against background, the residual after two-stage detrending, the same residual zoomed in so bump *shape* is visible, and finally the residual with weld and interference windows masked out — just the defect signal left.*
+
+![Each physical source, isolated](img/signal_components.png)
+*The same four sources, each on its own scale this time, over the full 2 km line. Girth welds are the loudest thing in the data by a wide margin — up to 330 nT, and there are 163 of them. Interference is rarer (4 sources) but still reaches over 150 nT. Defects are the quietest — a peak of about 11 nT — which is the whole reason this project exists: the thing you actually care about is the smallest signal in the room.*
+
+After I had the numbers above, the team gave me two more pieces of real feedback. First: interference is not one fixed strength. In the real data, some external objects sit close to a defect's own amplitude and some are noticeably weaker — the variation doesn't track distance, it's just genuine spread in what junk happens to be buried nearby. My generator had interference at a single fixed multiplier. Second: I had all four defect types — cracking, welds, dents, corrosion — drawing their severity from the same range, which the team was right to distrust as a shape claim, but they did expect a real difference in typical *intensity* between a sharp mechanical dent and a diffuse crack.
+
+Both are one-line changes to the generator: interference strength now varies randomly instead of sitting at one fixed value, and each defect type draws its severity from its own range instead of sharing one.
+
+I regenerated the corpus, retrained everything, and re-ran the ablation ladder. Here is where I have to correct something I said above, not quietly leave it next to the new numbers.
+
+| Arm | recall @ dig budget | false-dig rate | localisation error (cm) |
+|---|---|---|---|
+| 1. mid-head only, GPS chainage | 0.153 [0.056, 0.278] | 0.817 [0.767, 0.867] | 854 [617, 1072] |
+| 2. + first difference | 0.208 [0.083, 0.347] | 0.750 [0.683, 0.817] | 951 [773, 1124] |
+| 3. + second difference | 0.208 [0.097, 0.347] | 0.750 [0.650, 0.800] | 913 [720, 1112] |
+| 4. + stand-off correction | 0.222 [0.097, 0.361] | 0.733 [0.667, 0.783] | 887 [719, 1050] |
+| 5. + weld-comb registration | 0.208 [0.097, 0.347] | 0.750 [0.683, 0.800] | 829 [659, 989] |
+| 6. full vector output (hardware) | 0.611 [0.444, 0.764] | 0.211 [0.128, 0.300] | 47 [39, 56] |
+
+The step from arm 1 to arm 2 — adding the first difference across heads — now shows a real, statistically significant jump: +0.056 [0.014, 0.111], an interval that does not touch zero. I said above that no software step reached significance. That was true of the first measurement. It is not true anymore, and I would rather correct it in public than leave the old sentence standing.
+
+What has not changed: the first difference explains the *entire* software gain. Arms 3 through 5 still move the point estimate by amounts their own intervals can't distinguish from zero. And hardware still dwarfs everything software did — arm 6 reaches 0.611 recall against software's best of 0.208, a gap more than seven times the size of the one real software win. The instrument-company answer from before still holds. It just has one more honest footnote now: keep the first-difference calculation, it's free and it works, but don't expect it or anything downstream of it to close the gap hardware would.
+
+Severity got worse again, too. The uncertainty intervals that covered the true value 92 percent of the time before Rig-v2, then 69 percent under it, now cover it 62 percent of the time — and for the first time, worse than just predicting the population mean for every defect (67 percent). I don't have a confirmed reason yet. My best guess is that type-dependent severity makes the population more varied, and I don't have enough calibration examples at this scale to learn the split. I'm stating that as a guess, not a finding.
+
 ---
 
 ## What I learned
@@ -252,7 +283,7 @@ The most useful thing I built is a job that turns red when the model is not good
 
 My detection model does not beat a simple threshold. I know this with a confidence interval of −0.033 to −0.026, measured over 9,600 defects, on the original vector-head version of the instrument. I know why. And it is written down in the model card, the README, and a red CI badge, instead of in a drawer.
 
-Months later, after the real instrument turned out to be a different, harder machine, the same question came back and got the same shape of answer: an ablation ladder of everything software could plausibly do with the real three-head rod moved detection by an amount indistinguishable from zero, while a genuine hardware upgrade roughly tripled it. Two different projects, the same discipline, two uncomfortable answers, both measured instead of assumed.
+Months later, after the real instrument turned out to be a different, harder machine, the same question came back and got a related but not identical answer: one software step (a first-difference calculation across the three heads) gave a real, statistically significant improvement — small, and it's the only one of five that did — while a genuine hardware upgrade still bought roughly seven times more than that entire software gain. I said in an earlier draft of this piece that no software step reached significance at all. Further feedback on the data changed that, and I corrected it above rather than quietly editing it out. Two different projects, the same discipline, and this time the uncomfortable answer needed revising once, in public, when the numbers actually moved.
 
 ---
 

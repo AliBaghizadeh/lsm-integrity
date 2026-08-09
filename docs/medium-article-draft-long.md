@@ -395,7 +395,7 @@ Arm 6 is a different story. Recall roughly triples: point estimate 0.597 against
 
 ### Where the localisation error actually comes from
 
-The indication-level localisation error on the full production corpus — 636 cm for MAD, 564 cm for IsolationForest — is larger than the registration residual on its own (about 140 cm), which tells you where the remaining error actually lives: downstream of registration, in which row a detector's peak lands on, and in how generous the matching radius is. It is not, as I first assumed it might be, registration failing to do its job. Registration is real and it works — an eightfold improvement over naive GPS dead-reckoning — it just isn't the bottleneck standing between this corpus and centimetre-level marking. Detection and clustering precision are.
+The indication-level localisation error on the full production corpus — 676 cm for MAD, 922 cm for IsolationForest, both measured after the interference/defect physics refinement below (IsolationForest's got measurably worse there, discussed in that section) — is larger than the registration residual on its own (about 140 cm), which tells you where the remaining error actually lives: downstream of registration, in which row a detector's peak lands on, and in how generous the matching radius is. It is not, as I first assumed it might be, registration failing to do its job. Registration is real and it works — an eightfold improvement over naive GPS dead-reckoning — it just isn't the bottleneck standing between this corpus and centimetre-level marking. Detection and clustering precision are.
 
 ### The angle measurement
 
@@ -406,6 +406,57 @@ The central physics claim — a defect whose moment sits near-perpendicular to t
 This is the same shape of finding as the detection gate in Part 5, and I want to name that explicitly rather than let it pass as a separate, unrelated result. There, more data resolved a fuzzy negative into a clear one. Here, a harder, more honest question — how much of a real hardware limitation can be recovered in software — got a clear answer of its own: not much. Every software addition I could think of to make of the real three-head rod moved the needle by an amount indistinguishable from zero. The one thing that clearly worked was not a feature, a model, or a calibration trick. It was a different sensor.
 
 I don't think that is a disappointing result to hand to an instrumentation company. I think it's a more useful one than "the model works," for the same reason a red CI badge is more useful than a green one that can only ever say yes. It tells ROSEN exactly where the next unit of engineering effort should go — into the rod, not into the software sitting downstream of it — and it tells them that with a number attached, not a hunch.
+
+### What the signal actually looks like, in pieces
+
+Before the next round of feedback, it's worth showing rather than just describing what these sources look like once you pull them apart. I built a small analysis tool (`scripts/plot_signal_decomposition.py`) that regenerates one survey and separates the raw field into its physical contributions.
+
+![From raw field to isolated defect signal](img/signal_decomposition.png)
+*Five stages, same survey: the raw field (background hides everything), a stage showing each source's own contribution isolated against background, the two-stage-detrended residual with all three source types visible, the same residual zoomed so bump width becomes visible, and finally the residual with weld and interference windows masked out, leaving only the defect signal.*
+
+![Each physical source, isolated, own scale](img/signal_components.png)
+*The same four sources — background, girth welds, interference, defects — each shown on its own y-axis over the full 2 km line, so each one's actual character is visible rather than compressed to match whichever source is loudest. Girth welds dominate by sheer count and amplitude (up to 330 nT, 163 of them on this line). Interference is rarer (4 sources) but still reaches over 150 nT at its strongest. Defects are the quietest of the three, peaking around 11 nT here — which is the whole point: the signal this project exists to find is the smallest one in the room.*
+
+Building the second figure caught a real bug worth mentioning, because the failure mode is instructive. My first version isolated each source by subtracting the background's scalar *median* from each "background plus source X" trace. That left the background's own smooth drift bleeding through the interference and defects panels — they looked like they were riding the same wave the background panel showed, because they were: I'd only removed a number, not the actual background curve. The fix was to subtract the full background *array*, which is the same `|B0+dB| − |B0|` logic the rest of this project already uses to isolate a total-field anomaly. A reminder that "isolate this component" is itself a claim that needs checking, not just an obviously-correct subtraction.
+
+### A second round of feedback, and a correction
+
+After the numbers in Part 5 and the ablation ladder above, the team gave me two more pieces of real, specific feedback, both about the generator's physics rather than the rig itself.
+
+**First: interference amplitude isn't one fixed strength.** My generator used a single multiplier — every interference source got scaled up by exactly the same factor, `(5.5/1.5)³ ≈ 50`, chosen so a source at a typical 3–8 m lateral offset would land at roughly defect-comparable amplitude at the sensor. The team's correction: real external interference runs weaker in most cases, and — importantly — that variation doesn't track distance. It's genuine spread in what happens to be buried near the line, independent of how far off-axis it sits. Distance was already in the model (the 3–8 m lateral draw); strength on top of that distance was not.
+
+**Second: defect type should carry an intensity signal, even if not a shape one.** All four defect types — SCC, weld anomalies, dents, corrosion — drew their severity from the same 20–80 range, which is exactly why the classifier in Part 4 couldn't tell them apart: the label carried no physical signal by construction. The team doesn't trust a shape-based distinction here, and neither do I — a point-dipole model has no principled way to fake a shape difference between defect types, since every defect sits at zero lateral offset and footprint width is governed by depth and offset, not type. But the team does expect real intensity differences: a dent is a sharp mechanical stress concentration and should read strongest; SCC is fine, diffuse cracking and should read weakest; corrosion sits in between; weld anomalies, the best-controlled class in the field, should be smallest and most consistent.
+
+Both changes are small in code — one config range instead of a fixed constant, one dictionary instead of one shared tuple — and large in consequence, because they touch the corpus every model downstream is trained and gated against. I regenerated the corpus, retrained all four models, and re-ran the ablation ladder and the angle-vs-detectability check end to end.
+
+The result I have to correct, stated plainly: **the ablation ladder's software total is now statistically significant.**
+
+| Arm | recall @ dig budget | false-dig rate | localisation error (cm) |
+|---|---|---|---|
+| 1. mid-head only, GPS chainage | 0.153 [0.056, 0.278] | 0.817 [0.767, 0.867] | 854 [617, 1072] |
+| 2. + first difference g1 | **0.208 [0.083, 0.347]** | 0.750 [0.683, 0.817] | 951 [773, 1124] |
+| 3. + second difference g2 | 0.208 [0.097, 0.347] | 0.750 [0.650, 0.800] | 913 [720, 1112] |
+| 4. + stand-off inversion/normalisation | 0.222 [0.097, 0.361] | 0.733 [0.667, 0.783] | 887 [719, 1050] |
+| 5. + weld-comb registration | 0.208 [0.097, 0.347] | 0.750 [0.683, 0.800] | 829 [659, 989] |
+| 6. full 3-axis vector output (hardware) | **0.611 [0.444, 0.764]** | **0.211 [0.128, 0.300]** | **47 [39, 56]** |
+
+```
+1->2                        0.056 [0.014, 0.111]
+2->3                        0.000 [-0.056, 0.056]
+3->4                        0.014 [-0.056, 0.083]
+4->5                       -0.014 [-0.042, 0.000]
+1->5 (software total)       0.056 [0.014, 0.111]
+```
+
+Arm 1 → arm 2 — adding the first difference across heads — now shows a confidence interval that excludes zero. That one step accounts for the *entire* significant software gain: arms 3 through 5 each still straddle zero individually, same as before. I wrote, earlier in this piece, that none of five software-only improvements moved recall by a statistically distinguishable amount. That was accurate for the measurement it described. It is not accurate now, and the honest move is to say so here rather than let the old sentence stand uncorrected next to numbers that contradict it.
+
+What didn't change: hardware still dominates. Arm 6 reaches recall 0.611 against software's best of 0.208 — a point gap of 0.403, more than seven times the size of the one real, significant software win. False-dig rate (0.211 vs 0.750) and localisation error (47 cm vs 536–951 cm across the software arms) both move by large margins on the hardware side too. The same caveats from before still apply — this isn't a paired comparison, and the vector reference corpus doesn't carry the scalar rig's walk/GPS-dropout/calibration-noise physics — but neither caveat explains away a gap this size.
+
+The angle-vs-detectability check, re-run on the refined corpus, held up and if anything measured a bit more cleanly: the correlation between `|cos(angle to B_hat0)|` and detectability came back at +0.240 (p = 0.0083) on the raw detection rate, and +0.203 (p = 0.0265) on the severity-normalised view — both stronger than the original +0.162 (p = 0.078) and +0.183 (p = 0.045). I read that as the severity confound taking a different, more tractable shape once severity stopped being drawn from one shared range, not as the underlying angle physics changing — the relationship being measured didn't move, only the noise around it did.
+
+Two of the four models' gate numbers moved too, and one of them moved in a direction worth stating plainly rather than glossing over. Severity coverage — already a failing gate under the original Rig-v2 measurement (0.689 against a target band of [0.87, 0.93], but still beating its own 0.589 baseline) — is now 0.618 against a baseline of 0.667. The model no longer beats a naive global-mean prediction, on either coverage or MAE. I don't have a confirmed mechanism for this yet; the honest hypothesis is that type-dependent severity makes the population more heterogeneous, and demo-scale calibration data (n=555 matched indications) may not be enough to learn the split — stated as an open question, not an answer I've verified. Classification moved the other direction: SCC recall is still effectively zero, as expected, since SCC's severity range now deliberately overlaps weld's — but weld, dent, and corrosion recall went from indistinguishable-from-zero to 0.258, 0.144, and 0.171 respectively. Making severity type-correlated gave the classifier a real, if partial and indirect, statistical handle on type through severity-correlated features, with no shape mechanism involved at all.
+
+None of this changes the instrument-company answer. It sharpens it. Keep the first-difference calculation — it's free, it works, and now there's a real number behind why. Don't expect anything past it, on the existing rod, to close a gap that a fourth sensing axis closes by itself.
 
 ---
 
@@ -427,7 +478,7 @@ That's the failure class I'd have been least equipped to catch as a physicist, a
 
 And there's a fourth scenario I'm fond of: a deliberately corrupted survey, built by taking a real one and pushing a single reading to 999,999 nT. Both modes reach the same refusal by different routes — demo reads the baked DQ report, live generates one live — and the app shows exactly which check failed, on which column, at which row, with which value:
 
-> `bx_nt at row 3 failed in_range(-80000.0, 80000.0) (value: 999999.0)`
+> `b_hi_nt at row 3 failed in_range(20000.0, 80000.0) (value: 999999.0)`
 
 The pipeline's contract is that indications are `None` if and only if the DQ report has a hard failure. A bad survey degrades to "here's why I refused," never to an exception. The bake script even asserts that the corrupted fixture still trips a gate, so a "corrupted" demo that quietly stopped being corrupt would fail the build.
 
@@ -451,7 +502,7 @@ The single most useful artifact I built is a CI job that goes red when the model
 
 My detection model doesn't beat a robust z-score threshold. I know that to a 95% confidence interval of [−0.033, −0.026], measured over 9,600 physical defects, on the original vector-head version of this instrument. I know *why* — it rejects interference better but localises worse. And I know it's on the record, in the model card, in the README, and in a red CI badge, rather than in a drawer.
 
-The same discipline, pointed at the real instrument months later, produced the same shape of answer again. An ablation ladder across six versions of the pipeline found that no amount of software I could add to the real three-head rod moved detection by a statistically distinguishable amount, while a genuine hardware upgrade — one more axis — roughly tripled recall, cut the false-dig rate to about a third, and cut localisation error by roughly ten times. Two different points in the same project's life, the same discipline applied both times, two uncomfortable answers, both measured rather than assumed.
+The same discipline, pointed at the real instrument months later, produced a related but not identical answer. An ablation ladder across six versions of the pipeline found that one specific software addition — a first-difference calculation across the rod's three heads — moved detection by a real, statistically significant amount; everything past it didn't. A genuine hardware upgrade — one more axis — still bought roughly seven times more than that entire software gain, cut the false-dig rate by more than three times, and cut localisation error by more than an order of magnitude. I'd said, earlier in this piece, that *no* software step reached significance. Further team feedback changed the underlying corpus, the number moved, and I corrected the claim in the text above instead of letting an old sentence sit next to numbers that no longer supported it. Two different points in the same project's life, the same discipline applied both times, and this time the discipline included going back and fixing what I'd already written.
 
 That's a more useful thing to have built than a model that works for reasons I couldn't defend.
 
