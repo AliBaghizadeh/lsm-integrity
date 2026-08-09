@@ -261,17 +261,75 @@ def plot(result: dict, zoom: tuple[float, float], save: Path | None) -> None:
         plt.show()
 
 
+def plot_components_separately(result: dict, save: Path | None) -> None:
+    """Each source on its OWN y-scale, full 2000 m line -- the complement to
+    plot()'s panel 2, which deliberately forces a shared y-scale to make
+    relative magnitude honest (welds dwarf the others) at the cost of
+    flattening defects/interference to near-invisible lines. Here each gets
+    room to show its own actual shape and typical amplitude, not how it
+    compares to welds.
+    """
+    s = result["s_true"]
+    med_bg = np.median(result["mag_background"])
+    mag_bg = result["mag_background"]
+    defect_chainages = [f["chainage_m"] for f in result["features"] if f["is_defect"]]
+    interference_chainages = [f["chainage_m"] for f in result["features"] if not f["is_defect"]]
+    weld_chainages = [w["chainage_m"] for w in result["welds"]]
+
+    # Each "X only" trace is |B_background + field_X| (build()'s own
+    # definition) -- subtracting the full mag_bg ARRAY (not just its scalar
+    # median) removes the background's own drift/wave entirely, isolating
+    # source X's actual contribution (the same |B0+dB|-|B0| logic the real
+    # pipeline uses for a total-field anomaly). Subtracting only the median
+    # was a real bug in an earlier version of this function: it left the
+    # background's own smooth wave bleeding through the interference/defects
+    # panels, dwarfing their much smaller true signal and making them look
+    # like they were riding on background drift, which they are not -- only
+    # the background panel itself should ever show that wave.
+    panels = [
+        ("Background only", result["mag_background"], BG_COLOR, [], med_bg),
+        ("Girth welds (joints) only -- periodic, ~12.2 m pitch", result["mag_welds_only"], WELD_STAGE_COLOR, weld_chainages, mag_bg),
+        ("Interference only -- off-pipe objects, 4 on this line", result["mag_interference_only"], INTERFERENCE_STAGE_COLOR, interference_chainages, mag_bg),
+        ("Defects only -- 12 on this line, type-specific severity", result["mag_defects_only"], DEFECT_STAGE_COLOR, defect_chainages, mag_bg),
+    ]
+
+    fig, axes = plt.subplots(4, 1, figsize=(13, 14), sharex=True, constrained_layout=True)
+    for ax, (title, vals, color, markers, baseline) in zip(axes, panels):
+        dev = vals - baseline
+        ax.plot(s, dev, color=color, lw=0.7)
+        for c in markers:
+            ax.axvline(c, color=color, ls="--", lw=0.8, alpha=0.4)
+        peak = float(np.abs(dev).max())
+        ax.set_title(f"{title}  (peak |deviation| = {peak:.1f} nT)", fontsize=10, loc="left")
+        ax.set_ylabel("deviation (nT)")
+        ax.axhline(0, color="black", lw=0.4, alpha=0.3)
+    axes[-1].set_xlabel("chainage (m)")
+    fig.suptitle("Each physical source, isolated against background, own y-scale per panel", fontsize=13)
+
+    if save:
+        save.parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(save, dpi=150)
+        print(f"saved {save}")
+    else:
+        plt.show()
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--save", type=Path, default=Path("docs/img/signal_decomposition.png"))
     ap.add_argument("--zoom", type=float, nargs=2, default=(0.0, 300.0), metavar=("START_M", "END_M"))
     ap.add_argument("--seed", type=int, default=None, help="default: config's own seed")
+    ap.add_argument("--components", action="store_true",
+                     help="also render the per-component, own-y-scale, full-line figure")
+    ap.add_argument("--components-save", type=Path, default=Path("docs/img/signal_components.png"))
     args = ap.parse_args()
 
     cfg = load_config("dev")
     seed = args.seed if args.seed is not None else cfg.seed
     result = build(cfg, seed)
     plot(result, tuple(args.zoom), args.save)
+    if args.components:
+        plot_components_separately(result, args.components_save)
 
 
 if __name__ == "__main__":
