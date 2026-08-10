@@ -194,12 +194,20 @@ def run_temporal_holdout(
     )
 
     result: dict = {
+        # localisation_error_cm is Rig-v2's addition (the ~1 cm dig-marking
+        # requirement's own unit) and `train._print_report` requires it. It was
+        # added to train.py's own result dicts but not here, so any attempt to
+        # print a scale_eval result died with KeyError -- AFTER both holdout CVs
+        # had already run to completion. `train._bootstrap_metrics` (called
+        # above) has always produced it; this was only ever a pass-through gap.
         "mad": {"recall_at_budget": metrics_mad["recall_at_budget"], "false_dig_rate": metrics_mad["false_dig_rate"],
                 "interference_dig_fraction": metrics_mad["interference_dig_fraction"],
-                "localisation_error_m": metrics_mad["localisation_error_m"], "pr_auc": pr_auc_mad},
+                "localisation_error_m": metrics_mad["localisation_error_m"],
+                "localisation_error_cm": metrics_mad["localisation_error_cm"], "pr_auc": pr_auc_mad},
         "isolation_forest": {"recall_at_budget": metrics_if["recall_at_budget"], "false_dig_rate": metrics_if["false_dig_rate"],
                               "interference_dig_fraction": metrics_if["interference_dig_fraction"],
-                              "localisation_error_m": metrics_if["localisation_error_m"], "pr_auc": pr_auc_if},
+                              "localisation_error_m": metrics_if["localisation_error_m"],
+                              "localisation_error_cm": metrics_if["localisation_error_cm"], "pr_auc": pr_auc_if},
         "recall_gap_if_minus_mad": recall_gap,
         "interference_gap_mad_minus_if": (float("nan"),) * 3,
         "gate_passed": recall_gap[1] >= train.GATE_RECALL_MARGIN,
