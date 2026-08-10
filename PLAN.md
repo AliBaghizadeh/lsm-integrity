@@ -33,6 +33,11 @@ Use the cut lines.
 
 ## Current status (as of 2026-08-09)
 
+> **This table is a snapshot — it shows where things stand now, and superseded numbers are
+> overwritten in place.** For the chronological "what change caused what movement" view —
+> every intervention with its measured before/after, never rewritten — see
+> [`docs/experiment-log.md`](docs/experiment-log.md).
+
 | Stage | Status |
 |---|---|
 | 0 — Skeleton and reproducibility | Done |

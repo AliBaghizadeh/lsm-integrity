@@ -238,6 +238,10 @@ generator's physics — interference amplitude and defect-type severity, both de
 below is the current, post-refinement measurement; the numbers below are real CLI output,
 captured directly — not estimates, not projected.
 
+> **This section is a snapshot of CURRENT measured values.** For the chronological record —
+> every intervention with its measured before/after, showing which change moved which metric,
+> never rewritten — see [`docs/experiment-log.md`](docs/experiment-log.md).
+
 **Do not read the historical numbers in `docs/interview-reference.md` (25.05 nT residual,
 3.02–3.21× contrast, the pre-Rig-v2 IsolationForest/MAD recall table, etc.) as current.** They
 were measured on the pre-Rig-v2 vector-head model and are kept there, explicitly labelled, as a
