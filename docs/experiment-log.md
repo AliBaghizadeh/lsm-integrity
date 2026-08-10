@@ -37,12 +37,15 @@ turns out to be superseded stays visible with its successor next to it.
 | — | | *— rig change: vector → 3-head scalar —* | | | |
 | 5 | 2026-08-06 | Rig-v2 rebuild | 60 | −0.006 [−0.061, 0.056] | FAIL |
 | 6 | 2026-08-09 | Interference/defect physics refinement | 60 | 0.000 [−0.050, 0.061] | FAIL |
-| 7 | 2026-08-10 | Scale rehearsal under Rig-v2 | 360 | −0.007 (CIs ~2.8× tighter) | FAIL |
+| 7 | 2026-08-10 | Scale rehearsal — block CV | 360 | −0.007 [−0.030, 0.017] | FAIL |
+| 7b | 2026-08-10 | *same run* — whole-line holdout | 360 | −0.013 [−0.037, 0.012] | FAIL |
+| 7c | 2026-08-10 | *same run* — temporal holdout | 360 | −0.014 [−0.047, 0.022] | FAIL |
 
-**What this trajectory says:** seven measurements, four interventions, two rigs — the gap never
-approaches +0.15. It is not a tuning problem. Entry 4 is the strongest single result: at 9,600
-defects the CI excluded zero, establishing IsolationForest is *genuinely slightly worse*, not
-merely indistinguishable. Entries 5–7 reproduce "indistinguishable from zero" on the scalar rig.
+**What this trajectory says:** nine measurements, four interventions, two rigs, three grouping
+schemes — the gap never approaches +0.15, and the two *harder* splits push it slightly further
+negative rather than toward the gate. This is not a tuning problem. Entry 4 remains the strongest
+single result: at 9,600 defects the CI excluded zero, establishing IsolationForest is *genuinely
+slightly worse*, not merely indistinguishable.
 
 ### Stage 4 — severity conformal coverage · gate: inside [0.87, 0.93]
 
@@ -54,15 +57,22 @@ merely indistinguishable. Entries 5–7 reproduce "indistinguishable from zero" 
 | — | | *— rig change: vector → 3-head scalar —* | | | | |
 | 4 | 2026-08-06 | Rig-v2 rebuild | 293 | 0.689 [0.420, 0.945] | beats (0.589) | FAIL |
 | 5 | 2026-08-09 | Physics refinement | 555 | 0.618 [0.386, 0.834] | **under** (0.667) | FAIL — worse than predicting the mean |
-| 6 | 2026-08-10 | Scale rehearsal under Rig-v2 | large | **0.872** [0.805, 0.928] | — | **PASS** |
+| 6 | 2026-08-10 | Scale rehearsal under Rig-v2 — **block CV** | 3,741 | **0.872** [0.805, 0.928] | beats (0.838) | **PASS** |
+| 6b | 2026-08-10 | *same run* — **whole-line holdout** | 2,938 | 0.845 [0.772, 0.911] | ~ties (0.840) | FAIL |
+| 6c | 2026-08-10 | *same run* — **temporal holdout** | 1,192 | 0.860 [0.772, 0.947] | beats (0.825) | FAIL |
 
-**What this trajectory says — the single clearest causal finding in the project.** Coverage
-recovered *twice* purely by adding calibration data (entry 1→2 on the vector rig, entry 5→6 on
-the scalar rig), with no modelling change either time. Entry 5 looked alarming — the model had
-become worse than a naive global-mean baseline — and it would have been easy to conclude the
-conformal layer was broken under the scalar rig. Entry 6 shows it was **data-limited, not
-broken**. This closes an open question that `LSM_PROJECT.md` and `PLAN.md` had both explicitly
-recorded as unanswered.
+**What this trajectory says — the clearest causal finding in the project, with an important
+qualifier.** Coverage recovered *twice* purely by adding calibration data (entry 1→2 on the vector
+rig, entry 5→6 on the scalar rig), with no modelling change either time. Entry 5 looked alarming —
+worse than a naive global-mean baseline — and it would have been easy to conclude the conformal
+layer was broken under the scalar rig. It was **data-limited, not broken**.
+
+**But the recovery is not robust to how honestly you split.** Stage 4 passes under block CV
+(0.872), the grouping the gate is actually configured against — and fails under both harder tests
+(0.845, 0.860), landing just below the band. So the defensible claim is *"more data moved severity
+from badly broken to marginal,"* **not** *"more data fixed severity."* Quoting 6 without 6b/6c
+would be the flattering read. This still closes the open question `LSM_PROJECT.md` and `PLAN.md`
+both recorded as unanswered — the answer is "yes, substantially, but not all the way."
 
 ### Stage 5 — classification · gate: SCC recall ≥ 0.90 at CI lower bound
 
@@ -73,15 +83,21 @@ recorded as unanswered.
 | — | | *— rig change: vector → 3-head scalar —* | | | |
 | 3 | 2026-08-06 | Rig-v2 rebuild | 0.042 [0.000, 0.125] | 0.389 | FAIL |
 | 4 | 2026-08-09 | Physics refinement (type-specific severity) | 0.023 [0.000, 0.068] | 0.333 [0.167, 0.500] | FAIL — but weld/dent/corrosion recall went ~0 → 0.258/0.144/0.171 |
-| 5 | 2026-08-10 | Scale rehearsal under Rig-v2 | 0.129 [0.062, 0.207] | **0.271 [0.216, 0.342]** | FAIL — precision does **not** recover with data |
+| 5 | 2026-08-10 | Scale rehearsal — block CV | 0.129 [0.062, 0.207] | 0.271 [0.216, 0.342] · *baseline 0.281* | FAIL — **below** its own baseline |
+| 5b | 2026-08-10 | *same run* — whole-line holdout | 0.100 [0.045, …] | 0.265 [0.214, 0.315] · *baseline 0.271* | FAIL — **below** baseline |
+| 5c | 2026-08-10 | *same run* — temporal holdout | 0.000 | 0.298 [0.226, 0.363] · *baseline 0.288* | FAIL — ~ties baseline |
 
 **What this trajectory says, and a correction it forces.** Entry 2's **0.999 interference
 precision** was for a long time the project's strongest positive result — "the supervised
-classifier has essentially solved defect-vs-buried-junk." Entry 5 is the direct scalar-rig test
-of whether that survives, and **it does not**: 0.271 with a CI tight enough to be decisive, at 6×
-the demo corpus. Unlike severity, this is *not* data-limited. Any claim that supervised
-classification solves interference discrimination is a **vector-rig claim only** and must not be
-carried over to the scalar rig.
+classifier has essentially solved defect-vs-buried-junk." Entries 5/5b/5c are the direct
+scalar-rig test of whether that survives, and **it does not** — and the failure is worse than
+"doesn't reach 0.999." Across all three splits the model sits at 0.265–0.298, and in two of the
+three it is **at or below the trivial majority-class baseline**. On the scalar rig it is not
+beating "guess the majority class."
+
+Unlike severity, this is *not* data-limited: 6× the data and three grouping schemes move it
+nowhere. Any claim that supervised classification solves interference discrimination is a
+**vector-rig claim only** and must not be carried over to the scalar rig.
 
 ### Stage D — ablation ladder ("software or hardware?")
 
@@ -207,5 +223,73 @@ information rather than a modelling deficiency** — independently corroborated 
 physics result and the ablation ladder's hardware finding. Three separate lines of evidence
 converge on the same conclusion.
 
-*(Whole-line-holdout and temporal-holdout CV results from this run are pending; this entry will be
-extended, not rewritten, when they land.)*
+### 2026-08-10 (cont.) — the same run's two holdout CVs, and a correction they force
+
+The block-CV numbers above are the *optimistic* grouping: folds are keyed on `(line, 100 m block)`
+hash, so blocks 1 and 3 of a line can sit in training while block 2 is tested. The same run also
+ran two strictly harder generalisation tests. **They change one of the conclusions above.**
+
+| Metric | Block CV (optimistic) | Whole-line holdout | Temporal holdout (train runs 0–1, test run 2) |
+|---|---|---|---|
+| Detection gap (IF − MAD) | −0.007 [−0.030, 0.017] | −0.013 [−0.037, 0.012] | −0.014 [−0.047, 0.022] |
+| **Severity coverage** (gate [0.87, 0.93]) | **0.872 — PASS** | **0.845 — FAIL** | **0.860 — FAIL** |
+| Interference precision (model / baseline) | 0.271 / **0.281** | 0.265 / **0.271** | 0.298 / 0.288 |
+| SCC recall (gate ≥0.90) | 0.129 | 0.100 | 0.000 |
+
+**Correction to the block-CV entry above — severity's recovery is weaker than it first appeared.**
+Stage 4 passes *as the gate is configured* (block CV, 0.872). But under both harder tests it lands
+just **below** the band: 0.845 and 0.860. So the honest statement is not "more data fixed severity"
+— it is **"more data moved severity from badly broken (0.618, under its own baseline) to marginal
+(0.845–0.872, straddling the bottom of the band depending on how honestly you split)."** The
+direction is real and large; the pass is not robust to the grouping choice. Reporting the block-CV
+PASS on its own would have been the flattering read.
+
+**Detection: confirmations 5, 6 and 7.** All three splits give a negative point estimate with a CI
+straddling zero (−0.007 / −0.013 / −0.014). Seven measurements, two rigs, four interventions, three
+grouping schemes — IsolationForest never approaches the +0.15 margin, and the two harder splits push
+the point estimate slightly *further* negative, not toward the gate.
+
+**Interference discrimination: the decisive negative.** Across all three splits the classifier sits
+at 0.265–0.298 precision — and in two of the three it is **at or below the trivial majority-class
+baseline** (0.271 vs 0.281 block; 0.265 vs 0.271 whole-line). It is not merely failing to reach the
+vector rig's 0.999; on the scalar rig it is not beating "guess the majority class." Six independent
+measurements (3 splits × model-vs-baseline) all agree.
+
+**Net structural finding, now tested three ways:**
+
+| Failure | More data? | Harder split? | Diagnosis |
+|---|---|---|---|
+| Severity calibration | **Helps a lot** (0.618 → 0.845–0.872) | Degrades it below the band | Data-limited, not yet robust |
+| Detection (IF vs MAD) | No effect | No effect | Information-limited |
+| Interference discrimination | No effect | No effect | Information-limited |
+
+A failure that survives 6× more data, *both* unsupervised and supervised paradigms, and three
+grouping schemes is the signature of **missing information, not modelling deficiency** — the same
+conclusion the POD-vs-angle physics result and the ablation ladder's hardware finding reach
+independently.
+
+### 2026-08-10 — process finding: the scale-rehearsal path had silently rotted
+
+Not a measurement, but it belongs in the causal record. Getting the run above to complete required
+fixing **five** separate Rig-v2 staleness bugs (commits `48eb01b`, `d7c75d6`). Only two failed
+loudly:
+
+| # | Bug | How it failed |
+|---|---|---|
+| 1 | Scale config sized for the old 0.5 m grid | Would have generated ~4.8×10⁸ rows (~1.4 TB RAM) |
+| 2 | `expected_rows` fed into `measure(n_rows=…)` | **Silent** — every rows/sec in the report wrong ~50× |
+| 3 | `_background_contrast_check` read deleted `r_mag_nt` | Crash |
+| 4 | Report hardcoded *"Stage 4's gate now PASSES"* | **Silent** — a false claim printed next to contradicting numbers |
+| 5 | `scale_eval` never passed through `localisation_error_cm` | Crash — **after** ~30 min of finished computation |
+
+**Root cause, common to all five:** Rig-v2 updated the primary path (`train.py`, `generate.py`,
+`features.py`) but not the secondary one (`scale_eval.py`, `scripts/stage6_scale_rehearsal.py`).
+That path has **no CI coverage by design** — it is explicitly excluded as a one-time manual run
+(same convention as `check_observatory_background.py`). Nothing exercised it across a major
+refactor, so it rotted silently for four days.
+
+Bugs 2 and 4 are the instructive ones: neither would have failed. Both would have produced a
+confident, plausible, wrong report — exactly the failure mode this project's whole gate-and-CI
+discipline exists to prevent, in the one corner where that discipline was deliberately switched off.
+The lesson is not "add these to CI" (an 80-minute job doesn't belong on every push) but **"code paths
+excluded from CI need an explicit staleness check at every schema/feature-version bump."**

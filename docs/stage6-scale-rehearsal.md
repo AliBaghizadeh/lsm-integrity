@@ -1,6 +1,6 @@
-# Stage 6 scale rehearsal -- 2026-07-31T09:04:31.396855+00:00
+# Stage 6 scale rehearsal -- 2026-08-10T09:41:03.159484+00:00
 
-Config: `config/scale/base.yaml` -- 40 lines x 40000 m x 3 runs = 9,600,000 rows (~10^7). `config_sha256=7639fecc081a...`
+Config: `config/scale/base.yaml` -- 30 lines x 2000 m x 3 runs = **18,001,953 actual rows** (100.0 rows/m under `rig=scalar`, sampled in time at 120.0 Hz, not on a step_m grid), 360 physical defects. `config_sha256=ad597156ae1a...`
 
 ## Wall-clock + peak RSS per step
 
@@ -8,48 +8,50 @@ Peak RSS is *sampled* (a polling thread reading `psutil.Process().memory_info().
 
 | step | rows | wall (s) | rows/sec | peak RSS (MB) |
 |---|---|---|---|---|
-| generate | 9,600,000 | 505.72 | 18,983 | 709.0 |
-| ingest | 9,440,000 | 33.67 | 280,367 | 391.2 |
-| features | 9,440,000 | 1.04 | 9,069,022 | 375.3 |
-| corpus_read_pandas | 9,440,000 | 2.66 | 3,543,958 | 5,031.1 |
-| corpus_read_duckdb | 9,440,000 | 8.34 | 1,132,199 | 11,254.5 |
-| train_block_cv | 9,600,000 | 765.42 | 12,542 | 23,730.8 |
-| train_whole_line_and_temporal | - | 1017.25 | - | 28,402.9 |
+| generate | 18,001,953 | 1179.23 | 15,266 | 935.8 |
+| ingest | 18,001,953 | 87.68 | 205,312 | 757.3 |
+| features | 18,001,953 | 367.01 | 49,050 | 767.9 |
+| corpus_read_pandas | 18,001,953 | 5.22 | 3,449,323 | 9,226.0 |
+| corpus_read_duckdb | 18,001,953 | 19.50 | 922,947 | 20,887.1 |
+| train_block_cv | 18,001,953 | 1433.08 | 12,562 | 43,453.5 |
+| train_whole_line_and_temporal | - | 1505.58 | - | 49,443.0 |
 
-## Background-contrast gate re-check
+## Background-contrast re-check (informational, not a gate)
 
-Contrast (defect median / background median) on `LINE000_R0`: **2.70x** -- **DID NOT PASS** the Stage 2 gate (>= 3.0x). Background median 7.72 nT (essentially unchanged from the demo corpus's ~7.7-8.1 nT -- the detrend/high-pass is NOT degrading at 40 km), but defect median 20.83 nT is notably lower than the demo's ~25 nT, while defect MAX is 139.07 nT -- a strongly right-skewed distribution. Most likely explanation, consistent with both measurements: the demo's own median was computed over only 12 defects and was itself optimistic (a small-sample fluke on a skewed distribution), not a sign that detrending degrades at this length. Density-per-km is unchanged from the demo corpus (6 defects/km, 2 interference/km), ruling out a packing-density explanation. This is a real, measured gate miss, reported honestly rather than adjusted away -- revisiting it (e.g. a larger single-survey sample for the Stage 2 gate check itself) is future work, out of Stage 6's scope.
+Contrast (defect median / background median of `|r_mid_nt|`) on `LINE000_R0`: **1.62x**. Background median 13.52 nT, defect median 21.94 nT, defect max 219.87 nT (the gap between defect median and max indicates how right-skewed the defect population is -- severity is drawn per type, so a wide spread is expected by construction, not a defect in the measurement).
 
-## A real bug found at scale: NaN severity_smys poisoning conformal coverage
+**Read this as a number, not a verdict.** The historical >= 3.0x threshold was calibrated on the PRE-RIG-V2 vector rig, which measured 3.19x on a residual VECTOR MAGNITUDE (`r_mag_nt`). The scalar rig has no vector to take a magnitude of: the closest equivalent is `|r_mid_nt|`, the absolute value of the middle head's signed total-field residual. These are different physical quantities, and no like-for-like contrast baseline has been established for the scalar rig -- Stage D re-measured every promotion gate and ran the ablation ladder, but never produced a matching contrast figure. Comparing the number above against 3.0x would therefore be comparing across a rig change, which this project explicitly does not do elsewhere. What this check IS good for: confirming the detrend/high-pass still separates defect rows from background rows at this corpus size at all, and giving a first scalar-rig contrast figure that a future run can be compared against. Density-per-km is unchanged from the demo corpus (6 defects/km, 2 interference/km), so any movement here is not a packing-density artefact.
 
-`generate.py` initialises `severity_smys` to NaN off-defect (not 0, contradicting this project's own documented "0 off-defect" convention). A detector's peak occasionally lands just outside a defect's exact label-window half-width while still within the looser `MATCH_TOLERANCE_M` dig-matching radius, so `match_dug_indications` still credits it as matched, but that row's own `severity_smys` is NaN, not the defect's true value -- 36 of 18,917 matched indications (0.4%) at this scale (0 at demo scale, apparently never sampled). A single NaN `y_true` reaching `SeverityModel.fit`'s conformal calibration silently NaN'd the WHOLE fold's margin (`np.quantile` propagates NaN), which then NaN'd every prediction's interval for that fold -- cascading a 0.4%-incidence data issue into an initial 0% pooled coverage across the entire OOF result (confirmed by an earlier run of this same rehearsal, before the fix), not a gradual degradation. Fixed in `train.py::_build_severity_training_frame` (drop NaN-`y_true` rows upstream, loudly) plus a belt-and-braces guard in `SeverityModel.fit` itself. Confirmed working below: Stage 4's gate now PASSES at this scale.
+## Historical: a real bug found at scale (original 2026-07-31 pre-Rig-v2 run)
 
-## A real bug found at scale: classify's n_estimators/num_leaves were dead config
+*The two bug write-ups in this section and the next were found by the ORIGINAL Stage 6 run on the pre-Rig-v2 vector rig, and both were fixed then. They are kept here as the record of what a scale rehearsal is FOR -- the incidence figures and follow-on metrics quoted in them are that run's, not this one's. Do not read them as measurements of the current corpus.*
 
-`config/base.yaml`'s `model.classify.n_estimators`/`num_leaves` looked tunable but were never threaded from config into `ClassifyModel`'s `lgbm_cfg` in `train.py` -- editing them had NO effect, silently, since they coincidentally matched `ClassifyModel`'s own hardcoded fallback defaults (50/7). Found while investigating why `config/scale/base.yaml`'s larger capacity values weren't visibly changing classify's behaviour. Fixed by merging `classify_cfg`'s values into the `lgbm_cfg` dict at both call sites. Confirmed working: SCC recall improved from a first, capacity-starved run (0.50 block-CV / 0.39 whole-line) to the numbers reported below (0.64 block-CV / 0.68 whole-line).
+`generate.py` initialises `severity_smys` to NaN off-defect (not 0, contradicting this project's own documented "0 off-defect" convention). A detector's peak occasionally lands just outside a defect's exact label-window half-width while still within the looser `MATCH_TOLERANCE_M` dig-matching radius, so `match_dug_indications` still credits it as matched, but that row's own `severity_smys` is NaN, not the defect's true value -- 36 of 18,917 matched indications (0.4%) at this scale (0 at demo scale, apparently never sampled). A single NaN `y_true` reaching `SeverityModel.fit`'s conformal calibration silently NaN'd the WHOLE fold's margin (`np.quantile` propagates NaN), which then NaN'd every prediction's interval for that fold -- cascading a 0.4%-incidence data issue into an initial 0% pooled coverage across the entire OOF result, not a gradual degradation. Fixed in `train.py::_build_severity_training_frame` (drop NaN-`y_true` rows upstream, loudly) plus a belt-and-braces guard in `SeverityModel.fit` itself. The fix is still in place and still guards this path; whether Stage 4's gate passes on the CURRENT corpus is reported in the results section below, not asserted here.
+
+## Historical: classify's n_estimators/num_leaves were dead config (same original run)
+
+`config/base.yaml`'s `model.classify.n_estimators`/`num_leaves` looked tunable but were never threaded from config into `ClassifyModel`'s `lgbm_cfg` in `train.py` -- editing them had NO effect, silently, since they coincidentally matched `ClassifyModel`'s own hardcoded fallback defaults (50/7). Found while investigating why `config/scale/base.yaml`'s larger capacity values weren't visibly changing classify's behaviour. Fixed by merging `classify_cfg`'s values into the `lgbm_cfg` dict at both call sites. Confirmed working: SCC recall improved from a first, capacity-starved run (0.50 block-CV / 0.39 whole-line) to the numbers reported below.
 
 ## A real DQ finding at scale: survey_overlap quarantines
 
-2 of 120 surveys (1.7%) were quarantined by `check_survey_overlap`, all on a correlation just above the fixed 0.9 threshold:
-  - `LINE013_R2`: survey_overlap (n_affected=1)
-  - `LINE029_R1`: survey_overlap (n_affected=1)
+None -- every survey passed `check_survey_overlap` at this scale.
 
-`check_survey_overlap` (validate.py) takes the MAX correlation across ALL prior same-line surveys, not just the immediately preceding one -- so as more runs of a line accumulate, this max is an order statistic over a growing number of comparisons and trends upward even if each individual run-pair's correlation distribution is unchanged (R2 is checked against both R0 and R1; R0 has nothing to compare against). Separately, a much longer line (40 km vs the demo's 2 km) gives two runs' shared deterministic structure (same defect/interference positions, same geo/lat-lon path) far more samples to accumulate correlated structure in a plain Pearson correlation, even though each run's background noise is drawn independently. Together these make a same-line overlap correlation naturally higher at this scale than the 2 km demo corpus ever exercised -- the fixed 0.9 threshold, calibrated only against short lines and few runs, was never stress-tested against this regime. This is a real, scale-driven finding, not a generator bug: the DQ layer did exactly what it's designed to do (quarantine, not crash), and the affected surveys were correctly excluded from the training corpus below. Revisiting the threshold for long-line, many-run deployments is future work, out of Stage 6's scope.
+`check_survey_overlap` (validate.py) takes the MAX correlation across ALL prior same-line surveys, not just the immediately preceding one -- so as more runs of a line accumulate, this max is an order statistic over a growing number of comparisons and trends upward even if each individual run-pair's correlation distribution is unchanged (R2 is checked against both R0 and R1; R0 has nothing to compare against). Separately, the more rows a single survey carries (200,021 per survey here, at 2000 m and 100 rows/m), the more samples two runs' shared deterministic structure (same defect/interference positions, same geo/lat-lon path) has to accumulate correlated structure in a plain Pearson correlation, even though each run's background noise is drawn independently. The ORIGINAL pre-Rig-v2 Stage 6 run hit this regime with 40 km lines and saw real quarantines; whether this run does is given by the count immediately above, not assumed here. Either way the fixed 0.9 threshold was calibrated against short lines and few runs and has never been systematically stress-tested -- and where it does fire, the DQ layer is doing exactly what it is designed to do (quarantine, not crash), with the affected surveys correctly excluded from the training corpus. Revisiting the threshold for long-line, many-run deployments is future work, out of Stage 6's scope.
 
 ## Where SQLite stopped being the right tool
 
 - Before (pre-Stage-6, per-row `itertuples()`+`float()`-per-cell `load_readings`, measured once by hand at 80,000 rows): **235,982 rows/sec**, peak RSS 183.5 MB.
-- After (vectorized NaN->None + dtype-cast, this rehearsal, 9,600,000 rows): **280,367 rows/sec**, peak RSS 391.2 MB (1.19x).
+- After (vectorized NaN->None + dtype-cast, this rehearsal, 18,001,953 rows): **205,312 rows/sec**, peak RSS 757.3 MB (0.87x).
 - Conclusion: the naive Python-level row conversion was a real, measurable cost, but not the dominant one -- SQLite's own `executemany` insert path is the majority of the remaining cost at this row count. This matches `.claude/skills/lsm-integrity/references/architecture.md`'s own claim that SQLite "comfortably handles 10^7 rows read-mostly" -- it stops being the right tool at concurrent multi-writer ingest, not at this data volume, which this demonstrator never has.
 
 ## Bulk-read path: pandas-concat vs DuckDB
 
-- `features.load_feature_corpus` (per-file glob + `pd.concat`): 2.66s for 9,440,000 rows.
-- `scale_eval.load_feature_corpus_duckdb` (one DuckDB glob read): 8.34s for 9,440,000 rows.
+- `features.load_feature_corpus` (per-file glob + `pd.concat`): 5.22s for 18,001,953 rows.
+- `scale_eval.load_feature_corpus_duckdb` (one DuckDB glob read): 19.50s for 18,001,953 rows.
 
 ## Small-files problem
 
-118 feature-store files at this scale (40 lines x 3 runs) -- PLAN.md's own "120 tiny per-survey Parquet files is fine" example, not the 10^5-file failure case. This rehearsal does not hit that failure mode -- the documented production answer (periodic compaction to line-level Parquet files) is noted here, not artificially triggered.
+90 feature-store files at this scale (30 lines x 3 runs) -- PLAN.md's own "120 tiny per-survey Parquet files is fine" example, not the 10^5-file failure case. This rehearsal does not hit that failure mode -- the documented production answer (periodic compaction to line-level Parquet files) is noted here, not artificially triggered.
 
 ## float32 arithmetic
 
@@ -58,47 +60,49 @@ The feature store is float32 throughout (`features.py`'s `STORAGE_DTYPE`). Sever
 ## Default 5-fold block CV (the real gate, `run_train`, unchanged)
 
 ```
-_build_severity_training_frame: dropping 36 matched indication(s) whose peak row has a NaN severity_smys (peak landed outside the true label window while still within the dig-matching tolerance) -- see train.py's comment.
+_build_severity_training_frame: dropping 6314 matched indication(s) whose peak row has a NaN severity_smys (peak landed outside the true label window while still within the dig-matching tolerance) -- see train.py's comment.
 
 === Stage 3: MAD baseline vs IsolationForest (grouped CV, out-of-fold) ===
 
 MAD baseline:
-  recall @ dig budget           0.639  [0.630, 0.648]
-  false-dig rate                0.233  [0.228, 0.237]
-    of which: interference      0.233  [0.228, 0.237]
-  localisation error (m)        0.284  [0.283, 0.286]
-  PR-AUC (diagnostic)           0.332
+  recall @ dig budget           0.110  [0.086, 0.135]
+  false-dig rate                0.868  [0.846, 0.891]
+    of which: interference      0.081  [0.068, 0.096]
+  localisation error (m)        7.549  [6.707, 8.344]
+  localisation error (cm)      754.851  [670.715, 834.385]
+  PR-AUC (diagnostic)           0.035
 
 IsolationForest:
-  recall @ dig budget           0.610  [0.600, 0.618]
-  false-dig rate                0.266  [0.257, 0.274]
-    of which: interference      0.230  [0.226, 0.233]
-  localisation error (m)        0.423  [0.416, 0.431]
-  PR-AUC (diagnostic)           0.383
+  recall @ dig budget           0.103  [0.080, 0.128]
+  false-dig rate                0.877  [0.856, 0.899]
+    of which: interference      0.069  [0.056, 0.083]
+  localisation error (m)        7.873  [7.085, 8.612]
+  localisation error (cm)      787.298  [708.457, 861.247]
+  PR-AUC (diagnostic)           0.033
 
-Recall gap (IsolationForest - MAD): -0.029  [-0.033, -0.026]
+Recall gap (IsolationForest - MAD): -0.007  [-0.030, 0.017]
 Stage 3 gate (>= 0.15 recall gap, at the CI lower bound): DOES NOT PASS
 
-Interference-dig-fraction gap (MAD - IsolationForest): 0.003  [0.001, 0.005]
--> the recall gap IS attributable to interference rejection: MAD wastes more of its dig budget on interference than IsolationForest does.
+Interference-dig-fraction gap (MAD - IsolationForest): 0.012  [-0.002, 0.028]
+-> the recall gap is NOT clearly attributable to interference rejection at this confidence level -- reporting this honestly, as the gate requires, rather than claiming a mechanism the data doesn't support.
 
-(9600 physical defects, 118 surveys evaluated)
+(360 physical defects, 90 surveys evaluated)
 
 === Stage 4: severity -- LightGBM quantile + split conformal vs global-mean baseline ===
 
 Global-mean baseline:
-  coverage @ 90% nominal        0.889  [0.883, 0.895]
-  MAE                          15.015  [14.825, 15.200]
-  mean interval width          59.713  [59.708, 59.719]
+  coverage @ 90% nominal        0.838  [0.756, 0.904]
+  MAE                          16.959  [14.600, 19.421]
+  mean interval width          69.416  [65.377, 73.138]
 
 LightGBM CQR:
-  coverage @ 90% nominal        0.896  [0.891, 0.901]
-  MAE                           3.363  [3.321, 3.410]
-  mean interval width          16.272  [16.214, 16.329]
+  coverage @ 90% nominal        0.872  [0.805, 0.928]
+  MAE                          21.263  [18.616, 23.898]
+  mean interval width          69.179  [66.669, 71.690]
 
 Stage 4 gate (coverage in [0.87, 0.93]): PASSES
-MAE by severity decile: {'(20.134999999999998, 44.04]': 3.0789948178144395, '(44.04, 51.668]': 3.311677131022236, '(51.668, 57.838]': 3.2971199930654334, '(57.838, 63.262]': 3.3126750071972784, '(63.262, 68.178]': 3.2436426606961626, '(68.178, 72.834]': 3.216103354951089, '(72.834, 77.48]': 3.4513197622165603, '(77.48, 83.327]': 3.4583020589974147, '(83.327, 90.922]': 3.4953862465443972, '(90.922, 105.789]': 4.05488212229367}
-(n=18881 matched, severity-labelled indications)
+MAE by severity decile: {'(19.596, 25.251]': 35.988660327946334, '(25.251, 32.415]': 31.58966521526455, '(32.415, 35.421]': 29.608164039941812, '(35.421, 41.764]': 15.3944770294914, '(41.764, 45.051]': 11.285570526258839, '(45.051, 51.809]': 10.419416634798262, '(51.809, 57.387]': 10.742070407376042, '(57.387, 58.538]': 7.299805152585589, '(58.538, 81.195]': 23.33452493255931, '(81.195, 102.497]': 34.841123003139074}
+(n=3741 matched, severity-labelled indications)
 
 === Stage 5: classification -- LightGBM multiclass + isotonic calibration vs majority-class baseline ===
 
@@ -108,69 +112,71 @@ Majority-class baseline:
     recall: dent                0.000  [0.000, 0.000]
     recall: corrosion           0.000  [0.000, 0.000]
     recall: interference        1.000  [1.000, 1.000]
-  interference precision        0.217  [0.209, 0.225]
-  Brier score                   0.800  [0.799, 0.801]
+  interference precision        0.281  [0.229, 0.332]
+  Brier score                   0.792  [0.781, 0.804]
 
 LightGBM multiclass:
-    recall: scc                 0.636  [0.620, 0.652]
-    recall: weld                0.038  [0.031, 0.044]
-    recall: dent                0.026  [0.021, 0.031]
-    recall: corrosion           0.292  [0.277, 0.306]
-    recall: interference        0.998  [0.996, 1.000]
-  interference precision        0.999  [0.998, 1.000]
-  Brier score                   0.590  [0.583, 0.596]
+    recall: scc                 0.129  [0.062, 0.207]
+    recall: weld                0.071  [0.024, 0.131]
+    recall: dent                0.152  [0.081, 0.238]
+    recall: corrosion           0.048  [0.004, 0.111]
+    recall: interference        0.490  [0.398, 0.583]
+  interference precision        0.271  [0.216, 0.342]
+  Brier score                   0.862  [0.838, 0.887]
 
-SCC recall: 0.636 [CI lower bound 0.620]
+SCC recall: 0.129 [CI lower bound 0.062]
 Stage 5 recall gate (SCC recall >= 0.90 at the CI lower bound): DOES NOT PASS
 Stage 5 physics-consistency gate (no ['chainage_m', 'chainage_peak_m', 'chainage_start_m', 'chainage_end_m', 'sample_idx'] feature in top-10 by contribution): PASSES
 Stage 5 gate overall: DOES NOT PASS
-(n=24678 matched, classifiable indications)
+(n=2278 matched, classifiable indications)
 ```
 
 ## Whole-line-holdout CV (Stage 6: "the real generalisation test")
 
-An entire physical line held out per fold (5 folds, ~8 lines/fold), instead of today's default (line, 100 m block) hash grouping, which scatters one line's blocks across ~all folds.
+An entire physical line held out per fold (5 folds, ~6 lines/fold), instead of today's default (line, 100 m block) hash grouping, which scatters one line's blocks across ~all folds.
 
 ```
 === Stage 3: MAD baseline vs IsolationForest (grouped CV, out-of-fold) ===
 
 MAD baseline:
-  recall @ dig budget           0.639  [0.630, 0.648]
-  false-dig rate                0.233  [0.228, 0.237]
-    of which: interference      0.233  [0.228, 0.237]
-  localisation error (m)        0.284  [0.283, 0.286]
-  PR-AUC (diagnostic)           0.332
+  recall @ dig budget           0.111  [0.086, 0.136]
+  false-dig rate                0.867  [0.844, 0.889]
+    of which: interference      0.080  [0.066, 0.093]
+  localisation error (m)        7.558  [6.705, 8.326]
+  localisation error (cm)      755.759  [670.492, 832.633]
+  PR-AUC (diagnostic)           0.035
 
 IsolationForest:
-  recall @ dig budget           0.610  [0.601, 0.619]
-  false-dig rate                0.264  [0.256, 0.273]
-    of which: interference      0.231  [0.227, 0.235]
-  localisation error (m)        0.460  [0.453, 0.467]
-  PR-AUC (diagnostic)           0.383
+  recall @ dig budget           0.098  [0.075, 0.123]
+  false-dig rate                0.882  [0.861, 0.903]
+    of which: interference      0.070  [0.056, 0.086]
+  localisation error (m)        7.847  [7.061, 8.640]
+  localisation error (cm)      784.670  [706.052, 864.029]
+  PR-AUC (diagnostic)           0.033
 
-Recall gap (IsolationForest - MAD): -0.029  [-0.033, -0.025]
+Recall gap (IsolationForest - MAD): -0.013  [-0.037, 0.012]
 Stage 3 gate (>= 0.15 recall gap, at the CI lower bound): DOES NOT PASS
 
-Interference-dig-fraction gap (MAD - IsolationForest): 0.002  [-0.000, 0.003]
+Interference-dig-fraction gap (MAD - IsolationForest): 0.010  [-0.003, 0.023]
 -> the recall gap is NOT clearly attributable to interference rejection at this confidence level -- reporting this honestly, as the gate requires, rather than claiming a mechanism the data doesn't support.
 
-(9600 physical defects, 118 surveys evaluated)
+(360 physical defects, 90 surveys evaluated)
 
 === Stage 4: severity -- LightGBM quantile + split conformal vs global-mean baseline ===
 
 Global-mean baseline:
-  coverage @ 90% nominal        0.885  [0.879, 0.891]
-  MAE                          15.012  [14.839, 15.207]
-  mean interval width          59.293  [59.285, 59.302]
+  coverage @ 90% nominal        0.840  [0.764, 0.912]
+  MAE                          16.463  [14.219, 18.707]
+  mean interval width          56.182  [55.288, 57.233]
 
 LightGBM CQR:
-  coverage @ 90% nominal        0.902  [0.897, 0.907]
-  MAE                           3.367  [3.326, 3.408]
-  mean interval width          16.659  [16.599, 16.714]
+  coverage @ 90% nominal        0.845  [0.772, 0.911]
+  MAE                          17.129  [14.648, 19.828]
+  mean interval width          64.308  [60.918, 67.607]
 
-Stage 4 gate (coverage in [0.87, 0.93]): PASSES
-MAE by severity decile: {'(20.134999999999998, 43.83]': 3.1665786929773163, '(43.83, 51.578]': 3.338689176764921, '(51.578, 57.693]': 3.2686555094966723, '(57.693, 63.122]': 3.397651651528315, '(63.122, 68.035]': 3.27311331394923, '(68.035, 72.785]': 3.253854747768094, '(72.785, 77.418]': 3.3436251208661782, '(77.418, 83.285]': 3.3073754930038164, '(83.285, 90.899]': 3.418096261362236, '(90.899, 105.789]': 4.123461693059629}
-(n=18933 matched, severity-labelled indications)
+Stage 4 gate (coverage in [0.87, 0.93]): DOES NOT PASS
+MAE by severity decile: {'(18.046999999999997, 25.251]': 10.401786756240336, '(25.251, 29.51]': 20.20979372289579, '(29.51, 37.015]': 16.658800600068282, '(37.015, 41.764]': 7.714719698292241, '(41.764, 48.785]': 5.103661464516056, '(48.785, 54.716]': 12.897671319283631, '(54.716, 57.387]': 11.153032183528166, '(57.387, 60.425]': 9.402386884179778, '(60.425, 78.429]': 23.351661877179698, '(78.429, 102.497]': 37.71973126888667}
+(n=2938 matched, severity-labelled indications)
 
 === Stage 5: classification -- LightGBM multiclass + isotonic calibration vs majority-class baseline ===
 
@@ -180,21 +186,21 @@ Majority-class baseline:
     recall: dent                0.000  [0.000, 0.000]
     recall: corrosion           0.000  [0.000, 0.000]
     recall: interference        1.000  [1.000, 1.000]
-  interference precision        0.215  [0.207, 0.224]
-  Brier score                   0.800  [0.800, 0.801]
+  interference precision        0.271  [0.216, 0.326]
+  Brier score                   0.795  [0.785, 0.804]
 
 LightGBM multiclass:
-    recall: scc                 0.675  [0.659, 0.691]
-    recall: weld                0.039  [0.033, 0.046]
-    recall: dent                0.016  [0.012, 0.020]
-    recall: corrosion           0.249  [0.235, 0.265]
-    recall: interference        0.998  [0.996, 1.000]
-  interference precision        0.997  [0.994, 0.999]
-  Brier score                   0.590  [0.585, 0.597]
+    recall: scc                 0.100  [0.045, 0.168]
+    recall: weld                0.030  [0.000, 0.073]
+    recall: dent                0.061  [0.017, 0.117]
+    recall: corrosion           0.028  [0.000, 0.064]
+    recall: interference        0.710  [0.624, 0.791]
+  interference precision        0.265  [0.214, 0.315]
+  Brier score                   0.816  [0.797, 0.835]
 
-SCC recall: 0.675 [CI lower bound 0.659]
+SCC recall: 0.100 [CI lower bound 0.045]
 Stage 5 recall gate (SCC recall >= 0.90 at the CI lower bound): DOES NOT PASS
-(n=24738 matched, classifiable indications)
+(n=2213 matched, classifiable indications)
 ```
 
 ## Temporal holdout (train runs 0-1, test run 2)
@@ -203,42 +209,44 @@ Stage 5 recall gate (SCC recall >= 0.90 at the CI lower bound): DOES NOT PASS
 === Stage 3: MAD baseline vs IsolationForest (grouped CV, out-of-fold) ===
 
 MAD baseline:
-  recall @ dig budget           0.639  [0.630, 0.650]
-  false-dig rate                0.213  [0.208, 0.218]
-    of which: interference      0.213  [0.207, 0.218]
-  localisation error (m)        0.280  [0.277, 0.283]
-  PR-AUC (diagnostic)           0.373
+  recall @ dig budget           0.122  [0.092, 0.156]
+  false-dig rate                0.853  [0.817, 0.887]
+    of which: interference      0.083  [0.060, 0.107]
+  localisation error (m)        7.073  [5.928, 8.317]
+  localisation error (cm)      707.267  [592.775, 831.727]
+  PR-AUC (diagnostic)           0.035
 
 IsolationForest:
-  recall @ dig budget           0.637  [0.628, 0.647]
-  false-dig rate                0.216  [0.210, 0.221]
-    of which: interference      0.212  [0.207, 0.217]
-  localisation error (m)        0.406  [0.399, 0.411]
-  PR-AUC (diagnostic)           0.430
+  recall @ dig budget           0.108  [0.081, 0.142]
+  false-dig rate                0.870  [0.840, 0.903]
+    of which: interference      0.070  [0.047, 0.097]
+  localisation error (m)        7.409  [6.090, 8.783]
+  localisation error (cm)      740.902  [609.009, 878.286]
+  PR-AUC (diagnostic)           0.033
 
-Recall gap (IsolationForest - MAD): -0.002  [-0.007, 0.002]
+Recall gap (IsolationForest - MAD): -0.014  [-0.047, 0.022]
 Stage 3 gate (>= 0.15 recall gap, at the CI lower bound): DOES NOT PASS
 
 Interference-dig-fraction gap (MAD - IsolationForest): nan  [nan, nan]
 -> the recall gap is NOT clearly attributable to interference rejection at this confidence level -- reporting this honestly, as the gate requires, rather than claiming a mechanism the data doesn't support.
 
-(9600 physical defects, 39 surveys evaluated)
+(360 physical defects, 30 surveys evaluated)
 
 === Stage 4: severity -- LightGBM quantile + split conformal vs global-mean baseline ===
 
 Global-mean baseline:
-  coverage @ 90% nominal        0.687  [0.677, 0.697]
-  MAE                          18.934  [18.641, 19.191]
-  mean interval width          51.245  [51.245, 51.245]
+  coverage @ 90% nominal        0.825  [0.719, 0.912]
+  MAE                          18.351  [15.059, 22.302]
+  mean interval width          65.799  [65.799, 65.799]
 
 LightGBM CQR:
-  coverage @ 90% nominal        0.708  [0.698, 0.718]
-  MAE                           4.750  [4.664, 4.838]
-  mean interval width          16.549  [16.489, 16.613]
+  coverage @ 90% nominal        0.860  [0.772, 0.947]
+  MAE                          20.726  [16.967, 24.846]
+  mean interval width          74.341  [72.166, 76.581]
 
 Stage 4 gate (coverage in [0.87, 0.93]): DOES NOT PASS
-MAE by severity decile: {'(26.503999999999998, 45.467]': 3.1413589285967087, '(45.467, 54.098]': 3.39775373507666, '(54.098, 61.067]': 3.339353233428903, '(61.067, 68.037]': 3.224822001540721, '(68.037, 74.2]': 3.1039253275089176, '(74.2, 80.463]': 3.0718944166873587, '(80.463, 87.034]': 3.119437450997296, '(87.034, 93.052]': 4.711375288165124, '(93.052, 99.37]': 7.8462154803039645, '(99.37, 105.789]': 12.54322935276542}
-(n=7374 matched, severity-labelled indications)
+MAE by severity decile: {'(25.25, 29.951]': 16.563381129002547, '(29.951, 40.651]': 9.748368657670538, '(40.651, 51.649]': 9.432971417245495, '(51.649, 57.439]': 10.206926043018633, '(57.439, 59.827]': 11.918683278497568, '(59.827, 61.597]': 22.473849984313965, '(61.597, 76.77]': 28.31315197662098, '(76.77, 82.43]': 41.08429769337296, '(82.43, 102.497]': 45.030348699635354}
+(n=1192 matched, severity-labelled indications)
 
 === Stage 5: classification -- LightGBM multiclass + isotonic calibration vs majority-class baseline ===
 
@@ -248,20 +256,20 @@ Majority-class baseline:
     recall: dent                0.000  [0.000, 0.000]
     recall: corrosion           0.000  [0.000, 0.000]
     recall: interference        1.000  [1.000, 1.000]
-  interference precision        0.208  [0.201, 0.217]
-  Brier score                   0.801  [0.800, 0.802]
+  interference precision        0.288  [0.228, 0.347]
+  Brier score                   0.791  [0.780, 0.802]
 
 LightGBM multiclass:
-    recall: scc                 0.572  [0.550, 0.594]
-    recall: weld                0.137  [0.122, 0.152]
-    recall: dent                0.170  [0.153, 0.187]
-    recall: corrosion           0.174  [0.157, 0.192]
-    recall: interference        0.997  [0.995, 0.999]
-  interference precision        1.000  [1.000, 1.000]
-  Brier score                   0.597  [0.590, 0.603]
+    recall: scc                 0.000  [0.000, 0.000]
+    recall: weld                0.128  [0.026, 0.231]
+    recall: dent                0.054  [0.000, 0.135]
+    recall: corrosion           0.000  [0.000, 0.000]
+    recall: interference        0.794  [0.698, 0.889]
+  interference precision        0.298  [0.226, 0.363]
+  Brier score                   0.809  [0.778, 0.842]
 
-SCC recall: 0.572 [CI lower bound 0.550]
+SCC recall: 0.000 [CI lower bound 0.000]
 Stage 5 recall gate (SCC recall >= 0.90 at the CI lower bound): DOES NOT PASS
-(n=9347 matched, classifiable indications)
+(n=835 matched, classifiable indications)
 ```
 
