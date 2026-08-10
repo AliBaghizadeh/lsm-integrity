@@ -5,41 +5,59 @@
 # `load_config("dev", config_dir=CONFIG_DIR / "scale")`. See
 # docs/stage6-scale-rehearsal.md and PLAN.md's Stage 6 section.
 #
-# Exactly four scalars differ from the real config/base.yaml, chosen to reach
-# ~10^7 rows while keeping defect/interference density at the
-# already-validated-safe 6/km, 2/km ratio (today's demo corpus is 12
-# defects / 2000 m, 4 interference / 2000 m -- a past experiment packing 60
-# defects onto one 2000 m line, 30/km, measured to degrade the Stage 2
-# background-contrast gate from 3.19x to ~2.7x, so density is scaled via
-# MORE/LONGER lines, never denser packing, exactly like the n_lines 1->5 bump
-# earlier in this project's history):
-#   n_lines:        5     -> 40      (40 independent lines)
-#   length_m:    2000.0   -> 40000.0 (40 km/line -- a realistic full-segment
-#                                      survey length, not a demo snippet)
-#   n_defects:     12     -> 240     (240/40km = 6/km, same density as today)
-#   n_interference: 4     -> 80      (80/40km = 2/km, same density as today)
-# 40 x (40000/0.5) x 3 = 9,600,000 rows =~ 10^7, matching both PLAN.md's
-# "~10^7" and its own "n_lines: 40" figure.
+# RE-DERIVED FOR RIG-V2 (2026-08-10). The previous target here (40 lines x
+# 40 km, n_defects 240/line) was written for the OLD uniform step_m=0.5 grid,
+# where 40 x (40000/0.5) x 3 = 9.6M rows. That arithmetic no longer holds and
+# the file said so, flagged-not-fixed, until this run:
 #
-# STALE UNDER RIG-V2 (2026-08-06, Stage A, flagged not fixed -- re-deriving a
-# new row-count target is a scale-rehearsal decision, out of Stage A's scope):
-# the ~10^7 arithmetic above assumed the OLD uniform step_m=0.5 grid.
-# `rig: scalar`'s walk model samples at walk.sample_rate_hz (120 Hz) in TIME,
-# which at the nominal 1.2 m/s works out to ~1 cm mean spacing -- ~50x denser
-# than step_m=0.5 -- so this file's n_lines/length_m, unchanged below, would
-# now produce ~5x10^8 rows, not ~10^7. Confirm the intended target before
-# actually running this config's `generate` for a scale rehearsal.
+#   Rig-v2's `rig: scalar` samples at walk.sample_rate_hz (120 Hz) in TIME,
+#   not on a distance grid. Measured on the real demo corpus: 200,773 rows
+#   over 2000 m = **100.4 rows/m**, ~200x denser than step_m=0.5's 2 rows/m.
+#   The old 40x40km numbers would now generate ~4.8x10^8 rows -- extrapolating
+#   the original run's 28.4 GB peak RSS at 9.6M rows, that needs ~1.4 TB of
+#   RAM. Not a tuning question; structurally infeasible.
+#
+# The binding constraint is therefore MEMORY, not defect density. Working
+# backwards from ~60 GB peak RSS (leaving real headroom on a 136 GB machine,
+# since the original run's heaviest step held 28.4 GB at 9.6M rows):
+#   ~18M rows / (100.4 rows/m x 3 runs) = ~60 km of total survey
+#   60 km x 6 defects/km = ~360 physical defects
+#
+# Scaled via MORE INDEPENDENT LINES at the demo config's own per-line density,
+# never denser packing (a past experiment at 30 defects/km measured the Stage 2
+# background-contrast gate degrading 3.19x -> ~2.7x, because background rows
+# start sitting inside a neighbour's 1/r^3 tail):
+#   n_lines:        5     -> 30      (30 independent lines/backgrounds, up
+#                                      from 5 -- what the bootstrap actually
+#                                      resamples over is physical defects, and
+#                                      independent lines is how you buy them
+#                                      without touching density)
+#   length_m:    2000.0   -> 2000.0  (UNCHANGED)
+#   n_defects:     12     -> 12      (UNCHANGED -- 6/km, same as demo)
+#   n_interference: 4     -> 4       (UNCHANGED -- 2/km, same as demo)
+# 30 x 2000 m x 100.4 rows/m x 3 runs =~ 18.1M rows, 360 defects.
+#
+# HONEST LIMIT, state this alongside any result from this config: 360 defects
+# is 6x the demo corpus's 60 (CI widths shrink ~sqrt(6) = 2.4x), NOT the 800x
+# of the pre-Rig-v2 Stage 6 rehearsal (which reached 9,600 defects because
+# 0.5 m sampling bought ~200x more metres per row). Matching that defect count
+# under Rig-v2 needs ~4.8x10^8 rows. So this run can tighten a CI decisively
+# around zero; it cannot resolve an effect 6x smaller than the demo corpus can
+# already see. Trading line LENGTH for line COUNT also means these are 2 km
+# survey snippets, not the 40 km full-segment lengths the old config used --
+# a realism cost taken deliberately, since independent backgrounds are what
+# the statistics need and per-line length does not change defects-per-row.
 seed: 42
 
 data:
-  n_lines: 40
-  length_m: 40000.0
+  n_lines: 30
+  length_m: 2000.0
   step_m: 0.5
   depth_m: 1.5
   background_nT: [19000.0, 1000.0, 45000.0]
   noise_nT: 5.0
-  n_defects: 240
-  n_interference: 80
+  n_defects: 12
+  n_interference: 4
   # Interference sources are large steel objects, not defects. Their moment is
   # scaled so that at a typical 3-8 m lateral offset they arrive at roughly
   # defect-comparable amplitude -- (5.5/1.5)^3 ~ 50 for the 1/r^3 falloff. Set

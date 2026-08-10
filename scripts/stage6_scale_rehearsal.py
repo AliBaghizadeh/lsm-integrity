@@ -1,7 +1,10 @@
 """
 Stage 6: the scale rehearsal. Generates, ingests, featurises, and trains
-against `config/scale/` (~9.6M rows, ~40 lines x 40 km x 3 runs -- see
-`config/scale/base.yaml`'s own header for the density-preserving arithmetic),
+against `config/scale/` (currently ~18M rows, 30 lines x 2 km x 3 runs =
+360 physical defects, re-derived for Rig-v2's ~100 rows/m time-based
+sampling -- see `config/scale/base.yaml`'s own header for the full
+arithmetic and for why matching the pre-Rig-v2 run's 9,600-defect
+statistical power would now need ~4.8x10^8 rows),
 measuring wall-clock and peak RSS at each step, comparing the pandas-concat
 vs. DuckDB bulk-read paths, and running the whole-line-holdout + temporal-
 holdout evaluations alongside the default 5-fold block CV. Writes
@@ -58,12 +61,29 @@ def _now_iso() -> str:
 
 
 def _background_contrast_check(cfg) -> dict:
-    """Empirical re-check of the Stage 2 background-contrast gate at
-    length_m=40000 -- density-per-km is unchanged from the demo corpus, so
-    this is EXPECTED to hold, but must be checked, not assumed, per this
+    """Empirical re-check of the Stage 2 background-contrast ratio at this
+    config's line length -- density-per-km is unchanged from the demo corpus,
+    so this is EXPECTED to hold, but must be checked, not assumed, per this
     project's own standard for every past scaling change. Returns the
-    background/defect medians too, not just the ratio, so a gate miss can be
+    background/defect medians too, not just the ratio, so a miss can be
     diagnosed (which side moved) rather than just reported as a number.
+
+    RIG-V2 PORT (2026-08-10): this read `r_mag_nt` -- the pre-Rig-v2 VECTOR
+    residual magnitude, which no longer exists (`rig: scalar` has no x/y/z to
+    take a magnitude of). Its successor is `r_mid_nt`, the middle head's own
+    detrended residual, but that is **signed**: a total-field anomaly can
+    enhance OR degrade the ambient field, and with `stress_polarity: random`
+    it does either with equal probability. A median of the signed column sits
+    near zero for both populations, which would make this ratio meaningless
+    (and near-divide-by-zero). Taking |r_mid_nt| restores a magnitude-like
+    quantity comparable in spirit to the old vector magnitude.
+
+    The 3.0x threshold below is a PRE-RIG-V2 calibration (the vector rig
+    measured 3.19x). No like-for-like contrast baseline has been established
+    for the scalar rig -- Stage D re-measured the gates and the ablation
+    ladder but never produced a matching contrast figure. So the verdict here
+    is INFORMATIONAL, not a gate: report the number, do not read a pass/fail
+    against a threshold calibrated on different physics.
     """
     raw_path = Path(cfg.env.storage.raw_dir) / "line_id=LINE000" / "run_id=0" / "survey.parquet"
     from lsm.features import feature_store_dir
@@ -76,15 +96,19 @@ def _background_contrast_check(cfg) -> dict:
     feat = pd.read_parquet(feat_path)
     df = raw.merge(feat, on="sample_idx", suffixes=("", "_f"))
     clean = df[df["dq_flag"] == "clean"]
-    d = clean[clean["defect"] == 1]
-    b = clean[(clean["defect"] == 0) & (clean["interference"] == 0)]
-    background_median = float(b["r_mag_nt"].median())
-    defect_median = float(d["r_mag_nt"].median())
-    defect_max = float(d["r_mag_nt"].max())
-    contrast = defect_median / background_median
+    residual_col = "r_mid_nt" if "r_mid_nt" in clean.columns else "r_mag_nt"
+    resid = clean[residual_col].abs()
+    d = resid[clean["defect"] == 1]
+    b = resid[(clean["defect"] == 0) & (clean["interference"] == 0)]
+    background_median = float(b.median())
+    defect_median = float(d.median())
+    defect_max = float(d.max())
+    contrast = defect_median / background_median if background_median else float("nan")
     return {
         "contrast": contrast,
         "passed": contrast >= 3.0,
+        "threshold_is_pre_rig_v2": True,
+        "residual_col": residual_col,
         "background_median": background_median,
         "defect_median": defect_median,
         "defect_max": defect_max,
@@ -93,17 +117,32 @@ def _background_contrast_check(cfg) -> dict:
 
 def main() -> None:
     cfg = load_config("dev", config_dir=CONFIG_DIR / "scale")
-    expected_rows = int(
-        cfg.base.data.n_lines * (cfg.base.data.length_m / cfg.base.data.step_m) * cfg.base.data.n_runs
+    # Pre-run ESTIMATE only, for the banner -- every perf metric below uses the
+    # ACTUAL row count instead (see `perf_gen.n_rows` right after generate).
+    # Rig-v2 samples in TIME at walk.sample_rate_hz, not on a step_m distance
+    # grid, so the old `length_m / step_m` arithmetic understated this by ~50x
+    # and -- because it was passed straight into measure(n_rows=...) -- made
+    # every rows/sec figure in the emitted report wrong by the same factor.
+    if cfg.base.data.rig == "scalar":
+        rows_per_m = cfg.base.data.walk.sample_rate_hz / cfg.base.data.walk.speed_m_per_s
+    else:
+        rows_per_m = 1.0 / cfg.base.data.step_m
+    estimated_rows = int(
+        cfg.base.data.n_lines * cfg.base.data.length_m * rows_per_m * cfg.base.data.n_runs
     )
     print(f"Stage 6 scale rehearsal: {cfg.base.data.n_lines} lines x "
           f"{cfg.base.data.length_m:.0f} m x {cfg.base.data.n_runs} runs "
-          f"= {expected_rows:,} rows expected. Storage under {cfg.env.storage.raw_dir}'s parent.")
+          f"=~ {estimated_rows:,} rows estimated ({rows_per_m:.1f} rows/m, rig={cfg.base.data.rig}). "
+          f"Storage under {cfg.env.storage.raw_dir}'s parent.")
 
     perf_results: list[PerfResult] = []
 
-    with measure("generate", n_rows=expected_rows) as perf_gen:
+    with measure("generate") as perf_gen:
         results = generate_all(cfg.base.data, cfg.env.storage.raw_dir, cfg.seed)
+    # Actual, not estimated -- an irregular walk's row count is only known once
+    # the walk has actually been simulated.
+    total_rows = sum(r.n_samples for r in results)
+    perf_gen.n_rows = total_rows
     perf_results.append(perf_gen)
     print(f"generate: {len(results)} surveys, {perf_gen.wall_seconds:.1f}s, "
           f"{perf_gen.rows_per_sec:,.0f} rows/sec, peak RSS {perf_gen.peak_rss_mb:,.1f} MB")
@@ -148,7 +187,9 @@ def main() -> None:
 
     contrast_result = _background_contrast_check(cfg)
     print(f"background-contrast re-check: {contrast_result['contrast']:.2f}x "
-          f"({'PASS' if contrast_result['passed'] else 'FAIL'} against the 3.0x Stage 2 gate)")
+          f"(|{contrast_result['residual_col']}| defect median / background median) "
+          f"-- INFORMATIONAL: the 3.0x threshold is a pre-Rig-v2 vector-rig calibration, "
+          f"not a valid gate for the scalar rig")
 
     as_of = _now_iso()
     with measure("corpus_read_pandas") as perf_pd_read:
@@ -170,7 +211,7 @@ def main() -> None:
         "line_id=*/run_id=*/features.parquet"
     ))
 
-    with measure("train_block_cv", n_rows=expected_rows) as perf_train:
+    with measure("train_block_cv", n_rows=total_rows) as perf_train:
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
             block_result = train.run_train(cfg, conn)
@@ -198,7 +239,10 @@ def main() -> None:
         "",
         (f"Config: `config/scale/base.yaml` -- {cfg.base.data.n_lines} lines x "
         f"{cfg.base.data.length_m:.0f} m x {cfg.base.data.n_runs} runs = "
-        f"{expected_rows:,} rows (~10^7). `config_sha256={cfg.config_sha256[:12]}...`"),
+        f"**{total_rows:,} actual rows** ({rows_per_m:.1f} rows/m under `rig="
+        f"{cfg.base.data.rig}`, sampled in time at {cfg.base.data.walk.sample_rate_hz} Hz, "
+        f"not on a step_m grid), {cfg.base.data.n_lines * cfg.base.data.n_defects} physical "
+        f"defects. `config_sha256={cfg.config_sha256[:12]}...`"),
         "",
         "## Wall-clock + peak RSS per step",
         "",
@@ -208,22 +252,36 @@ def main() -> None:
         "",
         format_perf_table(perf_results),
         "",
-        "## Background-contrast gate re-check",
+        "## Background-contrast re-check (informational, not a gate)",
         "",
-        (f"Contrast (defect median / background median) on `LINE000_R0`: **{contrast_result['contrast']:.2f}x** "
-        f"-- **{'PASSED' if contrast_result['passed'] else 'DID NOT PASS'}** the Stage 2 gate (>= 3.0x). "
-        f"Background median {contrast_result['background_median']:.2f} nT (essentially unchanged from the "
-        "demo corpus's ~7.7-8.1 nT -- the detrend/high-pass is NOT degrading at 40 km), but defect median "
-        f"{contrast_result['defect_median']:.2f} nT is notably lower than the demo's ~25 nT, while defect "
-        f"MAX is {contrast_result['defect_max']:.2f} nT -- a strongly right-skewed distribution. Most likely "
-        "explanation, consistent with both measurements: the demo's own median was computed over only 12 "
-        "defects and was itself optimistic (a small-sample fluke on a skewed distribution), not a sign that "
-        "detrending degrades at this length. Density-per-km is unchanged from the demo corpus (6 defects/km, "
-        "2 interference/km), ruling out a packing-density explanation. This is a real, measured gate miss, "
-        "reported honestly rather than adjusted away -- revisiting it (e.g. a larger single-survey sample "
-        "for the Stage 2 gate check itself) is future work, out of Stage 6's scope."),
+        (f"Contrast (defect median / background median of "
+        f"`|{contrast_result['residual_col']}|`) on `LINE000_R0`: "
+        f"**{contrast_result['contrast']:.2f}x**. Background median "
+        f"{contrast_result['background_median']:.2f} nT, defect median "
+        f"{contrast_result['defect_median']:.2f} nT, defect max "
+        f"{contrast_result['defect_max']:.2f} nT (the gap between defect median and max indicates how "
+        "right-skewed the defect population is -- severity is drawn per type, so a wide spread is "
+        "expected by construction, not a defect in the measurement)."),
         "",
-        "## A real bug found at scale: NaN severity_smys poisoning conformal coverage",
+        ("**Read this as a number, not a verdict.** The historical >= 3.0x threshold was calibrated on the "
+        "PRE-RIG-V2 vector rig, which measured 3.19x on a residual VECTOR MAGNITUDE (`r_mag_nt`). The scalar "
+        "rig has no vector to take a magnitude of: the closest equivalent is `|r_mid_nt|`, the absolute value "
+        "of the middle head's signed total-field residual. These are different physical quantities, and no "
+        "like-for-like contrast baseline has been established for the scalar rig -- Stage D re-measured every "
+        "promotion gate and ran the ablation ladder, but never produced a matching contrast figure. Comparing "
+        "the number above against 3.0x would therefore be comparing across a rig change, which this project "
+        "explicitly does not do elsewhere. What this check IS good for: confirming the detrend/high-pass "
+        "still separates defect rows from background rows at this corpus size at all, and giving a first "
+        "scalar-rig contrast figure that a future run can be compared against. Density-per-km is unchanged "
+        "from the demo corpus (6 defects/km, 2 interference/km), so any movement here is not a packing-density "
+        "artefact."),
+        "",
+        "## Historical: a real bug found at scale (original 2026-07-31 pre-Rig-v2 run)",
+        "",
+        ("*The two bug write-ups in this section and the next were found by the ORIGINAL Stage 6 run on the "
+        "pre-Rig-v2 vector rig, and both were fixed then. They are kept here as the record of what a scale "
+        "rehearsal is FOR -- the incidence figures and follow-on metrics quoted in them are that run's, not "
+        "this one's. Do not read them as measurements of the current corpus.*"),
         "",
         ("`generate.py` initialises `severity_smys` to NaN off-defect (not 0, contradicting this project's "
         "own documented \"0 off-defect\" convention). A detector's peak occasionally lands just outside a "
@@ -236,9 +294,10 @@ def main() -> None:
         "cascading a 0.4%-incidence data issue into an initial 0% pooled coverage across the entire OOF "
         "result, not a gradual degradation. Fixed in `train.py::_build_severity_training_frame` (drop "
         "NaN-`y_true` rows upstream, loudly) plus a belt-and-braces guard in `SeverityModel.fit` itself. "
-        "Confirmed working below: Stage 4's gate now PASSES at this scale."),
+        "The fix is still in place and still guards this path; whether Stage 4's gate passes on the CURRENT "
+        "corpus is reported in the results section below, not asserted here."),
         "",
-        "## A real bug found at scale: classify's n_estimators/num_leaves were dead config",
+        "## Historical: classify's n_estimators/num_leaves were dead config (same original run)",
         "",
         ("`config/base.yaml`'s `model.classify.n_estimators`/`num_leaves` looked tunable but were never "
         "threaded from config into `ClassifyModel`'s `lgbm_cfg` in `train.py` -- editing them had NO "
@@ -263,17 +322,17 @@ def main() -> None:
         "line accumulate, this max is an order statistic over a growing number of comparisons "
         "and trends upward even if each individual run-pair's correlation distribution is "
         "unchanged (R2 is checked against both R0 and R1; R0 has nothing to compare against). "
-        "Separately, a much longer line (40 km vs the demo's 2 km) gives two runs' shared "
-        "deterministic structure (same defect/interference positions, same geo/lat-lon path) "
-        "far more samples to accumulate correlated structure in a plain Pearson correlation, "
-        "even though each run's background noise is drawn independently. Together these make "
-        "a same-line overlap correlation naturally higher at this scale than the 2 km demo "
-        "corpus ever exercised -- the fixed 0.9 threshold, calibrated only against short lines "
-        "and few runs, was never stress-tested against this regime. This is a real, "
-        "scale-driven finding, not a generator bug: the DQ layer did exactly what it's "
-        "designed to do (quarantine, not crash), and the affected surveys were correctly "
-        "excluded from the training corpus below. Revisiting the threshold for long-line, "
-        "many-run deployments is future work, out of Stage 6's scope."),
+        f"Separately, the more rows a single survey carries ({total_rows // max(len(results), 1):,} per "
+        f"survey here, at {cfg.base.data.length_m:.0f} m and {rows_per_m:.0f} rows/m), the more samples "
+        "two runs' shared deterministic structure (same defect/interference positions, same geo/lat-lon "
+        "path) has to accumulate correlated structure in a plain Pearson correlation, even though each "
+        "run's background noise is drawn independently. The ORIGINAL pre-Rig-v2 Stage 6 run hit this "
+        "regime with 40 km lines and saw real quarantines; whether this run does is given by the count "
+        "immediately above, not assumed here. Either way the fixed 0.9 threshold was calibrated against "
+        "short lines and few runs and has never been systematically stress-tested -- and where it does "
+        "fire, the DQ layer is doing exactly what it is designed to do (quarantine, not crash), with the "
+        "affected surveys correctly excluded from the training corpus. Revisiting the threshold for "
+        "long-line, many-run deployments is future work, out of Stage 6's scope."),
         "",
         "## Where SQLite stopped being the right tool",
         "",
@@ -281,7 +340,7 @@ def main() -> None:
         f"`load_readings`, measured once by hand at {INGEST_BEFORE_N_ROWS:,} rows): "
         f"**{INGEST_BEFORE_ROWS_PER_SEC:,} rows/sec**, peak RSS {INGEST_BEFORE_PEAK_RSS_MB:.1f} MB."),
         (f"- After (vectorized NaN->None + dtype-cast, this rehearsal, "
-        f"{expected_rows:,} rows): **{ingest_after_rate:,.0f} rows/sec**, "
+        f"{n_rows_ingested:,} rows): **{ingest_after_rate:,.0f} rows/sec**, "
         f"peak RSS {perf_ingest.peak_rss_mb:,.1f} MB ({speedup:.2f}x)."),
         ("- Conclusion: the naive Python-level row conversion was a real, measurable cost, "
         "but not the dominant one -- SQLite's own `executemany` insert path is the majority "
@@ -321,9 +380,9 @@ def main() -> None:
         "",
         "## Whole-line-holdout CV (Stage 6: \"the real generalisation test\")",
         "",
-        ("An entire physical line held out per fold (5 folds, ~8 lines/fold), instead of "
-        "today's default (line, 100 m block) hash grouping, which scatters one line's blocks "
-        "across ~all folds."),
+        (f"An entire physical line held out per fold (5 folds, ~{cfg.base.data.n_lines / 5:.0f} "
+        "lines/fold), instead of today's default (line, 100 m block) hash grouping, which "
+        "scatters one line's blocks across ~all folds."),
         "",
         "```",
         whole_line_buf.getvalue().strip(),
