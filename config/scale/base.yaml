@@ -1,0 +1,277 @@
+# Stage 6 scale rehearsal config -- NOT the demo config. A genuinely separate
+# base.yaml (own config_sha256), not an environment overlay: `data.*` here
+# describes a different corpus, which is a code-config decision, not an infra
+# one (SKILL.md invariant #13). Loaded via
+# `load_config("dev", config_dir=CONFIG_DIR / "scale")`. See
+# docs/stage6-scale-rehearsal.md and PLAN.md's Stage 6 section.
+#
+# RE-DERIVED FOR RIG-V2 (2026-08-10). The previous target here (40 lines x
+# 40 km, n_defects 240/line) was written for the OLD uniform step_m=0.5 grid,
+# where 40 x (40000/0.5) x 3 = 9.6M rows. That arithmetic no longer holds and
+# the file said so, flagged-not-fixed, until this run:
+#
+#   Rig-v2's `rig: scalar` samples at walk.sample_rate_hz (120 Hz) in TIME,
+#   not on a distance grid. Measured on the real demo corpus: 200,773 rows
+#   over 2000 m = **100.4 rows/m**, ~200x denser than step_m=0.5's 2 rows/m.
+#   The old 40x40km numbers would now generate ~4.8x10^8 rows -- extrapolating
+#   the original run's 28.4 GB peak RSS at 9.6M rows, that needs ~1.4 TB of
+#   RAM. Not a tuning question; structurally infeasible.
+#
+# The binding constraint is therefore MEMORY, not defect density. Working
+# backwards from ~60 GB peak RSS (leaving real headroom on a 136 GB machine,
+# since the original run's heaviest step held 28.4 GB at 9.6M rows):
+#   ~18M rows / (100.4 rows/m x 3 runs) = ~60 km of total survey
+#   60 km x 6 defects/km = ~360 physical defects
+#
+# Scaled via MORE INDEPENDENT LINES at the demo config's own per-line density,
+# never denser packing (a past experiment at 30 defects/km measured the Stage 2
+# background-contrast gate degrading 3.19x -> ~2.7x, because background rows
+# start sitting inside a neighbour's 1/r^3 tail):
+#   n_lines:        5     -> 30      (30 independent lines/backgrounds, up
+#                                      from 5 -- what the bootstrap actually
+#                                      resamples over is physical defects, and
+#                                      independent lines is how you buy them
+#                                      without touching density)
+#   length_m:    2000.0   -> 2000.0  (UNCHANGED)
+#   n_defects:     12     -> 12      (UNCHANGED -- 6/km, same as demo)
+#   n_interference: 4     -> 4       (UNCHANGED -- 2/km, same as demo)
+# 30 x 2000 m x 100.4 rows/m x 3 runs =~ 18.1M rows, 360 defects.
+#
+# HONEST LIMIT, state this alongside any result from this config: 360 defects
+# is 6x the demo corpus's 60 (CI widths shrink ~sqrt(6) = 2.4x), NOT the 800x
+# of the pre-Rig-v2 Stage 6 rehearsal (which reached 9,600 defects because
+# 0.5 m sampling bought ~200x more metres per row). Matching that defect count
+# under Rig-v2 needs ~4.8x10^8 rows. So this run can tighten a CI decisively
+# around zero; it cannot resolve an effect 6x smaller than the demo corpus can
+# already see. Trading line LENGTH for line COUNT also means these are 2 km
+# survey snippets, not the 40 km full-segment lengths the old config used --
+# a realism cost taken deliberately, since independent backgrounds are what
+# the statistics need and per-line length does not change defects-per-row.
+seed: 42
+
+data:
+  n_lines: 30
+  length_m: 2000.0
+  step_m: 0.5
+  depth_m: 1.5
+  background_nT: [19000.0, 1000.0, 45000.0]
+  noise_nT: 5.0
+  n_defects: 12
+  n_interference: 4
+  # Interference sources are large steel objects, not defects. Their moment is
+  # scaled so that at a typical 3-8 m lateral offset they arrive at roughly
+  # defect-comparable amplitude -- (5.5/1.5)^3 ~ 50 for the 1/r^3 falloff. Set
+  # this to 1.0 and every interference source drops below the noise floor, which
+  # makes the false-positive trap invisible and its precision metric vacuous.
+  interference_moment_scale_range: [30.0, 50.0]
+  # Stage 2.5 item 2: half-width = label_window_scale * r_eff, where
+  # r_eff = sqrt(depth_m^2 + y_off_m^2) is the dipole source-to-sensor distance --
+  # the same physics that sets field amplitude (1/r^3) also sets the anomaly's
+  # along-track footprint. A tighter scale (0.733) matches the measured on-pipe
+  # FWHM exactly but only captures the anomaly out to half-max -- the 1/r^3 tail
+  # stays well above the background floor far past that point, so it left dozens
+  # of clearly-anomalous rows per survey labelled as neither class (worse than
+  # the old flat 2.0 m constant, not better). 2.0 was chosen by sweeping k against
+  # the actual generated data until unlabelled clearly-anomalous background rows
+  # (|r - median| > 4*MAD, the same robust threshold features.py's own peak
+  # detector uses) dropped to the handful attributable to pure sensor noise, not
+  # window width (scripts/plot_features.py / PLAN.md Stage 2.5 gate).
+  label_window_scale: 2.0
+  n_runs: 3
+  growth: 1.15
+  # Rig-v2 (schema_version 2 -> 3, 2026-08-06): mirrors config/base.yaml's
+  # `data.rig`/`array`/`walk`/`gps`/`weld`/`sensor` blocks -- see that file
+  # for the full "why" comments, not repeated here. `gradiometer` is gone,
+  # absorbed into `array` (config.py).
+  rig: scalar
+  stress_polarity: random
+  array:
+    n_heads: 3
+    spacing_m: 0.5
+    orientation: vertical
+    main_field_gradient_nT_per_m: 0.02
+    geology_gradient_scale_nT_per_m: 10.0
+  walk:
+    speed_m_per_s: 1.2
+    speed_sigma_m_per_s: 0.15
+    speed_correlation_s: 8.0
+    speed_min_m_per_s: 0.6
+    speed_max_m_per_s: 1.8
+    sample_rate_hz: 120.0
+    standoff_m: 1.5
+    standoff_sigma_m: 0.20
+    standoff_correlation_m: 10.0
+    lateral_sigma_m: 0.30
+    lateral_correlation_m: 5.0
+    tilt_sigma_deg: 5.0
+    tilt_correlation_m: 3.0
+  gps:
+    dropout_rate: 0.05
+    mean_gap_s: 15.0
+    sigma_m: 1.5
+  weld:
+    pitch_m: 12.2
+    pitch_jitter_m: 0.15
+    moment_scale_range: [5.0, 20.0]
+  sensor:
+    gain_sigma: 0.002
+    offset_nt: 2.0
+    adc_bits: 24
+    full_scale_ut: 100.0
+    noise_nt: 5.0
+  # Stage 2.5 item 3: swap the synthetic drift+wave background for a real
+  # geomagnetic observatory trace (data/reference/*.csv, USGS Geomagnetism
+  # Program, BOU/Boulder). Off by default -- it is a deliberate realism stress
+  # test, not the operating default: the storm trace's background residual after
+  # a degree-5 detrend (6.9-11.3 nT) exceeds the defect signal's own floor
+  # headroom and would break the Stage 2 detectability gate if left on by
+  # default. Flip `enabled: true` to reproduce the item-3 measurement.
+  observatory_background:
+    enabled: false
+    csv_path: data/reference/geomag_bou_2024-05-10_storm.csv
+    survey_speed_m_per_s: 1.0
+  geo:
+    lat0: 46.958
+    lon0: 8.365
+    bearing_deg: 35.0
+
+validate:
+  gates:
+    schema: fail
+    range: fail
+    saturation: fail
+    sample_idx_monotonic: fail
+    sample_idx_gap: warn
+    duplicate_sample_idx: fail
+    duplicate_content: fail
+    survey_overlap: fail
+    gps_jump: warn
+    gps_chainage_consistency: warn
+    noise_floor: warn
+    background_regime: warn
+    interference_density: warn
+    coverage: warn
+  max_gap_m: 2.0
+  max_gps_jump_m: 5.0
+  # Rig-v2: a total-field MAGNITUDE is never negative -- see base.yaml.
+  field_range_nT: [20000.0, 80000.0]
+  noise_floor_range_nT: [1.0, 15.0]
+  min_coverage_frac: 0.95
+  # Stage D re-measurement, 2026-08-06: 3 -> 5, same ADC-quantisation-
+  # coincidence reasoning as base.yaml (this scale config shares the same
+  # sensor/walk physics, just more lines).
+  saturation_run_length: 5
+  overlap_correlation_threshold: 0.9
+
+features:
+  # Mirrors config/base.yaml's features.version -- see that file for the
+  # full fv history/"why" comments, not repeated here.
+  version: 3
+  detrend:
+    # Two stages: a global robust polynomial removes the drift, then a rolling-median
+    # high-pass of window_m removes whatever long-wavelength structure the polynomial
+    # cannot fit. window_m must stay >> a defect's along-track footprint (~2-3x the
+    # stand-off) or the high-pass eats the signal it exists to expose.
+    method: robust_poly
+    degree: 3
+    window_m: 40.0
+  windows_m: [2.0, 5.0, 10.0, 25.0]
+  peak:
+    prominence_mad: 4.0        # peak detection threshold, in robust sigmas of |r|
+    flank_fit_span: [0.5, 3.0] # decay-exponent fit range, in FWHM from the peak
+    assign_radius_fwhm: 2.0    # rows within this many FWHM inherit the peak's shape
+  edge_policy: flag
+
+model:
+  split:
+    by: line_id
+    n_folds: 5
+    fallback_block_m: 100.0
+  bootstrap:
+    n_resamples: 1000
+    level: 0.95
+  lightgbm:
+    deterministic: true
+    force_row_wise: true
+    num_threads: 16
+  anomaly:
+    contamination: 0.03
+    n_estimators: 300
+    # EDA (Stage 2.75, 2026-07-30) found the ~20-feature amplitude block
+    # (window mean/std/max/ptp/energy) separates defect from background
+    # almost perfectly (PR-AUC up to 0.97) but is mediocre at
+    # defect-vs-interference specifically (mostly < 0.55) -- interference
+    # genuinely produces amplitude too, by design. The features that actually
+    # separate defect from interference are different and few: w25m_kurt
+    # (PR-AUC 0.985), w25m_zcr (0.786), w10m_kurt (0.680). IsolationForest
+    # picks a feature uniformly at random per split, so with the amplitude
+    # block outnumbering these ~7:1, an isolation path rarely uses them.
+    # Untested candidate fix: repeat them in the fitted matrix to raise their
+    # selection probability -- see models/anomaly.py's docstring. Set
+    # emphasis_repeats: 1 (or emphasize_features: []) to fall back to the
+    # original, unweighted behaviour.
+    emphasize_features: [w25m_kurt, w25m_zcr, w10m_kurt]
+    emphasis_repeats: 5
+  severity:
+    quantiles: [0.05, 0.5, 0.95]
+    conformal_alpha: 0.10
+    # Production-sized capacity, NOT the demo's small-sample accommodation
+    # (config/base.yaml's min_child_samples=3/num_leaves=7) -- confirmed
+    # necessary empirically: applied unchanged at Stage 6 scale (~9,600
+    # defects / ~19,000 severity samples), the demo's num_leaves=7 caps the
+    # quantile trees to 7 leaves total regardless of data volume, collapsing
+    # conformal coverage to 0%. These are LightGBM's own sane defaults for
+    # this data volume, not re-tuned.
+    min_child_samples: 20
+    n_estimators: 100
+    num_leaves: 31
+  classify:
+    calibration: isotonic
+    class_weight: balanced
+    # Production-sized capacity -- see model.severity's comment above for the
+    # same reasoning, empirically confirmed necessary at this data volume.
+    n_estimators: 100
+    num_leaves: 31
+    min_child_samples: 20
+    # Fraction of each fold's dev-set defects held out for isotonic
+    # calibration, allocated per class (not a bare shuffle) -- see
+    # train.py's _stratified_defect_calib_split.
+    calib_fraction: 0.3
+    # risk_score's third term: calibrated P(defect) * predicted severity *
+    # consequence_proxy[pred_type]. There is no real consequence-of-failure
+    # data in this project (population density, product type, MAOP) -- this
+    # is a STATED engineering-judgment ranking, not derived from data, meant
+    # to be replaced wholesale once that data exists:
+    #   scc:          1.0  crack-like -- sudden, limited-warning failure mode,
+    #                      the highest-consequence flaw class
+    #   corrosion:    0.6  gradual, well-characterised (B31G/RSTRENG)
+    #   dent:         0.5  consequence depends on strain/interacting features
+    #                      this project doesn't model
+    #   weld:         0.4  workmanship anomaly, best-controlled class
+    #   interference: 0.0  not a pipe defect at all -- zero weight so it can
+    #                      never dominate a dig-priority ranking
+    consequence_proxy:
+      scc: 1.0
+      corrosion: 0.6
+      dent: 0.5
+      weld: 0.4
+      interference: 0.0
+  growth:
+    limit_state_smys: 100.0
+    assumed_interval_years: 5.0
+    min_observations_for_own_rate: 2
+    train_run_ids: [0, 1]
+    test_run_id: 2
+  monitor:
+    psi_warn: 0.2
+    psi_block: 0.3
+    n_bins: 10
+    reference_sample_size: 2000
+    indications_per_km_ratio_warn: 3.0
+    background_regime_z_threshold: 3.0
+  dig_budget_per_km: 5
+
+mlflow:
+  experiment: lsm-integrity-scale
+
+schema_version: 3

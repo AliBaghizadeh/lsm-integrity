@@ -1,0 +1,22 @@
+# Environment config: infra only. Never hashed into config_sha256.
+storage:
+  sqlite_path: data/lsm.db
+  raw_dir: data/raw
+  quarantine_dir: data/quarantine
+  feature_dir: data/features
+  model_dir: data/models
+  reports_dir: data/reports
+  s3:
+    bucket: null
+    prefix: lsm-demo
+    enabled: false
+
+mlflow:
+  # mlflow 3.13's filesystem backend (file:./mlruns) is in maintenance mode and
+  # refuses to initialise outright -- confirmed empirically while building
+  # Stage 3, not assumed from docs. sqlite is the minimal supported local
+  # backend; artifacts still land on local disk under ./mlruns/.
+  tracking_uri: sqlite:///mlruns.db
+
+dagster:
+  concurrency: 4

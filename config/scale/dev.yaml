@@ -1,0 +1,20 @@
+# Stage 6 scale rehearsal environment config. Never hashed into config_sha256.
+# Every storage path is repointed at data_scale/ -- must NEVER touch data/,
+# which holds the real demo corpus and baked demo assets.
+storage:
+  sqlite_path: data_scale/lsm.db
+  raw_dir: data_scale/raw
+  quarantine_dir: data_scale/quarantine
+  feature_dir: data_scale/features
+  model_dir: data_scale/models
+  reports_dir: data_scale/reports
+  s3:
+    bucket: null
+    prefix: lsm-demo
+    enabled: false
+
+mlflow:
+  tracking_uri: sqlite:///mlruns_scale.db
+
+dagster:
+  concurrency: 4

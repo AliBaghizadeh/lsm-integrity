@@ -1,0 +1,26 @@
+.git/
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.hypothesis/
+.ruff_cache/
+*.egg-info/
+.dagster_home/
+mlruns/
+mlruns.db
+data/raw/
+data/features/
+data/quarantine/
+data/models/
+data/reports/
+data/lsm.db
+data_scale/
+mlruns_scale/
+mlruns_scale.db
+# Internal planning/interview docs -- never belong in a built image either.
+PLAN.md
+LSM_PROJECT.md
+docs/
+.claude/
+reports/

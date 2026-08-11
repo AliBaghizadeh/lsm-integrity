@@ -1,0 +1,26 @@
+# Regenerable pipeline outputs only -- data/reference holds real, externally-sourced
+# input data (geomagnetic observatory traces) the generator depends on, so it is
+# tracked, not ignored. (A bare `data/` entry can't be re-included per-subdirectory:
+# git won't descend into an excluded parent to check negation patterns.)
+data/raw/
+data/features/
+data/quarantine/
+data/models/
+data/reports/
+data/lsm.db
+data/lsm.db-shm
+data/lsm.db-wal
+mlruns/
+mlruns.db
+# Stage 6 scale rehearsal: ~2-4 GB, regenerated locally, never committed.
+data_scale/
+mlruns_scale/
+mlruns_scale.db
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.hypothesis/
+.ruff_cache/
+*.egg-info/
+.dagster_home/

@@ -1,0 +1,406 @@
+# Code config: hyperparameters, feature specs, gate thresholds.
+# This file (and only this file) is hashed into config_sha256 for every run.
+# Environment config (bucket, DB URI, concurrency) lives in dev.yaml / prod.yaml.
+seed: 42
+
+data:
+  # Bumped from 1 on 2026-07-30 to test whether Stage 3's negative result
+  # (IsolationForest doesn't beat MAD) is a real small effect the CI is just
+  # too wide to resolve, or a real effect -- more INDEPENDENT lines narrows the
+  # bootstrap CI (~2.2x, sqrt(60/12) physical defects) without changing WHICH
+  # conclusion is true. Deliberately more lines, not more defects on this one
+  # line: n_defects=60 on a single 2000 m line was tried first and measured to
+  # degrade the Stage 2 background-contrast gate (3.19x -> ~2.7-3.0x, noisy,
+  # sometimes failing) -- denser packing means background rows increasingly
+  # sit near an unlabelled neighbour's 1/r^3 field tail. Separate lines don't
+  # share a background at all, so this is the same statistical-power gain with
+  # none of that cost -- see PLAN.md Stage 6, which reaches the same
+  # conclusion for the same reason ("~40 lines", not "~40x the defects on one
+  # line").
+  n_lines: 5
+  length_m: 2000.0
+  step_m: 0.5
+  depth_m: 1.5
+  background_nT: [19000.0, 1000.0, 45000.0]
+  noise_nT: 5.0
+  n_defects: 12
+  n_interference: 4
+  # Interference sources are large steel objects, not defects. Their moment is
+  # scaled so that at a typical 3-8 m lateral offset they arrive at roughly
+  # defect-comparable amplitude -- (5.5/1.5)^3 ~ 50 for the 1/r^3 falloff. Set
+  # this to [1.0, 1.0] and every interference source drops below the noise
+  # floor, which makes the false-positive trap invisible and its precision
+  # metric vacuous.
+  # Drawn per-source from this RANGE, not a fixed constant -- the developer
+  # team's follow-up: real interference is "a bit weaker in most cases," and
+  # its strength varies source to source independently of distance (distance
+  # is already captured by y_off_m's own 3-8 m draw; this scales the moment
+  # on top of that).
+  interference_moment_scale_range: [30.0, 50.0]
+  # Stage 2.5 item 2: half-width = label_window_scale * r_eff, where
+  # r_eff = sqrt(depth_m^2 + y_off_m^2) is the dipole source-to-sensor distance --
+  # the same physics that sets field amplitude (1/r^3) also sets the anomaly's
+  # along-track footprint. A tighter scale (0.733) matches the measured on-pipe
+  # FWHM exactly but only captures the anomaly out to half-max -- the 1/r^3 tail
+  # stays well above the background floor far past that point, so it left dozens
+  # of clearly-anomalous rows per survey labelled as neither class (worse than
+  # the old flat 2.0 m constant, not better). 2.0 was chosen by sweeping k against
+  # the actual generated data until unlabelled clearly-anomalous background rows
+  # (|r - median| > 4*MAD, the same robust threshold features.py's own peak
+  # detector uses) dropped to the handful attributable to pure sensor noise, not
+  # window width (scripts/plot_features.py / PLAN.md Stage 2.5 gate).
+  label_window_scale: 2.0
+  n_runs: 3
+  growth: 1.15
+  # Rig-v2 (schema_version 2 -> 3, 2026-08-06): a second-round interview with
+  # the LSM instrument's own developer revealed the real rig -- a rod with
+  # THREE magnetometers 50 cm apart (middle + two), each reporting only |B|,
+  # carried by a WALKER at irregular speed with GPS that drops out, not the
+  # single-vector-head-on-a-rail model this file described until now. `rig`
+  # selects the generator; `array`/`walk`/`gps`/`weld`/`sensor` are all new,
+  # replacing `gradiometer` (absorbed into `array`, see config.py).
+  rig: scalar
+  # random: a defect's total-field anomaly sign (enhancing vs degrading the
+  # ambient field) is whatever its isotropic moment orientation gives --
+  # physically honest, per the developer's own stated point that stress can
+  # go either way. positive: canonicalised to always-enhancing, i.e. the old
+  # implicit (and now known-false) assumption. Kept as a toggle so Stage C's
+  # sign-agnostic-feature test can show separability collapsing under the
+  # honest setting.
+  stress_polarity: random
+  array:
+    # The real rod: middle + two heads, 50 cm apart, vertical mast (one of the
+    # open confirm-with-ROSEN items -- see docs -- assumed vertical here).
+    # n_heads is fixed at 3 for rig: scalar; the schema's b_lo/b_mid/b_hi
+    # columns are hardcoded to match.
+    n_heads: 3
+    spacing_m: 0.5
+    orientation: vertical
+    # Unrenamed from the old `gradiometer` block -- same physics, still needed
+    # so gradient rejection isn't perfect by construction. Until these were
+    # nonzero (Stage 2.5 item 1), B2 (now b_hi) was built from the exact same
+    # drift/wave arrays as B (b_mid), so the background's vertical gradient
+    # was exactly zero and the measured head difference was pure sensor
+    # noise, sigma*sqrt(2). The main field's real vertical gradient is
+    # ~0.02 nT/m; geology contributes more and varies along the line, so it
+    # gets its own spatially-varying term in generate.py.
+    main_field_gradient_nT_per_m: 0.02
+    geology_gradient_scale_nT_per_m: 10.0
+  walk:
+    # A human walker, not a cart on rails -- speed/stand-off/lateral position
+    # all wander as OU (mean-reverting random-walk) processes. Numbers below
+    # marked "plan" are from the approved Rig-v2 physics spec; the
+    # *_correlation_s/_m values are this implementation's own reasoned choice
+    # of time/length scale (see config.py's WalkConfig docstring) -- there is
+    # no equivalent ROSEN-supplied number for those yet.
+    speed_m_per_s: 1.2
+    speed_sigma_m_per_s: 0.15
+    speed_correlation_s: 8.0
+    speed_min_m_per_s: 0.6
+    speed_max_m_per_s: 1.8
+    # 120 Hz -> ~1 cm mean spacing at nominal speed. This is a deliberate
+    # consequence of the real rig, not a demo convenience: it makes the
+    # per-survey row count ~50x what the old uniform 0.5 m grid produced.
+    sample_rate_hz: 120.0
+    standoff_m: 1.5
+    standoff_sigma_m: 0.20
+    standoff_correlation_m: 10.0
+    lateral_sigma_m: 0.30
+    lateral_correlation_m: 5.0
+    tilt_sigma_deg: 5.0
+    tilt_correlation_m: 3.0
+  gps:
+    # Markov good/bad lock state. dropout_rate is the steady-state FRACTION of
+    # the survey spent unlocked; mean_gap_s is the mean length of one dropout
+    # (~15 s ~= 18 m at nominal walking speed, per the plan). This is what
+    # check_gps_chainage_consistency and Stage B's registration exist to
+    # survive -- lat/lon are nullable in the schema specifically for this.
+    dropout_rate: 0.05
+    mean_gap_s: 15.0
+    sigma_m: 1.5
+  weld:
+    # Girth welds occur every ~12 m -- a fact of how the pipe is built, not a
+    # rare event. This corrects a real physical error the pre-Rig-v2 model
+    # had: `weld` used to be drawn as one of a dozen rare point-defect types
+    # (~12 TIMES total on a 2 km line, via rng.choice), not every 12 m.
+    #
+    # enabled: true is the only PHYSICAL setting -- a buried pipeline is built
+    # from welded joints, full stop. false exists only for the clean-room
+    # counterfactual (scripts/cleanroom_experiment.py), an isolated test spool
+    # with defects and no construction features, and must never be the
+    # operating default.
+    enabled: true
+    pitch_m: 12.2
+    pitch_jitter_m: 0.15
+    # 5-20x a defect's dipole moment -- a joint carries real extra steel.
+    moment_scale_range: [5.0, 20.0]
+  sensor:
+    # Per-head imperfections a real fluxgate head has and the pre-Rig-v2
+    # model didn't. gain_sigma is the one that matters most: a 0.2% gain
+    # MISMATCH between two heads leaves ~100 nT of uncancelled common-mode
+    # signal against a ~25 nT anomaly -- inter-sensor calibration is a
+    # modelled first-class problem here, not a footnote (see
+    # tests/test_generate.py's gain-mismatch test).
+    gain_sigma: 0.002
+    offset_nt: 2.0
+    # 24-bit over +/-100 uT -> LSB ~0.012 nT. ROSEN open question: is 100 uT
+    # the actual full-scale range (assumed here -- Earth's field is ~50 uT,
+    # so this is a standard fluxgate range) or a noise/resolution figure?
+    adc_bits: 24
+    full_scale_ut: 100.0
+    noise_nt: 5.0
+  # Stage 2.5 item 3: swap the synthetic drift+wave background for a real
+  # geomagnetic observatory trace (data/reference/*.csv, USGS Geomagnetism
+  # Program, BOU/Boulder). Off by default -- it is a deliberate realism stress
+  # test, not the operating default: the storm trace's background residual after
+  # a degree-5 detrend (6.9-11.3 nT) exceeds the defect signal's own floor
+  # headroom and would break the Stage 2 detectability gate if left on by
+  # default. Flip `enabled: true` to reproduce the item-3 measurement.
+  observatory_background:
+    enabled: false
+    csv_path: data/reference/geomag_bou_2024-05-10_storm.csv
+    survey_speed_m_per_s: 1.0
+  geo:
+    lat0: 46.958
+    lon0: 8.365
+    bearing_deg: 35.0
+
+validate:
+  gates:
+    schema: fail
+    range: fail
+    saturation: fail
+    sample_idx_monotonic: fail
+    sample_idx_gap: warn
+    duplicate_sample_idx: fail
+    duplicate_content: fail
+    survey_overlap: fail
+    gps_jump: warn
+    gps_chainage_consistency: warn
+    noise_floor: warn
+    background_regime: warn
+    interference_density: warn
+    coverage: warn
+  max_gap_m: 2.0
+  max_gps_jump_m: 5.0
+  # Rig-v2: a total-field MAGNITUDE is never negative -- a signed range here
+  # (the old bx/by/bz vector-axis bound) is a check.range gate that could
+  # never fail on this rig. Matches schemas.py's FIELD_RANGE_NT.
+  field_range_nT: [20000.0, 80000.0]
+  noise_floor_range_nT: [1.0, 15.0]
+  min_coverage_frac: 0.95
+  # Stage D re-measurement, 2026-08-06: bumped 3 -> 5. At Rig-v2's 120 Hz /
+  # 24-bit ADC (sensor.adc_bits/full_scale_ut, sensor.noise_nt=5.0), adjacent
+  # samples are only ~1 cm apart, so the TRUE signal barely moves between
+  # them -- after independent per-sample noise (sigma=5 nT) and quantisation
+  # to LSB~=0.012 nT, two consecutive samples coincidentally land in the SAME
+  # quantisation bin with probability ~=1/1490 (confirmed by exact ADC
+  # bin-index matches on real generated data, not corrupted rows). A run of
+  # exactly 3 identical values (the old threshold) is two such coincidences
+  # in a row, ~=4.5e-7 per row -- across ~200k rows/survey that is ~0.09
+  # expected occurrences per survey, close to the ~40% spurious quarantine
+  # rate actually measured end-to-end at rig: scalar's production config
+  # (config/base.yaml n_lines=5). A run of 5 is two MORE such coincidences
+  # (~2e-13 per row, ~4e-8 expected per survey -- negligible at this
+  # project's scale) while a genuinely stuck/railed sensor produces a run
+  # lasting the whole fault duration (seconds to minutes at 120 Hz, i.e.
+  # hundreds-to-tens-of-thousands of samples) -- 5 stays enormously more
+  # sensitive to a real fault than to this rig's own quantisation noise floor.
+  saturation_run_length: 5
+  overlap_correlation_threshold: 0.9
+
+features:
+  # Bumped 1 -> 2 on 2026-07-30: r_mag_norm_nt_m3 / peak_prominence_norm_nt_m3
+  # removed from feature_columns() (and from being computed at all) -- EDA
+  # (Stage 2.75) measured them as EXACT duplicates of r_mag_nt /
+  # peak_prominence_nt under a single global depth_m. See features.py's
+  # feature_columns() docstring and PLAN.md.
+  #
+  # Bumped 2 -> 3 (Stage C, Rig-v2, 2026-08-06): rx/ry/rz/r_mag_nt/
+  # r_incl_deg/r_decl_deg/gx/gy/gz/g_mag_nt_per_m -- all vector-axis columns
+  # -- are gone; there is no vector output under the scalar rig (schemas.py).
+  # r_lo/mid/hi_nt (each head's own detrended residual) replace them,
+  # r_mid_nt taking over r_mag_nt's old role as the primary signal for
+  # dr_ds_nt_per_m/d2r_ds2_nt_per_m2/the window-stat block/the peak-shape
+  # block. g1_nt_per_m/g2_nt_per_m2 (first/second difference across the 3
+  # heads) and standoff_est_m (a genuine per-row measured stand-off -- not
+  # the fv=1->2 global depth_m that made the normalised columns exact
+  # duplicates) are new; r_mag_norm_nt_m3/peak_prominence_norm_nt_m3 are
+  # reinstated now that standoff_est_m makes them real again.
+  # dist_to_weld_m/gps_locked (Stage B registration output) are new.
+  version: 3
+  detrend:
+    # Two stages: a global robust polynomial removes the drift, then a rolling-median
+    # high-pass of window_m removes whatever long-wavelength structure the polynomial
+    # cannot fit. window_m must stay >> a defect's along-track footprint (~2-3x the
+    # stand-off) or the high-pass eats the signal it exists to expose.
+    method: robust_poly
+    degree: 3
+    window_m: 40.0
+  windows_m: [2.0, 5.0, 10.0, 25.0]
+  peak:
+    prominence_mad: 4.0        # peak detection threshold, in robust sigmas of |r|
+    flank_fit_span: [0.5, 3.0] # decay-exponent fit range, in FWHM from the peak
+    assign_radius_fwhm: 2.0    # rows within this many FWHM inherit the peak's shape
+  edge_policy: flag
+
+model:
+  split:
+    by: line_id
+    n_folds: 5
+    fallback_block_m: 100.0
+  bootstrap:
+    n_resamples: 1000
+    level: 0.95
+  lightgbm:
+    deterministic: true
+    force_row_wise: true
+    num_threads: 16
+  anomaly:
+    contamination: 0.03
+    n_estimators: 300
+    # EDA (Stage 2.75, 2026-07-30) found the ~20-feature amplitude block
+    # (window mean/std/max/ptp/energy) separates defect from background
+    # almost perfectly (PR-AUC up to 0.97) but is mediocre at
+    # defect-vs-interference specifically (mostly < 0.55) -- interference
+    # genuinely produces amplitude too, by design. The features that actually
+    # separate defect from interference are different and few: w25m_kurt
+    # (PR-AUC 0.985), w25m_zcr (0.786), w10m_kurt (0.680). IsolationForest
+    # picks a feature uniformly at random per split, so with the amplitude
+    # block outnumbering these ~7:1, an isolation path rarely uses them.
+    # Untested candidate fix: repeat them in the fitted matrix to raise their
+    # selection probability -- see models/anomaly.py's docstring. Set
+    # emphasis_repeats: 1 (or emphasize_features: []) to fall back to the
+    # original, unweighted behaviour.
+    emphasize_features: [w25m_kurt, w25m_zcr, w10m_kurt]
+    emphasis_repeats: 5
+  severity:
+    quantiles: [0.05, 0.5, 0.95]
+    conformal_alpha: 0.10
+    # Small-sample accommodation for the demo's ~12-60 physical defects --
+    # LightGBM's own min_child_samples=20 default would refuse to split at
+    # all here. Confirmed NOT a production default (Stage 6 scale rehearsal,
+    # 2026-07-31): applied unchanged at ~9,600 defects / ~19,000 severity
+    # samples, num_leaves=7 caps the quantile trees to 7 leaves total
+    # regardless of data volume, collapsing conformal coverage to 0% -- see
+    # config/scale/base.yaml for the production-sized values this was
+    # measured against.
+    min_child_samples: 3
+    n_estimators: 50
+    num_leaves: 7
+  classify:
+    calibration: isotonic
+    class_weight: balanced
+    # Small-sample accommodation, same reasoning as severity's -- with as few
+    # as a dozen SCC instances total in the real corpus, LightGBM's own
+    # min_child_samples=20 default would refuse to split at all.
+    # (n_estimators/num_leaves were silently dead here until Stage 6, 2026-
+    # 07-31 -- train.py never threaded them from this config into
+    # ClassifyModel's lgbm_cfg, so editing these two lines previously had NO
+    # effect. Found via the same scale rehearsal that found severity's
+    # capacity bug. Fixed; now actually wired.)
+    n_estimators: 50
+    num_leaves: 7
+    min_child_samples: 3
+    # Fraction of each fold's dev-set defects held out for isotonic
+    # calibration, allocated per class (not a bare shuffle) -- see
+    # train.py's _stratified_defect_calib_split.
+    calib_fraction: 0.3
+    # risk_score's third term: calibrated P(defect) * predicted severity *
+    # consequence_proxy[pred_type]. There is no real consequence-of-failure
+    # data in this project (population density, product type, MAOP) -- this
+    # is a STATED engineering-judgment ranking, not derived from data, meant
+    # to be replaced wholesale once that data exists:
+    #   scc:          1.0  crack-like -- sudden, limited-warning failure mode,
+    #                      the highest-consequence flaw class
+    #   corrosion:    0.6  gradual, well-characterised (B31G/RSTRENG)
+    #   dent:         0.5  consequence depends on strain/interacting features
+    #                      this project doesn't model
+    #   weld:         0.4  workmanship anomaly, best-controlled class
+    #   interference: 0.0  not a pipe defect at all -- zero weight so it can
+    #                      never dominate a dig-priority ranking
+    consequence_proxy:
+      scc: 1.0
+      corrosion: 0.6
+      dent: 0.5
+      weld: 0.4
+      interference: 0.0
+  growth:
+    # Stage 8: assumes generate.py's own geometric growth law,
+    # severity_smys(run_id) = severity(run_id=0) * data.growth**run_id
+    # (data.growth: 1.15 above) -- so a correctly-implemented pooled
+    # log-linear rate estimator should recover a population rate close to
+    # ln(1.15) ~= 0.1398. Checked directly in tests/test_growth.py.
+    limit_state_smys: 100.0
+    # STATED ENGINEERING JUDGMENT, not derived from data (same treatment as
+    # classify.consequence_proxy) -- generate.py's generate_all() stamps
+    # every run of one call with the SAME wall-clock surveyed_at, so this
+    # synthetic corpus has no real calendar spread between a line's runs.
+    # Remaining life in YEARS is expressed via this stated constant rather
+    # than derived from surveyed_at deltas, which carry no real signal here.
+    assumed_interval_years: 5.0
+    # A defect with fewer observations than this is fully shrunk to the
+    # population rate -- there is no "own" rate to partially trust at n=1.
+    min_observations_for_own_rate: 2
+    # The gate PLAN.md asks for: fit on these runs, project forward, compare
+    # against the actual severity at test_run_id. Mirrors Stage 6's
+    # scale_eval.run_temporal_holdout split shape (same corpus, same reason:
+    # the latest run is the only honest held-out future this demonstrator has).
+    train_run_ids: [0, 1]
+    test_run_id: 2
+  monitor:
+    # validation-and-trust.md Layer 4's own stated thresholds -- implemented
+    # here, not re-derived.
+    psi_warn: 0.2
+    psi_block: 0.3
+    n_bins: 10
+    reference_sample_size: 2000
+    # A survey producing indications/km outside [1/ratio, ratio] x the
+    # training rate is "a sensor or background problem until proven
+    # otherwise" (Layer 4).
+    indications_per_km_ratio_warn: 3.0
+    # Kept at 3.0, NOT lowered, after a Rig-v2 investigation (2026-08-06,
+    # Stage D) into tests/test_monitor.py's shifted-background test, which
+    # initially failed to fire at a 300 nT single-axis background shift.
+    # Root cause: `background_regime_shift` (evaluate.py) z-scores a new
+    # survey's per-head median against the MEAN/STD of only the line's prior
+    # surveys' medians -- fine pre-Rig-v2 (background was deterministic, so
+    # historical std was ~0 and any shift stood out trivially), but Rig-v2's
+    # `sensor.gain_sigma`/`sensor.offset_nt` are drawn FRESH per survey
+    # (generate.py's SensorConfig docstring: "fixed per survey"), so the
+    # historical medians now have a genuine physical spread of their own --
+    # measured directly at gain_sigma(0.002) * |B0|(~48,857 nT) ~= 97.6 nT,
+    # matching the ~30-65 nT per-head sample std actually observed across
+    # only 3 history runs (an inherently noisy estimate of that ~98 nT
+    # figure at n=3). A 300 nT shift on one background AXIS survives
+    # projection onto B_hat0 as only ~115 nT of per-head total-field shift --
+    # the same order as this now-real calibration noise floor, so it is
+    # genuinely, physically UNDETECTABLE with any threshold choice here: at
+    # this project's fixed test seed, z_scores for offsets swept from 0-1000
+    # nT were NON-MONOTONIC (an offset of 0 nT, i.e. no shift, produced
+    # z=4.47 by pure per-survey calibration noise; 300-500 nT, an actual
+    # shift, produced z<2.4) -- lowering the threshold would only trade
+    # missed shifts for false alarms on ordinary recalibration noise, not
+    # fix the underlying power problem. Reliable separation (z >= ~4 on
+    # EVERY head, with margin, vs. this project's specific measured noise
+    # floor) starts around a 1000 nT single-axis shift -- see
+    # tests/test_monitor.py's updated `bx_offset`. Below that, with only 3
+    # historical surveys per line, this check cannot be expected to
+    # distinguish a real moderate regime shift from ordinary per-survey
+    # sensor drift -- an honest limitation of a 3-history-run baseline, not
+    # something a threshold constant can paper over. A real fix would
+    # compare against the KNOWN physical noise floor (gain_sigma * |B0|)
+    # rather than an empirical 3-point sample std, or require more history
+    # -- left as a documented limitation, not implemented here (out of
+    # Stage D's scope: this is validate.py/evaluate.py DQ-check machinery,
+    # not a re-measurement).
+    background_regime_z_threshold: 3.0
+  dig_budget_per_km: 5
+
+mlflow:
+  experiment: lsm-integrity
+
+# Rig-v2, 2026-08-06: bx_nt/by_nt/bz_nt/... replaced by b_lo/b_mid/b_hi_nt,
+# lat/lon now nullable, chainage_m removed from raw (see schemas.py and
+# generate.py's module docstrings). A deliberate breaking change, not additive.
+schema_version: 3
