@@ -119,6 +119,13 @@ class WeldConfig(BaseModel):
     Labelled `girth_weld`, never `defect` -- a weld is not damage.
     """
 
+    # False builds NO weld train at all (generate.py's generate_all), which no
+    # real buried pipeline can be -- this exists solely for the clean-room
+    # counterfactual corpus (scripts/cleanroom_experiment.py): an isolated test
+    # spool with defects and nothing else, the in-house controlled experiment
+    # this project argues for. Leaving it True is the physical default; setting
+    # it False is a deliberate, labelled counterfactual, not a config nicety.
+    enabled: bool = True
     pitch_m: float = 12.2
     pitch_jitter_m: float = 0.15
     # A weld's extra steel makes it 5-20x a defect's dipole moment for the

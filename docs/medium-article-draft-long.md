@@ -290,7 +290,7 @@ There it is. At 800× the defects, the interval collapses to a tight band that e
 
 And the diagnostic explains the mechanism honestly: MAD wastes *more* of its dig budget on interference than IsolationForest does — so IsolationForest is doing the thing I designed it to do, just not by enough to overcome its worse localisation.
 
-`lsm train`'s exit code *is* that gate. It exits non-zero. The GitHub Actions "Train" workflow is therefore red, and it is supposed to be. The badge that reflects code health is the separate CI workflow — lint, type-check, 276 tests — kept deliberately apart so that a legitimate model failure never masquerades as broken code, and broken code never hides behind a model excuse.
+`lsm train`'s exit code *is* that gate. It exits non-zero. The GitHub Actions "Train" workflow is therefore red, and it is supposed to be. The badge that reflects code health is the separate CI workflow — lint, type-check, 312 tests — kept deliberately apart so that a legitimate model failure never masquerades as broken code, and broken code never hides behind a model excuse.
 
 Nothing has ever been promoted. Every release row in the database is stamped `alias: "challenger"`.
 
@@ -308,7 +308,7 @@ Running at 9.6M rows surfaced things 60,000 rows never could:
 
 Severity coverage: **0.920** against a 0.90 nominal at demo scale, 0.896 at production scale. That one works, and it's the result I trust most.
 
-Classification: SCC recall 0.636 [0.620, 0.652] at scale — far better than the majority baseline's 0.000, but nowhere near the 0.90 gate. Interference precision, though, is **0.999**: the model has essentially solved "is this a pipe defect or a buried fence post," which was the hard problem I set out to solve. The physics-consistency SHAP check passes — top features are `w25m_kurt`, `r_decl_deg`, window statistics. Shape and orientation, not position.
+Classification: SCC recall 0.636 [0.620, 0.652] at scale — far better than the majority baseline's 0.000, but nowhere near the 0.90 gate. Interference precision, though, is **0.999**: the model has essentially solved "is this a pipe defect or a buried fence post," which was the hard problem I set out to solve. *(I retract this later in the piece — see "Running it at scale, and retracting my best result." The number is real, but it belongs to this three-axis instrument, and it does not survive on the real one.)* The physics-consistency SHAP check passes — top features are `w25m_kurt`, `r_decl_deg`, window statistics. Shape and orientation, not position.
 
 Growth: the gate passes, with a one-step-ahead MAE of effectively zero against a baseline of 9.8. **I don't think that result means much, and it's worth saying why.** My generator applies growth as a deterministic geometric law with no per-defect noise. A correctly-implemented pooled log-linear estimator recovers ln(1.15) = 0.1398 essentially exactly — and the measured population rate is 0.13976. That's a good unit test of the estimator. It is *not* evidence the method works on real defect growth, which is noisy, heterogeneous, and not geometric. The gate passing here mostly tells me I didn't make an arithmetic error.
 
@@ -458,6 +458,65 @@ Two of the four models' gate numbers moved too, and one of them moved in a direc
 
 None of this changes the instrument-company answer. It sharpens it. Keep the first-difference calculation — it's free, it works, and now there's a real number behind why. Don't expect anything past it, on the existing rod, to close a gap that a fourth sensing axis closes by itself.
 
+### Running it at scale, and retracting my best result
+
+Everything above was measured on a demo corpus. I finally ran the whole pipeline on the rebuilt instrument at production scale — 18 million rows, 360 defects, 77 minutes, 49 GB of peak memory — and evaluated it under three grouping schemes instead of one: the block-based cross-validation the gate is actually configured against, a whole-line holdout, and a temporal holdout that trains on the first two visits and tests on the third.
+
+Two results came out, and they point in opposite directions.
+
+**Severity was data-limited, and now I can prove it.** Coverage had fallen from 0.920 before the rig change to 0.689 to 0.618 — three points trending the wrong way, and by the last one it was underperforming a naive global-mean prediction. I'd guessed calibration data was the constraint. It was: at 3,741 matched indications the coverage came back at **0.872**, no modelling change of any kind. But it clears the [0.87, 0.93] band only under block CV, and lands just under it on both harder splits (0.845 and 0.860). I wrote this paragraph first as "more data fixed severity," then looked at the other two splits and rewrote it as **"more data moved severity from badly broken to marginal."** The block-CV pass on its own was the flattering read, and the two harder numbers were sitting right next to it in the same report.
+
+**And here is the retraction.** Earlier in this piece I told you interference precision was 0.999 — that the classifier had "essentially solved" distinguishing a real defect from a buried fence post, which I called the hard problem I set out to solve. That number was correct. It was also measured on the *vector* rig: the three-axis instrument I had assumed existed before the developer interview told me otherwise. On the real scalar rig, across all three splits, the same classifier scores **0.265 to 0.298** — and in two of the three it sits **at or below the trivial majority-class baseline**. It is not falling short of 0.999. It is not beating "guess the most common class."
+
+I'm leaving the original sentence where it is, because it's what I believed at that point in the story, and marking it here instead of editing it away. But the claim "supervised classification solves interference discrimination" is a claim about an instrument that doesn't exist, and it does not transfer across the rig boundary.
+
+Unlike severity, this one isn't data-limited. Six times the data, three grouping schemes, and both paradigms — unsupervised detection and supervised classification — move it nowhere. A failure that survives all of that is the signature of missing information rather than a modelling deficiency. Which raises the obvious question: missing *what*?
+
+### The clean-room experiment: testing my own proposal before spending anyone's money
+
+I'd been arguing to the team for a while that the real bottleneck is ground truth. Nobody knows precisely what each defect type looks like in this data, because nobody has ever measured a defect in isolation — every real survey arrives with buried junk nearby and a girth weld every 12 metres. My proposal was to run controlled in-house acquisition: isolated test spools, known defects, no interference, no construction features, chainage from a tape measure instead of a GPS that drops out.
+
+I can simulate exactly that. So I did, before asking anyone to fund it.
+
+The design point that matters is that I ran **two** experiments, not one, because only the second can tell you anything:
+
+- **E1, the ceiling.** Evaluate within each world. This is a diagnostic and nothing more — removing the confounders from a confounder-limited problem *has* to make it easier, so a good result here proves nothing about the proposal.
+- **E2, the transfer.** Train on one world, evaluate on the other's held-out lines. This is the decision, because the deployment target is messy real pipe whatever you train on.
+
+The counterfactual corpus differs from the field one in exactly three ways — no interference, no weld train, tape-measured chainage. Same rig, same walk model, same sensor imperfections, same defect physics, same severity ranges. Same defect *density*, too, deliberately: a real test facility would pack defects far closer together, and I'd already measured that dense packing degrades the background estimate on its own, so a denser clean corpus would have confounded "no interference" with "worse detrend."
+
+**E1 vindicated the physics intuition, hard.**
+
+| | field (control) | clean room |
+|---|---|---|
+| Recall gap (IsolationForest − MAD) | −0.019 [−0.051, 0.019] | **+0.199 [0.139, 0.255]** |
+| Localisation error | 812 cm | **75 cm** |
+| False-dig rate | 0.861 | 0.503 |
+| Severity MAE vs its own baseline | 16.5 vs 14.8 — loses | 11.6 vs 15.8 — wins |
+
+That first row is the first time in this entire project that IsolationForest beats the MAD baseline. Every prior measurement — nine of them, across two instruments and three grouping schemes — sat at or below zero. The point estimate reproduced to within 0.005 when I doubled the corpus, and the field control in the same run reproduced the familiar null, so the two worlds differ by what I removed and nothing else. It still fails the gate, but narrowly now: the interval's lower bound is 0.139 against a 0.15 bar.
+
+This is the "missing what?" question answered. Early in this piece I diagnosed the detection failure as a framing error — interference was *designed* to have the same amplitude as a defect, so it's exactly as statistically unusual as a defect, and an anomaly detector finds unusual things, so being unusual is precisely what the two share. That was an argument. Now it's a measurement: delete the interference and the detector works immediately. And localisation makes the same point more bluntly — 812 cm to 75 cm, nearly eleven times better, from removing clutter alone, with no hardware change and no algorithm change.
+
+**E2 said no, and it's the half that decides.**
+
+| Train → test | Severity MAE | Brier | Interference |
+|---|---|---|---|
+| field → field | 15.8 [12.0, 20.0] | 0.925 [0.850, 1.014] | recall 0.444, precision 0.273 |
+| **clean room → field** | **19.4 [14.0, 24.3]** | **0.965 [0.872, 1.055]** | **recall 0.000 — never predicts the class** |
+
+One cell in that table initially looked like a point *for* the proposal, and it's worth showing how it died. The clean-room-trained model's uncertainty intervals covered the true severity 88 percent of the time on field data, against 60 percent for the field-trained model. That reads like better calibration. It isn't: those intervals are 2.3 times wider (75.5 against 32.9 %SMYS), and the point predictions inside them are worse. Coverage is trivially buyable by widening the interval, which is exactly why it should never be quoted without the width beside it. I ran the first version of this experiment without printing the width, sat looking at an ambiguous cell for an afternoon, added the column, and re-ran the whole thing to settle it.
+
+Training on clean pipe makes the field model worse — on severity error and on calibration, at both corpus sizes I tried. The intervals overlap, so no single comparison is decisive on its own, but the direction reproduced across two independent corpora. And one part of it isn't statistical at all: a clean-room corpus contains no interference, so a model trained on it has never seen a buried fence post and structurally cannot predict one. The single discrimination the field model still does above chance is the one the clean-room model can't do.
+
+The mismatch cuts both ways, too — a field-trained model is *worse* calibrated on clean data than anything else in the matrix (Brier 1.500). That's what a genuine gap between two distributions looks like, rather than one of them simply being harder.
+
+And the cell I have to be most honest about is the flattering one. Train on clean, test on clean: severity MAE 13.4 against a 16.4 baseline, coverage 0.933, non-zero recall on all four defect types. Every number improves. It is also the most obvious comparison to run, and if I had run only it, I'd have walked into a meeting with a chart proving my own idea correct.
+
+**So the proposal survives with its purpose changed.** Controlled in-house acquisition is a *measuring instrument* — it tells you how much of your failure is clutter and how much is physics, which is a number nobody currently has and which this experiment produced. It is not a training corpus. The models that go to the field have to be trained on the field.
+
+There's a limit worth stating rather than leaving to be found: in a synthetic world, ground truth exists by construction. So what I measured is the value of removing confounders and having labels. The biggest real payoff of an in-house campaign — correcting the physics assumptions in the forward model itself — can't be demonstrated by a study whose physics *is* the assumption under test. I'd rather write that sentence than have someone else find it.
+
 ---
 
 ## Part 6: Inference, and what "deployable" actually means
@@ -503,6 +562,14 @@ The single most useful artifact I built is a CI job that goes red when the model
 My detection model doesn't beat a robust z-score threshold. I know that to a 95% confidence interval of [−0.033, −0.026], measured over 9,600 physical defects, on the original vector-head version of this instrument. I know *why* — it rejects interference better but localises worse. And I know it's on the record, in the model card, in the README, and in a red CI badge, rather than in a drawer.
 
 The same discipline, pointed at the real instrument months later, produced a related but not identical answer. An ablation ladder across six versions of the pipeline found that one specific software addition — a first-difference calculation across the rod's three heads — moved detection by a real, statistically significant amount; everything past it didn't. A genuine hardware upgrade — one more axis — still bought roughly seven times more than that entire software gain, cut the false-dig rate by more than three times, and cut localisation error by more than an order of magnitude. I'd said, earlier in this piece, that *no* software step reached significance. Further team feedback changed the underlying corpus, the number moved, and I corrected the claim in the text above instead of letting an old sentence sit next to numbers that no longer supported it. Two different points in the same project's life, the same discipline applied both times, and this time the discipline included going back and fixing what I'd already written.
+
+Then the discipline had to be pointed at me twice more, and both times it took something away.
+
+Running at production scale retracted my best result. The 0.999 interference precision I'd called "the hard problem, solved" belongs to the instrument I assumed existed; on the real one the same model doesn't beat guessing the majority class. A small-corpus number I'd been quoting for weeks was a claim about a machine nobody built.
+
+And the last one was about my own idea rather than my model. I'd proposed controlled in-house acquisition — clean test spools, isolated defects — and I believed in it. I got to test it in simulation before anyone spent money. The obvious experiment, *is clean data easier*, agreed with me enthusiastically: every metric improved, and the detection model beat its baseline for the first time in the project's life. The experiment that actually decided the question, *does a model trained on clean data work in the field*, said no — worse severity error, worse calibration, and a blind spot for the exact failure mode the field model still catches. Both are true. Only one of them is the answer, and it isn't the flattering one.
+
+The proposal survived with its purpose inverted: build the test spools as a measuring instrument, not as a source of training data. That's a better outcome than either "I was right" or "I was wrong," and I'd never have reached it if I'd stopped at the experiment that made me look good. Designing a test that can embarrass you is the whole job. It's hardest, and worth most, when the idea being tested is yours.
 
 That's a more useful thing to have built than a model that works for reasons I couldn't defend.
 

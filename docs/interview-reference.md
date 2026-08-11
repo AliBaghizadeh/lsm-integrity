@@ -762,6 +762,85 @@ about the model) — and here, both statements happen to be true simultaneously.
 
 ---
 
+## 11b. The clean-room experiment — §11's Level 2, measured (2026-08-10)
+
+§11's Level-2 claim was an *argument*: interference was designed to have the same amplitude as a
+defect, so it is exactly as statistically unusual as a defect, and an anomaly detector finds
+unusual things — being unusual is what the two **share**. Testable prediction: delete the
+interference and the anomaly detector should work. `scripts/cleanroom_experiment.py` deletes it.
+
+**The counterfactual corpus** — an isolated in-house test spool — differs from field in exactly
+three ways: `n_interference: 0`, `weld.enabled: false` (removes the weld train's *physics*, not
+just its label), and `chainage_true_m` (tape measure) instead of GPS dead-reckoning + weld-comb
+registration. Rig, walk, sensor imperfections, defect physics, severity ranges, growth **and
+defect density** all identical.
+
+| E1 (within-domain, 12 lines / 144 defects each) | field (control) | clean room |
+|---|---|---|
+| MAD recall @ budget | 0.134 [0.093, 0.183] | 0.215 [0.167, 0.264] |
+| IsolationForest recall @ budget | 0.116 [0.076, 0.162] | **0.414 [0.343, 0.481]** |
+| **Recall gap (IF − MAD)** | −0.019 [−0.051, 0.019] | **+0.199 [0.139, 0.255]** |
+| IF false-dig rate | 0.861 | 0.503 |
+| IF localisation | 812 cm | **75 cm** |
+| Severity MAE vs own baseline | 16.5 vs 14.8 — **loses** | 11.6 vs 15.8 — **wins** |
+| SCC / dent recall | 0.140 / 0.232 | 0.359 / 0.567 |
+
+**The one-line version:** the first time in this project that IsolationForest beats MAD at all
+(every prior measurement — nine, two rigs, three grouping schemes — sat at or below zero), and it
+**still fails the gate**, narrowly: CI lower bound 0.139 vs the 0.15 bar. Reproduced to within
+0.005 at half the corpus size (+0.204 [0.106, 0.301] at 6 lines).
+
+**Q: Doesn't this just prove the obvious — clean data is easier?**
+Yes, and that is exactly why E1 is labelled a *diagnostic, not evidence*. Removing the confounders
+from a confounder-limited problem has to make it easier. What E1 buys is a **decomposition**: it
+says how much of the failure is confounders (a lot — 3.6× recall, 10.8× localisation) versus the
+scalar rig's own sensing physics. The scale rehearsal had already established the failure is
+*information*-limited; this names which information.
+
+| E2 (train → test, on the target's held-out LINES) | Severity MAE | Coverage / width | Brier | Interference |
+|---|---|---|---|---|
+| field → field | 15.8 [12.0, 20.0] | 0.600 / **32.9** | 0.925 [0.850, 1.014] | recall 0.444, precision 0.273 |
+| **clean room → field** | **19.4 [14.0, 24.3]** | 0.882 / **75.5** | **0.965 [0.872, 1.055]** | **recall 0.000 — never predicts it** |
+| field → clean room | 17.9 | 0.718 / 46.7 | **1.500 [1.414, 1.585]** (worst cell) | precision 0.000 |
+| clean room → clean room | **13.4** vs 16.4 baseline | 0.933 / 68.6 | 0.841 | n/a (no interference exists) |
+
+**Q: `clean room → field` has BETTER coverage (0.882 vs 0.600) — isn't that a point for the
+proposal?**
+No, and this is the trap the width column exists to close. That coverage is bought by emitting
+intervals **2.3× wider** (75.5 vs 32.9 %SMYS) while the point predictions get *worse*. Coverage
+alone is trivially purchasable by widening the interval — which is why §9 notes the Stage 4 gate
+uses a two-sided band on the *point estimate* rather than a lower bound. On field data the
+clean-room-trained severity model loses on both axes at once.
+
+**Q: So should ROSEN build the test facility?**
+Yes — as a **diagnostic and ceiling-setting instrument**, not as a training corpus. E2 is the
+decision-relevant half because the deployment target is messy real pipe whatever you train on, and
+there the clean-room-trained model is *worse*: higher severity error and worse calibration at both
+corpus sizes tested, plus a structural failure that isn't statistical at all — a clean-room corpus
+has no interference, so a model trained on it can never predict the class, losing the one
+discrimination the field classifier still does above chance.
+
+**Q: What's the strongest thing to say about the experimental design itself?**
+That it was built so it could come back negative, on a proposal I had made myself. The obvious
+experiment (`clean room → clean room`) is the flattering one and it looks superb — MAE 13.4 vs a
+16.4 baseline, coverage 0.933, non-zero recall on all four defect types. Running only that cell
+would have produced a chart proving my own idea correct. The 2×2 is what makes it an experiment
+rather than a demonstration.
+
+**Two caveats to volunteer:** (1) the E2 per-class recalls are unstable between the 6- and
+12-line runs (field → field SCC 0.177 → 0.000, weld 0.000 → 0.514) — at this power they are
+noise; quote Brier and the interference result, not individual class recalls. (2) In a synthetic
+corpus ground truth exists by construction, so this measures the value of *removing confounders
+and having labels* — the biggest real payoff of an in-house campaign, correcting the forward
+model's physics assumptions, cannot be shown by a study whose physics is the assumption under
+test.
+
+**Not run:** the mixing curve (lab + k% field), the data-efficiency curve (how many spools before
+saturation), the defect-spacing sweep (density was held equal across domains to avoid confounding
+"no interference" with "worse detrend baseline" — see §3 on why density is scaled by adding lines).
+
+---
+
 ## 12. Three real bugs found only at scale
 
 | Bug | Mechanism | Impact |
@@ -788,7 +867,7 @@ about the model) — and here, both statements happen to be true simultaneously.
 | Matching | greedy closest-first, tolerance 15 m, **no truth source claimed twice** | How a predicted indication gets paired to a real, known defect for scoring: take the closest unclaimed prediction-truth pair within 15 m, match it, remove both from the pool, repeat. Output: a one-to-one pairing where a single lucky prediction can't be double-counted against the same real defect twice. |
 | Point-in-time | as-of join filters `surveyed_at > as_of`; a separate assertion re-checks on the way out | Guards against evaluating a model using data it couldn't actually have had yet: when scoring a decision made at a given point in time, only surveys recorded *after* that point are excluded from what the model is allowed to see. Output: an evaluation that reflects what the model would genuinely have known in production, not one quietly boosted by future data; a second assertion re-verifies no future rows slipped through after the join. |
 
-**The same discipline applied to code, not just statistics:** 276 tests across ~20 files,
+**The same discipline applied to code, not just statistics:** 312 tests across ~20 files,
 each named for the property it guarantees rather than the module it covers —
 `test_leakage.py` (no group crosses a CV fold), `test_bundle_roundtrip.py` (save→load
 reproduces identical predictions), `test_golden.py` (a fixed tiny survey's output never

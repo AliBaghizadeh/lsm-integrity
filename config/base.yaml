@@ -123,6 +123,13 @@ data:
     # rare event. This corrects a real physical error the pre-Rig-v2 model
     # had: `weld` used to be drawn as one of a dozen rare point-defect types
     # (~12 TIMES total on a 2 km line, via rng.choice), not every 12 m.
+    #
+    # enabled: true is the only PHYSICAL setting -- a buried pipeline is built
+    # from welded joints, full stop. false exists only for the clean-room
+    # counterfactual (scripts/cleanroom_experiment.py), an isolated test spool
+    # with defects and no construction features, and must never be the
+    # operating default.
+    enabled: true
     pitch_m: 12.2
     pitch_jitter_m: 0.15
     # 5-20x a defect's dipole moment -- a joint carries real extra steel.

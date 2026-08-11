@@ -305,6 +305,46 @@ def test_weld_pitch_is_recoverable_by_autocorrelation(tiny_cfg, tmp_path):
     assert abs(peak_lag - cfg.base.data.weld.pitch_m) < 1.0
 
 
+def test_weld_disabled_removes_the_train_entirely_not_just_its_label(tiny_cfg, tmp_path):
+    """`weld.enabled: false` is the clean-room counterfactual's isolated test
+    spool (scripts/cleanroom_experiment.py) -- it must remove the welds'
+    PHYSICS, not merely stop labelling them, or the "no construction features"
+    corpus would still carry every joint's dipole field in `b_mid_nt` and the
+    whole experiment would measure nothing.
+
+    Checked both ways on one corpus: the label column goes to all-zero, AND
+    the field itself loses the periodic energy the weld train contributes
+    (compared against the same seed/config with welds on). Defects and
+    interference are switched off so welds are the ONLY source of structure.
+    """
+    def _run(enabled: bool):
+        cfg = tiny_cfg
+        cfg.base.data.length_m = 500.0
+        cfg.base.data.n_defects = 0
+        cfg.base.data.n_interference = 0
+        cfg.base.data.walk.sample_rate_hz = 20.0
+        cfg.base.data.weld = cfg.base.data.weld.model_copy(update={"enabled": enabled})
+        results = generate_all(cfg.base.data, tmp_path / f"raw_{enabled}", seed=cfg.seed)
+        return pd.read_parquet(results[0].path)
+
+    with_welds = _run(True)
+    without_welds = _run(False)
+
+    assert with_welds["girth_weld"].sum() > 0
+    assert without_welds["girth_weld"].sum() == 0
+
+    # The physics, not just the label: a weld train adds real dipole structure
+    # on top of the smooth background, so removing it must reduce the spread of
+    # the detrended middle head. Compared as a robust scale (MAD) so the
+    # comparison isn't driven by a single outlier sample.
+    def _mad(df):
+        r = df["b_mid_nt"].to_numpy()
+        r = r - np.median(r)
+        return float(np.median(np.abs(r - np.median(r))))
+
+    assert _mad(without_welds) < _mad(with_welds)
+
+
 def test_gain_mismatch_leaves_the_predicted_common_mode_residual():
     """SensorConfig's headline claim, checked exactly against _apply_sensor's
     own arithmetic: a 0.2% gain MISMATCH between two heads leaves

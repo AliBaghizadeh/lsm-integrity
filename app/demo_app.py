@@ -264,6 +264,36 @@ with overview:
         for check_name, desc in _DQ_CHECKS:
             st.markdown(f"- **`{check_name}`** -- {desc}")
 
+    # Why the pipeline above needs all seven stages, in two pictures. Rendered
+    # from committed PNGs (scripts/plot_signal_decomposition.py regenerates
+    # them) rather than plotted live: they need the generator's own internal
+    # per-source traces, which a served survey does not carry -- the app only
+    # ever sees the summed field, which is the entire point being made here.
+    # Guarded on .exists() like the landing-page image, so a missing asset
+    # degrades to no image instead of crashing the tab on demo day.
+    _IMG_DIR = Path(__file__).resolve().parents[1] / "img"
+    with st.expander("Why this is hard -- the signal, in pieces"):
+        components_png = _IMG_DIR / "signal_components.png"
+        decomposition_png = _IMG_DIR / "signal_decomposition.png"
+        st.markdown(
+            "**Each physical source on its own scale, over one 2 km line.** Girth welds are "
+            "the loudest thing in the data by a wide margin, and there are ~163 of them per "
+            "line. Interference is rarer but still reaches over 150 nT. The defects -- the "
+            "only thing anyone actually wants -- peak around 11 nT. **The thing being looked "
+            "for is the smallest signal present**, which is why stages 3 and 4 above exist at "
+            "all."
+        )
+        if components_png.exists():
+            st.image(str(components_png), width="stretch")
+        st.markdown(
+            "**The same survey, from raw field to isolated defect signal.** The raw trace "
+            "hides everything under the ~48,800 nT background; two-stage detrending "
+            "(`lsm.features`) exposes the residual; masking the weld and interference windows "
+            "leaves what the detector is actually asked to find."
+        )
+        if decomposition_png.exists():
+            st.image(str(decomposition_png), width="stretch")
+
 with performance:
     st.subheader("Trained model vs. baseline, on real held-out numbers")
     st.caption(

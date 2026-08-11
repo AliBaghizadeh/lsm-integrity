@@ -25,6 +25,20 @@ across heads) gives a real, statistically significant recall gain, but a genuine
 upgrade to full vector output still buys roughly seven times more than the entire software
 gain combined.
 
+**The clean-room experiment (2026-08-10):** the detection model's failure had been established as
+*information*-limited rather than data-limited — it survives 6× more data, three grouping schemes,
+and both the unsupervised and supervised paradigms. `scripts/cleanroom_experiment.py` asks which
+information is missing, by generating a counterfactual corpus: an isolated test spool with defects
+and nothing else — no external interference, no girth welds, chainage from a tape measure. There,
+the same detector beats its baseline by **+0.199 recall [0.139, 0.255]**, the first time in this
+project it beats that baseline at all, and localises **10.8× better** (812 cm → 75 cm). So the
+confounders, not the scalar rig's sensing physics, are what break detection. The second half of the
+experiment is the one that matters for deciding anything, though: a model *trained* on that clean
+corpus and evaluated on realistic data is **worse** than one trained on realistic data, and cannot
+recognise interference at all, having never seen it. Controlled acquisition is a diagnostic
+instrument here, not a training corpus — a distinction the flattering half of the experiment would
+have hidden.
+
 ![Project components: pipeline stages, infrastructure, and consumers](img/project-components.png)
 *Pipeline stages, infrastructure, and consumers.*
 
@@ -70,8 +84,8 @@ gain combined.
 ├── config/                  base.yaml (hashed into config_sha256) + dev.yaml/prod.yaml (not hashed)
 ├── serving/                 baked demo artifact: model bundles + 4 demo scenarios + manifest
 ├── scripts/                 EDA, plotting, the scale rehearsal, the Stage D ablation ladder,
-│                            baking the demo artifact
-├── tests/                   311 tests
+│                            the clean-room counterfactual experiment, baking the demo artifact
+├── tests/                   312 tests
 └── .github/workflows/       ci.yml (lint+type+test, every push) / train.yml (the real promotion gate)
 ```
 

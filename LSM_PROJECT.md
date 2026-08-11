@@ -345,6 +345,45 @@ gate (beats no-growth baseline): PASSED
   by interference/defect amplitude changes, as expected, since it depends only on the
   deterministic growth law applied to whichever severity a defect starts at.
 
+### Scale rehearsal under Rig-v2 (2026-08-10) — and what it settles
+
+The demo-scale numbers above were re-measured at **18.0M rows / 360 defects** (30 lines × 2 km ×
+3 runs, unchanged per-km density), under three grouping schemes rather than one. Full write-up:
+`docs/stage6-scale-rehearsal.md`; causal record: `docs/experiment-log.md`.
+
+| Metric | Demo scale (above) | Block CV (the gate's own grouping) | Whole-line holdout | Temporal holdout |
+|---|---|---|---|---|
+| Detection gap (IF − MAD) | 0.000 [−0.050, 0.061] | −0.007 [−0.030, 0.017] | −0.013 [−0.037, 0.012] | −0.014 [−0.047, 0.022] |
+| Severity coverage (gate [0.87, 0.93]) | 0.618 — FAIL | **0.872 — PASS** | 0.845 — FAIL | 0.860 — FAIL |
+| Interference precision (model / baseline) | 0.333 / 0.263 | 0.271 / **0.281** | 0.265 / **0.271** | 0.298 / 0.288 |
+| SCC recall | 0.023 | 0.129 | 0.100 | 0.000 |
+
+**This settles the severity open question this document had recorded as unanswered — partially,
+and the honest phrasing matters.** Coverage recovered from 0.618 (under its own baseline) purely
+by adding calibration data, with no modelling change. But it passes only under block CV, the
+optimistic grouping, and lands just *below* the band under both harder splits. The defensible
+claim is **"more data moved severity from badly broken to marginal"** — not "more data fixed
+severity." Quoting the block-CV PASS alone would be the flattering read.
+
+**And it forces a correction to this project's strongest historical positive result.** The
+pre-Rig-v2 vector rig reached **0.999 interference precision**, long cited here as "the
+supervised classifier has essentially solved defect-vs-buried-junk." On the scalar rig, across
+all three splits, the classifier sits at 0.265–0.298 — and in two of the three it is **at or
+below the trivial majority-class baseline**. That claim is a **vector-rig claim only** and must
+not be carried across the rig boundary.
+
+**The structural finding this run produces**, which the rest of this section then corroborates
+three more ways:
+
+| Failure | More data? | Harder split? | Diagnosis |
+|---|---|---|---|
+| Severity calibration | Helps a lot (0.618 → 0.845–0.872) | Degrades it below the band | Data-limited, not yet robust |
+| Detection (IF vs MAD) | No effect | No effect | **Information-limited** |
+| Interference discrimination | No effect | No effect | **Information-limited** |
+
+A failure that survives 6× more data, *both* the unsupervised and supervised paradigms, and three
+grouping schemes is the signature of **missing information, not modelling deficiency**.
+
 ### Ablation ladder — measured, and the headline finding changed
 
 The 6-arm ablation ladder (middle head only → +first difference `g1` → +second difference `g2`
@@ -474,6 +513,128 @@ survey pass sweeps the sensor-to-source direction through many angles as the wal
 diluting the idealised single-geometry relationship into a real-but-noisy population trend, not
 a deterministic one. The physics claim is confirmed at population scale, honestly reported with
 its actual noise, not overstated.
+
+---
+
+## The clean-room experiment (2026-08-10) — would an in-house controlled campaign help?
+
+**The proposal being tested.** Put to the developer team: rather than only ever seeing real
+buried pipeline — where a defect's anomaly arrives mixed with external interference and a girth
+weld every ~12 m — ROSEN runs its own test spools. Isolated pipe, known defects, no interference,
+no construction features, chainage from a tape measure instead of a dropping-out GPS. The
+argument was that ground truth on *what a defect actually looks like* is the missing ingredient.
+`scripts/cleanroom_experiment.py` tests that proposal before anyone spends money on it. Full
+output: `reports/cleanroom-transfer.md`.
+
+**What the counterfactual corpus changes, and what it deliberately does not.** Exactly three
+things, all of them things a real isolated spool genuinely lacks: `n_interference: 0`, the girth
+weld train off (new `weld.enabled` flag — it removes the welds' *physics*, not merely their
+label, or the corpus would still carry every joint's dipole field and the experiment would
+measure nothing), and `chainage_true_m` in place of GPS dead-reckoning + weld-comb registration.
+Rig, walk model, sensor imperfections, GPS dropout in the raw file, defect physics, severity
+ranges and growth are all identical. **Defect density is held identical too**, on purpose: a real
+test facility would pack defects far closer together, and this project has already measured that
+dense packing degrades background contrast on its own (3.19× → ~2.7–3.0×, `config/base.yaml`), so
+letting the clean room also be denser would confound "no interference" with "worse detrend
+baseline."
+
+**Two experiments, deliberately separated.** E1 (within-domain ceiling) on its own proves nothing
+about the proposal — removing the confounders from a confounder-limited problem *has* to make it
+easier — so it is reported as a diagnostic. E2 (train on one domain, evaluate on the other's
+held-out lines) is the decision-relevant half, because the deployment target is messy real pipe
+whatever the training data looks like. Run at 6 and then 12 lines per domain.
+
+### E1 — the ceiling: the confounders, not the sensing physics, are what break detection
+
+| | field (control) | clean room |
+|---|---|---|
+| MAD recall @ budget | 0.134 [0.093, 0.183] | 0.215 [0.167, 0.264] |
+| IsolationForest recall @ budget | 0.116 [0.076, 0.162] | **0.414 [0.343, 0.481]** |
+| **Recall gap (IF − MAD)** | −0.019 [−0.051, 0.019] | **+0.199 [0.139, 0.255]** |
+| IF false-dig rate | 0.861 [0.822, 0.897] | 0.503 [0.458, 0.544] |
+| IF localisation error | 812 cm [691, 931] | **75 cm [63, 93]** |
+| Severity coverage | 0.917 [0.835, 0.998] — PASS | 0.885 [0.836, 0.927] — PASS |
+| Severity MAE vs its own baseline | 16.5 vs 14.8 — **loses** | 11.6 vs 15.8 — **wins** |
+| SCC / dent recall | 0.140 / 0.232 | 0.359 / 0.567 |
+
+**This is the first measurement in this project where IsolationForest beats MAD.** Every prior
+one — nine of them, two rigs, three grouping schemes — sat at or below zero. The gap's point
+estimate reproduced to within 0.005 across an independent doubling of the corpus (+0.204
+[0.106, 0.301] at 6 lines, +0.199 [0.139, 0.255] at 12), and the field control in the same run
+reproduced both the familiar null and the scale rehearsal's interference precision (0.277 vs
+0.271) — so the two corpora differ by the three removals and nothing else.
+
+It **still fails the gate**, and narrowly: CI lower bound 0.139 against a 0.15 bar.
+
+**What this converts from argument into measurement.** This project's standing "Level 2"
+diagnosis of the detection failure said: interference was designed to have the *same amplitude*
+as a defect, so it is exactly as statistically unusual as a defect — and an anomaly detector
+finds unusual things, so *being unusual is what the two share*. If that diagnosis is right,
+deleting interference should make the anomaly detector work. It does. The scale rehearsal
+established that the failure is **information-limited** (survives 6× data, three splits, both
+paradigms); this experiment names *which* information. It is not that the defect signal is absent
+from the scalar rig — it is that the confounders make defects statistically indistinguishable
+from junk. Localisation says it more sharply still: **812 cm → 75 cm, 10.8×, from removing
+confounders alone**, with no hardware or algorithm change.
+
+### E2 — the transfer matrix: it does not transfer
+
+Trained on one domain's indications, evaluated on the other's held-out **lines** (6 train / 6
+test, same line ids in both domains). Only the two `→ field` rows bear on the proposal.
+
+| Train → test | Severity MAE | Severity coverage / interval width | Brier | Interference |
+|---|---|---|---|---|
+| field → field | 15.8 [12.0, 20.0] | 0.600 / **32.9** | 0.925 [0.850, 1.014] | recall 0.444, precision 0.273 |
+| **clean room → field** | **19.4 [14.0, 24.3]** | 0.882 / **75.5** | **0.965 [0.872, 1.055]** | **recall 0.000 — never predicts the class** |
+
+**Read the coverage column with its width column, never alone.** The clean-room-trained model's
+*higher* field coverage (0.882 vs 0.600) is the one number in this experiment that superficially
+favours the proposal — and it is bought entirely by emitting intervals **2.3× wider** (75.5 vs
+32.9 %SMYS), while its point predictions are simultaneously worse. That is vagueness, not
+calibration: coverage is trivially purchasable by widening the interval, which is exactly why
+`_severity_bootstrap_metrics`' `interval_width` is printed next to it in the report. On field
+data the clean-room-trained severity model loses on both axes at once.
+
+Clean-room training loses on field severity MAE at both scales (15.5 → 22.9 at 6 lines;
+15.8 → 19.4 at 12) and on Brier at both. CIs overlap every time, so no single comparison is
+decisive — but the direction reproduced across two independent corpora, and one part is not
+statistical at all: a clean-room corpus contains **no interference**, so a model trained on it
+structurally *cannot* predict the class, losing the one discrimination the field classifier still
+does above chance.
+
+The gap hurts in **both** directions: `field → clean room` has the worst Brier of any cell,
+1.500 [1.414, 1.585]. That is the signature of a genuine distribution shift, not of one domain
+simply being harder.
+
+Meanwhile the flattering cell looks excellent — `clean room → clean room` reaches severity MAE
+13.4 against a 16.4 baseline, coverage 0.933, and non-zero recall on all four defect types (SCC
+0.333, weld 0.345, dent 0.273, corrosion 0.200). **Reporting that cell alone would have been the
+self-flattering read of this experiment**, the same trap as quoting the block-CV severity PASS
+without its two harder splits.
+
+Two limits stated rather than left to be found: the E2 per-class recalls are unstable between the
+two scales (field → field SCC 0.177 → 0.000, weld 0.000 → 0.514) and should not be quoted
+individually — at this power they are noise, and Brier plus the structural interference result
+are what hold up. And in a synthetic corpus ground truth exists by construction, so what is
+measured here is the value of **removing confounders and having labels** — the largest real-world
+payoff of an in-house campaign, correcting the physics assumptions in the forward model itself,
+cannot be demonstrated by a study whose physics is the assumption under test.
+
+### What this means for the proposal
+
+**The physics intuition was right; the stated purpose has to change.** An in-house campaign is a
+**diagnostic and ceiling-setting instrument** — it establishes the confounder-free ceiling and
+turns the Level-2 diagnosis into a number — **not a training corpus.** Field models must be
+trained on field data; lab data alone actively degrades field performance and destroys
+interference rejection. This is the fourth independent line of evidence converging on the same
+structural finding (with the scale rehearsal, the POD-vs-angle result and the ablation ladder),
+and the first that identifies *which* information is missing rather than only that some is.
+
+**Not yet run**, in value order: the mixing curve (train on lab + k% field — the obvious
+follow-up, since it would say whether a little field data dominates a lot of lab data), the
+data-efficiency curve (how many test spools before it saturates), and the defect-spacing sweep
+(this experiment held density equal to avoid confounding, which leaves the density question
+itself unmeasured).
 
 ---
 

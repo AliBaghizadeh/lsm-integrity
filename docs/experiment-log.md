@@ -111,6 +111,87 @@ significance" was true of entry 1 and false after entry 2 — the first-differen
 real, free, significant gain. The *strategic* conclusion is unchanged: hardware's +0.403 point
 gap is >7× the entire software gain.
 
+### Clean-room counterfactual — is the detection failure confounder-driven or physics-driven?
+
+A **counterfactual corpus**, not a change to the production one: an isolated test spool with
+defects and nothing else — no external interference, no girth-weld train, chainage from a tape
+measure instead of GPS dead-reckoning. Everything else (rig, walk, sensor imperfections, defect
+physics, severity ranges, growth, defect density) identical to the field corpus, so the three
+removals are the only difference. Both domains generated and evaluated by the same script,
+`scripts/cleanroom_experiment.py`.
+
+> **Reading rule.** These rows are **not** production measurements and must never be quoted as
+> if the field gate moved. They answer a different question: *how much of the detection failure
+> is caused by the confounders, and how much is the scalar rig's own physics?*
+
+| # | Date | Domain | Lines / defects | Recall gap (IF − MAD) | IF localisation |
+|---|---|---|---|---|---|
+| 1 | 2026-08-10 | field (control) | 6 / 72 | −0.005 [−0.046, 0.051] | 730 cm |
+| 2 | 2026-08-10 | **clean room** | 6 / 72 | **+0.204 [0.106, 0.301]** | 113 cm |
+| 3 | 2026-08-10 | field (control) | 12 / 144 | −0.019 [−0.051, 0.019] | 812 cm |
+| 4 | 2026-08-10 | **clean room** | 12 / 144 | **+0.199 [0.139, 0.255]** | **75 cm** |
+
+**What this trajectory says — the first time in this project that IsolationForest beats MAD.**
+Every prior measurement of this gap (nine of them, two rigs, three grouping schemes) sat at or
+below zero. Remove the confounders and the gap becomes **+0.199 [0.139, 0.255]**, excluding zero,
+with the point estimate reproducing to within 0.005 across an independent doubling of the corpus.
+The field control in the same run reproduces the familiar null (−0.019, CI straddling zero),
+confirming the two domains differ by what was removed and not by anything else.
+
+This converts the project's standing *"Level 2"* diagnosis from an argument into a measurement.
+That diagnosis said: interference was designed to be exactly as statistically unusual as a
+defect, so an anomaly detector — which finds unusual things — cannot separate them, because
+*being unusual is what the two share*. If that is right, deleting interference should make the
+anomaly detector work. It does.
+
+It **still fails the gate**, and narrowly: the CI lower bound is 0.139 against a 0.15 bar.
+
+**Refinement to the "information-limited" finding.** The scale rehearsal established that
+detection failure survives 6× more data and three grouping schemes — the signature of missing
+information rather than a modelling deficiency. This experiment names *which* information: it is
+not that the defect signal is absent from the scalar rig, it is that the confounders make defects
+statistically indistinguishable from junk. Localisation says the same thing more sharply —
+**812 cm → 75 cm, a 10.8× improvement** from removing confounders alone, no hardware or algorithm
+change.
+
+### Clean-room counterfactual — does training on it help the FIELD model?
+
+The decision-relevant half. Trained on one domain's indications, evaluated on the other domain's
+held-out **lines** (6 train / 6 test lines, same line ids in both domains). Only the two
+`→ field` rows matter for the proposal, since the deployment target is messy real pipe either way.
+
+| Train → test | Severity MAE (field test) | Coverage / interval width | Brier | Interference |
+|---|---|---|---|---|
+| field → field | 15.8 [12.0, 20.0] | 0.600 / **32.9** | 0.925 [0.850, 1.014] | recall 0.444, precision 0.273 |
+| **clean room → field** | **19.4 [14.0, 24.3]** | 0.882 / **75.5** | **0.965 [0.872, 1.055]** | **recall 0.000 — never predicts the class** |
+
+**The one number that superficially favours the proposal, and why it doesn't.** Clean-room
+training gives *higher* field coverage (0.882 vs 0.600) — but only by emitting intervals **2.3×
+wider** (75.5 vs 32.9 %SMYS), with worse point predictions at the same time. Coverage is trivially
+purchasable by widening the interval; that is why `interval_width` is reported beside it. This
+column was added to the report specifically because the first 12-line run showed the coverage
+without the width and the cell was genuinely ambiguous until it was re-run.
+
+**What this trajectory says: it does not transfer.** Clean-room training loses on field severity
+MAE at both scales (15.5 → 22.9 at 6 lines; 15.8 → 19.4 at 12) and on Brier at both. CIs overlap
+every time, so no single comparison is decisive — but the direction reproduced across two
+independent corpora, and one part is not statistical at all: a clean-room corpus contains **no
+interference**, so a model trained on it structurally *cannot* predict the class, losing the one
+discrimination the field classifier still does above chance.
+
+The gap hurts in **both** directions — `field → clean room` has the worst Brier of any cell,
+1.500 [1.414, 1.585]. That is the signature of a genuine distribution shift, not of one domain
+simply being harder.
+
+Meanwhile the flattering cell looks excellent: `clean room → clean room` reaches severity MAE
+13.4 against a 16.4 baseline, coverage 0.933, and non-zero recall on all four defect types
+(SCC 0.333, weld 0.345, dent 0.273, corrosion 0.200). **Reporting that cell alone would have been
+the self-flattering read of this experiment** — the same trap the block-CV severity PASS was.
+
+**Do not quote the E2 per-class recalls individually.** They are unstable between the two scales
+(field → field SCC 0.177 → 0.000, weld 0.000 → 0.514); at this power they are noise. Brier and
+the structural interference result are what hold up.
+
 ### Supporting physics — POD vs defect-moment angle to `B̂0`
 
 | # | Date | Intervention | Raw detection-rate corr. | Severity-normalised corr. |
@@ -293,3 +374,58 @@ confident, plausible, wrong report — exactly the failure mode this project's w
 discipline exists to prevent, in the one corner where that discipline was deliberately switched off.
 The lesson is not "add these to CI" (an 80-minute job doesn't belong on every push) but **"code paths
 excluded from CI need an explicit staleness check at every schema/feature-version bump."**
+
+### 2026-08-10 — the clean-room experiment: what an in-house controlled campaign would buy
+
+**Why this was run.** A proposal put to the developer team: rather than only ever seeing real
+buried pipeline — where a defect's anomaly arrives mixed with external interference and a girth
+weld every ~12 m — run in-house test spools. Isolated pipe, known defects, nothing else. The
+argument was that ground truth on *what a defect actually looks like* is the missing ingredient.
+This experiment tests that proposal before anyone spends money on it.
+
+**Changed:** added `weld.enabled` to `WeldConfig` (physical default `true`; `false` removes the
+weld train's *physics*, not merely its label — a corpus that still carried every joint's dipole
+field would measure nothing) and built `scripts/cleanroom_experiment.py`. The clean-room corpus
+differs from field in exactly three ways, all of them things a real isolated spool genuinely
+lacks: no interference (`n_interference: 0`), no weld train, and tape-measured chainage
+(`chainage_true_m`) instead of GPS dead-reckoning + weld-comb registration. Defect **density** is
+held identical across domains on purpose — a real test facility would pack defects far closer
+together, and entry `n_lines 1→5` already measured that dense packing degrades background contrast
+on its own, so letting the clean room also be denser would confound "no interference" with "worse
+detrend baseline."
+
+**Design note — why two experiments and not one.** E1 (within-domain ceiling) on its own proves
+nothing about the proposal: removing the confounders from a confounder-limited problem *has* to
+make it easier. It is reported as a diagnostic. E2 (train on one domain, test on the other's
+held-out lines) is the decision-relevant half, because the deployment target is messy real pipe
+whatever the training data looks like. Run at 6 and then 12 lines per domain.
+
+**Moved — E1:** the detection recall gap went from the project's familiar null to **+0.199
+[0.139, 0.255]**, the first measurement in which IsolationForest beats MAD at all. Localisation
+**812 cm → 75 cm (10.8×)**, false-dig rate 0.861 → 0.503, severity MAE 16.5 (losing to its
+baseline) → 11.6 (beating a 15.8 baseline), and every defect-type recall improved (SCC
+0.140 → 0.359, dent 0.232 → 0.567). The field control in the same run reproduced the familiar
+null (−0.019 [−0.051, 0.019]) and the scale rehearsal's interference precision (0.277 vs 0.271),
+confirming the two corpora differ only by the three removals.
+
+**Moved — E2:** nothing, in the direction that would have justified the campaign. Clean-room
+training makes the *field* model worse on severity MAE (15.8 → 19.4) and Brier (0.925 → 0.965) at
+12 lines, and worse at 6 lines too, and it cannot predict interference at all.
+
+**Impact — the proposal survives, but its stated purpose has to change.** The physics intuition
+was right and the measurement is strong: the confounders, not the scalar rig's sensing physics,
+are what break detection, and that is now a number rather than an argument. But the *use* was
+wrong. An in-house campaign is a **diagnostic and ceiling-setting instrument** — it establishes
+the confounder-free ceiling and proves the Level-2 diagnosis — **not a training corpus**. Field
+models must be trained on field data; lab data alone actively degrades field performance and
+destroys interference rejection.
+
+This is the **fourth independent line of evidence** converging on the same structural finding
+(alongside the scale rehearsal, the POD-vs-angle physics result, and the ablation ladder), and
+the first one that identifies *which* information is missing rather than only that some is.
+
+**Not yet run** (deliberately scoped out, in value order): the mixing curve (train on lab + k%
+field data — the obvious follow-up, since it would say whether a little field data dominates a lot
+of lab data), the data-efficiency curve (how many test spools before it saturates), and the
+defect-spacing sweep (a real test facility packs defects densely; this experiment held density
+equal to avoid confounding, which leaves the density question itself unmeasured).

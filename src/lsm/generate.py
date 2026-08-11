@@ -862,7 +862,12 @@ def generate_all(cfg: DataConfig, raw_dir: Path, seed: int) -> list[SurveyResult
         line_id = f"LINE{line_idx:03d}"
         line_rng = np.random.default_rng(seed + line_idx)
         features = _build_features(cfg, line_rng)
-        welds = [] if cfg.rig == "vector" else _build_welds(cfg, line_rng)
+        # weld.enabled=False skips _build_welds ENTIRELY (not just its field
+        # contribution), so its RNG draws are never consumed and the whole
+        # downstream trajectory shifts -- fine, it is a different corpus by
+        # construction. The default (True) path is unchanged, byte for byte.
+        build_welds = cfg.rig != "vector" and cfg.weld.enabled
+        welds = _build_welds(cfg, line_rng) if build_welds else []
         for run_id in range(cfg.n_runs):
             df = _make_run(line_id, run_id, cfg, features, welds, line_rng)
             survey_id = f"{line_id}_R{run_id}"

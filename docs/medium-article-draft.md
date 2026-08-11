@@ -173,7 +173,7 @@ There is a deeper reason, and it is my mistake in how I framed the problem. I bu
 
 I know the information is there, because my classifier, which does see labels, identifies buried junk with 99.9 percent precision using the same features.
 
-The training command exits with an error code when this gate fails, so the CI job is red. It is supposed to be. A separate CI job runs the code checks and 276 tests, and that one is green. I keep them apart so that a real model failure never looks like broken code, and broken code never hides behind a model excuse.
+The training command exits with an error code when this gate fails, so the CI job is red. It is supposed to be. A separate CI job runs the code checks and 312 tests, and that one is green. I keep them apart so that a real model failure never looks like broken code, and broken code never hides behind a model excuse.
 
 Nothing has ever been promoted to production status. Every release is still marked "challenger".
 
@@ -189,7 +189,7 @@ Nothing has ever been promoted to production status. Every release is still mark
 
 Severity prediction with uncertainty works well. I ask for intervals that contain the true value 90 percent of the time, and measured 92 percent on the small corpus and 89.6 percent on the large one. That is the result I trust most.
 
-Interference rejection works very well. The classifier identifies buried junk with 99.9 percent precision. That was the hard problem I set out to solve.
+Interference rejection works very well. The classifier identifies buried junk with 99.9 percent precision. That was the hard problem I set out to solve. *(I take this back later — see "Then I ran it big." The number is real, but it belongs to the instrument I assumed existed, not the one that does.)*
 
 Crack detection does not reach my target. I required 90 percent, and measured 64 percent. Better than the baseline's zero, but not good enough to release.
 
@@ -269,6 +269,48 @@ Severity got worse again, too. The uncertainty intervals that covered the true v
 
 ---
 
+## Then I ran it big, and something I had been proud of stopped being true
+
+Everything above was measured on a small corpus. I finally ran the whole thing at 18 million rows and 360 defects, and I checked it three different ways instead of one — the easy split, a split that holds out whole pipelines, and a split that trains on the first two visits and tests on the third.
+
+Two things came out of it.
+
+The first is good news. Severity had been getting steadily worse, and I had guessed it was starved of calibration examples rather than broken. That guess was right: with more data the intervals went from covering the true value 62 percent of the time to 87 percent, with no change to the model at all. But it only reaches 87 percent under the easiest of the three splits. Under the two harder ones it lands at 85 and 86 percent, just under the bar. So the honest sentence is "more data moved severity from badly broken to marginal," not "more data fixed severity." I wrote the first version of that sentence as "fixed," looked at the other two splits, and rewrote it.
+
+The second is the part I have to correct. Twice above I told you that identifying buried junk was the hard problem I set out to solve, and that my classifier had essentially solved it at 99.9 percent precision. That number was real. It was also measured on the *old* instrument — the one with a full three-axis sensor, before I learned the real device only reports a single magnitude per head. On the real instrument, that same classifier scores between 26 and 30 percent, depending on the split. In two of the three splits it does not beat "always guess the most common answer."
+
+So the sentence "the classifier has solved interference discrimination" is a claim about a machine that does not exist. I am leaving the original sentences above where they are, because that is genuinely what I believed at that point in the story, and correcting them here rather than editing them out.
+
+And unlike severity, more data does nothing for it. Six times the data, three ways of splitting, both a model that uses labels and one that does not — nothing moves. When a failure ignores all of that, it usually means the information you need is not in the measurement.
+
+## So I asked what the missing information actually was
+
+I had been arguing with the team for a while that the real gap is ground truth: nobody knows exactly what each kind of defect looks like in this data, because nobody has ever measured a defect in isolation. My suggestion was to build test pipes in-house. Clean pipe, known defects, nothing else buried nearby, no welds, position measured with a tape instead of a satellite.
+
+I can simulate exactly that, so before asking anyone to spend money on it, I tested whether it would work.
+
+The first half was a straight vindication. On clean pipe, the detection model that had never once beaten a simple threshold beat it by 0.199 recall, with an interval that stays clear of zero. It also located defects about eleven times more accurately — 75 centimetres instead of 812. Same sensor, same physics, same algorithm. The only difference was that I removed the buried junk and the pipe joints.
+
+That is the answer to "what information is missing." It was never that the defect signal is too weak for this sensor. It is that the interference is designed to be exactly as strange-looking as a defect, and a detector whose whole job is to find strange things cannot separate two things whose strangeness is identical. Take the junk away and it works immediately.
+
+Here is where I had to be careful with myself, because I had proposed this idea and I wanted it to be right.
+
+Making the clean-pipe problem easier proves nothing. Of course it is easier. The question that decides whether to build the test facility is different: if I *train* a model on beautiful clean data, does it work on the messy real pipe I actually have to deploy on?
+
+No. It gets worse. Severity error went from 15.8 to 19.4. The confidence scores got worse too. And there is a failure that is not a matter of statistics at all: a model trained on clean pipe has never seen a buried fence post in its life, so it never predicts one. The one discrimination the real-data model still does above chance, the clean-data model cannot do at all.
+
+One number in that comparison did favour the clean-pipe model, and it is a good example of how a metric can flatter you. Its uncertainty intervals contained the true answer 88 percent of the time on real data, against 60 percent for the model trained on real data. That looks like better calibration until you notice the intervals are more than twice as wide. It was not more accurate. It was vaguer, and being vague is an easy way to be right. I had run the first version of this experiment without printing the interval width at all, which meant I could not tell those two explanations apart. I added the number and ran it again.
+
+The direction held at both corpus sizes I tried. And it hurts in both directions — a model trained on messy data is badly miscalibrated on clean data too, which is what a genuine mismatch between two worlds looks like, as opposed to one of them simply being harder.
+
+Meanwhile, the flattering version of this experiment looks wonderful. Train on clean pipe, test on clean pipe, and every number improves: better severity than the baseline, non-zero recall on all four defect types, well-calibrated intervals. If I had run only that comparison — and it is the obvious one to run — I would have walked into a meeting with a chart showing my idea works.
+
+So the proposal survives, with its purpose changed. Building test pipes is worth it as a *measuring instrument*: it tells you how much of your failure is caused by clutter rather than by physics, and that is a number nobody currently has. It is not worth it as a source of training data. The models that go in the field have to be trained on the field.
+
+I would rather have found that out in a simulation than in a budget.
+
+---
+
 ## What I learned
 
 The modelling was the smallest part of the work. Feature engineering and model choice were maybe 15 percent. The rest was data contracts, validation, provenance, and the methods for deciding whether a result is real.
@@ -284,6 +326,10 @@ The most useful thing I built is a job that turns red when the model is not good
 My detection model does not beat a simple threshold. I know this with a confidence interval of −0.033 to −0.026, measured over 9,600 defects, on the original vector-head version of the instrument. I know why. And it is written down in the model card, the README, and a red CI badge, instead of in a drawer.
 
 Months later, after the real instrument turned out to be a different, harder machine, the same question came back and got a related but not identical answer: one software step (a first-difference calculation across the three heads) gave a real, statistically significant improvement — small, and it's the only one of five that did — while a genuine hardware upgrade still bought roughly seven times more than that entire software gain. I said in an earlier draft of this piece that no software step reached significance at all. Further feedback on the data changed that, and I corrected it above rather than quietly editing it out. Two different projects, the same discipline, and this time the uncomfortable answer needed revising once, in public, when the numbers actually moved.
+
+Then it needed revising twice. The result I was proudest of — 99.9 percent precision at telling a real defect from buried junk — turned out to belong to an instrument that doesn't exist, and it does not survive on the real one. I found that by running the thing at scale instead of taking the small-corpus number at face value.
+
+The last lesson is the one I did not expect, and it is about my own idea rather than my model. I proposed building test pipes, I believed in it, and I got to test it before anyone spent money. The obvious experiment — is clean data easier to work with — would have told me I was right. The experiment that mattered — does a model trained on clean data work in the field — told me I was half wrong, and told me which half. Designing an experiment that can embarrass you is worth more than running one that can only agree with you, and it is much harder to make yourself do when the idea is yours.
 
 ---
 
