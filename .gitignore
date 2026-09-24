@@ -24,3 +24,21 @@ __pycache__/
 .ruff_cache/
 *.egg-info/
 .dagster_home/
+
+# Publication exclusions: local notes, planning material, and personal/reference documents.
+.claude/
+PLAN.md
+LSM_PROJECT.md
+docs/
+reports/
+planning/
+ai_code_craftsmanship.md
+*.pdf
+*.doc
+*.docx
+*.odt
+*.ppt
+*.pptx
+*.xls
+*.xlsx
+*.txt

@@ -54,14 +54,19 @@ def record_excavation(
     verified_at = verified_at or dt.datetime.now(dt.UTC).isoformat()
 
     row = conn.execute(
-        "SELECT survey_id, chainage_peak_m FROM indication WHERE indication_id=?", (indication_id,)
+        "SELECT survey_id, chainage_peak_m FROM indication WHERE indication_id=?",
+        (indication_id,),
     ).fetchone()
     if row is None:
         raise ValueError(f"indication {indication_id!r} not found")
     survey_id, chainage_peak_m = row
-    line_row = conn.execute("SELECT line_id FROM survey WHERE survey_id=?", (survey_id,)).fetchone()
+    line_row = conn.execute(
+        "SELECT line_id FROM survey WHERE survey_id=?", (survey_id,)
+    ).fetchone()
     if line_row is None:
-        raise ValueError(f"survey {survey_id!r} (for indication {indication_id!r}) not found")
+        raise ValueError(
+            f"survey {survey_id!r} (for indication {indication_id!r}) not found"
+        )
     line_id = line_row[0]
 
     candidates = conn.execute(
@@ -90,14 +95,22 @@ def record_excavation(
     else:
         defect_id = f"excavation_{uuid.uuid4().hex[:12]}"
         new_revision = 0
-        conn.execute("INSERT INTO defect (defect_id, line_id) VALUES (?, ?)", (defect_id, line_id))
+        conn.execute(
+            "INSERT INTO defect (defect_id, line_id) VALUES (?, ?)",
+            (defect_id, line_id),
+        )
 
     conn.execute(
         "INSERT INTO truth_defect (defect_id, revision, chainage_m, defect_type, source, "
         "verified_at, valid_from, valid_to) VALUES (?,?,?,?,?,?,?,NULL)",
         (
-            defect_id, new_revision, chainage_peak_m, verified_defect_type or "unknown",
-            "excavation", verified_at, verified_at,
+            defect_id,
+            new_revision,
+            chainage_peak_m,
+            verified_defect_type or "unknown",
+            "excavation",
+            verified_at,
+            verified_at,
         ),
     )
     conn.execute(
@@ -111,7 +124,7 @@ def record_excavation(
 def median_days_to_verification(conn: sqlite3.Connection) -> float | None:
     """Median `(verified_at - earliest matching indication's created_at)` in
     days, over every `source='excavation'` `truth_defect` row -- "the
-    number to ask ROSEN for" (PLAN.md). Computed via a chainage-proximity
+    number to request from the data owner". Computed via a chainage-proximity
     join at query time (see module docstring), not a stored link. `None` if
     no excavation has been recorded yet.
     """
@@ -137,14 +150,16 @@ def median_days_to_verification(conn: sqlite3.Connection) -> float | None:
             (line_id, verified_at),
         ).fetchall()
         matching_created_ats = [
-            created_at for chainage_peak_m, created_at in candidates
+            created_at
+            for chainage_peak_m, created_at in candidates
             if abs(chainage_peak_m - chainage_m) <= MATCH_TOLERANCE_M
         ]
         if not matching_created_ats:
             continue
         earliest_created_at = min(matching_created_ats)
         delta_days = (
-            dt.datetime.fromisoformat(verified_at) - dt.datetime.fromisoformat(earliest_created_at)
+            dt.datetime.fromisoformat(verified_at)
+            - dt.datetime.fromisoformat(earliest_created_at)
         ).total_seconds() / 86400.0
         deltas.append(delta_days)
 
@@ -153,7 +168,9 @@ def median_days_to_verification(conn: sqlite3.Connection) -> float | None:
     return float(np.median(deltas))
 
 
-def recompute_coverage_from_verifications(conn: sqlite3.Connection, pipeline_version: str, nominal: float) -> dict:
+def recompute_coverage_from_verifications(
+    conn: sqlite3.Connection, pipeline_version: str, nominal: float
+) -> dict:
     """Joins verified `truth_observation.severity_smys` (as-verified ground
     truth, for `source='excavation'` defects only) against the NEAREST
     matching `indication.(sev_lo, sev_hi)` in that same survey AND
@@ -182,7 +199,9 @@ def recompute_coverage_from_verifications(conn: sqlite3.Connection, pipeline_ver
             """,
             (survey_id, pipeline_version),
         ).fetchall()
-        in_range = [c for c in candidates if abs(c[0] - chainage_m) <= MATCH_TOLERANCE_M]
+        in_range = [
+            c for c in candidates if abs(c[0] - chainage_m) <= MATCH_TOLERANCE_M
+        ]
         if not in_range:
             continue
         _, lo, hi = min(in_range, key=lambda c: abs(c[0] - chainage_m))
@@ -192,4 +211,6 @@ def recompute_coverage_from_verifications(conn: sqlite3.Connection, pipeline_ver
 
     if not y_true_list:
         return {"n": 0}
-    return coverage_vs_nominal(np.array(y_true_list), np.array(lo_list), np.array(hi_list), nominal)
+    return coverage_vs_nominal(
+        np.array(y_true_list), np.array(lo_list), np.array(hi_list), nominal
+    )

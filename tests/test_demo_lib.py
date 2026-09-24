@@ -30,12 +30,16 @@ def test_clean_scenarios_have_precomputed_features_and_indications(survey_id):
 
 
 def test_corrupted_scenario_has_no_precomputed_output_but_a_dq_failure():
-    survey_id = next(s["survey_id"] for s in demo_lib.demo_scenarios() if s["kind"] == "corrupted")
+    survey_id = next(
+        s["survey_id"] for s in demo_lib.demo_scenarios() if s["kind"] == "corrupted"
+    )
     assert demo_lib.load_demo_features(survey_id) is None
     assert demo_lib.load_demo_indications(survey_id) is None
     failure = demo_lib.load_demo_dq_failure(survey_id)
     assert failure is not None
-    failed_checks = {r["check_name"] for r in failure["results"] if r["status"] == "fail"}
+    failed_checks = {
+        r["check_name"] for r in failure["results"] if r["status"] == "fail"
+    }
     assert "range" in failed_checks
 
 
@@ -67,7 +71,9 @@ def test_live_session_scores_all_three_clean_scenarios():
     for scenario in demo_lib.demo_scenarios():
         if scenario["kind"] != "clean":
             continue
-        report, indications = demo_lib.run_live_scenario(conn, live_cfg, scenario["survey_id"])
+        report, indications = demo_lib.run_live_scenario(
+            conn, live_cfg, scenario["survey_id"]
+        )
         assert not report.has_fail
         assert indications is not None
         features = demo_lib.load_live_features(live_cfg, scenario["survey_id"])
@@ -77,7 +83,9 @@ def test_live_session_scores_all_three_clean_scenarios():
 def test_live_session_refuses_the_corrupted_scenario_without_raising():
     cfg = load_config("dev")
     conn, live_cfg = demo_lib.init_live_session(cfg)
-    survey_id = next(s["survey_id"] for s in demo_lib.demo_scenarios() if s["kind"] == "corrupted")
+    survey_id = next(
+        s["survey_id"] for s in demo_lib.demo_scenarios() if s["kind"] == "corrupted"
+    )
 
     report, indications = demo_lib.run_live_scenario(conn, live_cfg, survey_id)
 
@@ -88,7 +96,9 @@ def test_live_session_refuses_the_corrupted_scenario_without_raising():
 def test_live_session_rerun_on_the_same_scenario_is_idempotent():
     cfg = load_config("dev")
     conn, live_cfg = demo_lib.init_live_session(cfg)
-    survey_id = next(s["survey_id"] for s in demo_lib.demo_scenarios() if s["kind"] == "clean")
+    survey_id = next(
+        s["survey_id"] for s in demo_lib.demo_scenarios() if s["kind"] == "clean"
+    )
 
     _, first = demo_lib.run_live_scenario(conn, live_cfg, survey_id)
     _, second = demo_lib.run_live_scenario(conn, live_cfg, survey_id)

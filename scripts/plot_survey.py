@@ -44,7 +44,9 @@ def load(survey_id: str) -> pd.DataFrame:
     )
 
 
-def label_bands(df: pd.DataFrame, flag_col: str, type_col: str | None = None) -> list[tuple[float, float, str]]:
+def label_bands(
+    df: pd.DataFrame, flag_col: str, type_col: str | None = None
+) -> list[tuple[float, float, str]]:
     """Contiguous runs of flag_col==1 -> [(start_m, end_m, label), ...]."""
     bands = []
     in_band = False
@@ -97,13 +99,25 @@ def plot(
 
     for start, end, dtype in defect:
         axs[0].text(
-            (start + end) / 2, axs[0].get_ylim()[1], dtype,
-            fontsize=7, ha="center", va="bottom", color="#8a5a1e", rotation=0,
+            (start + end) / 2,
+            axs[0].get_ylim()[1],
+            dtype,
+            fontsize=7,
+            ha="center",
+            va="bottom",
+            color="#8a5a1e",
+            rotation=0,
         )
     for start, end, _ in interference:
         axs[0].text(
-            (start + end) / 2, axs[0].get_ylim()[1], "interf.",
-            fontsize=7, ha="center", va="bottom", color="#5c6b74", rotation=0,
+            (start + end) / 2,
+            axs[0].get_ylim()[1],
+            "interf.",
+            fontsize=7,
+            ha="center",
+            va="bottom",
+            color="#5c6b74",
+            rotation=0,
         )
 
     axs[-1].set_xlabel("chainage (m)", fontsize=9)
@@ -112,26 +126,44 @@ def plot(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("survey_id", nargs="?", help="e.g. LINE000_R0 (omit to list available surveys)")
-    parser.add_argument("--save", type=Path, help="save PNG here instead of opening a window")
-    parser.add_argument("--chainage", nargs=2, type=float, metavar=("START_M", "END_M"), help="zoom to a chainage range")
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument(
-        "--interference", action="store_true",
+        "survey_id", nargs="?", help="e.g. LINE000_R0 (omit to list available surveys)"
+    )
+    parser.add_argument(
+        "--save", type=Path, help="save PNG here instead of opening a window"
+    )
+    parser.add_argument(
+        "--chainage",
+        nargs=2,
+        type=float,
+        metavar=("START_M", "END_M"),
+        help="zoom to a chainage range",
+    )
+    parser.add_argument(
+        "--interference",
+        action="store_true",
         help="also shade the (unlabeled-to-the-model) interference sources, in grey",
     )
     args = parser.parse_args()
 
     surveys = find_surveys()
     if not surveys:
-        print(f"No raw surveys found under {RAW_DIR}. Run `lsm generate` first.", file=sys.stderr)
+        print(
+            f"No raw surveys found under {RAW_DIR}. Run `lsm generate` first.",
+            file=sys.stderr,
+        )
         raise SystemExit(1)
 
     if args.survey_id is None:
         print("Available surveys:")
         for p in surveys:
             print(f"  {survey_id_of(p)}")
-        print("\nUsage: python scripts/plot_survey.py <survey_id> [--save out.png] [--chainage START END] [--interference]")
+        print(
+            "\nUsage: python scripts/plot_survey.py <survey_id> [--save out.png] [--chainage START END] [--interference]"
+        )
         return
 
     df = load(args.survey_id)
@@ -140,7 +172,12 @@ def main() -> None:
             "This raw file predates the `interference` ground-truth column "
             "(schema_version 1). Run `lsm generate` again to regenerate it."
         )
-    fig = plot(df, args.survey_id, tuple(args.chainage) if args.chainage else None, args.interference)
+    fig = plot(
+        df,
+        args.survey_id,
+        tuple(args.chainage) if args.chainage else None,
+        args.interference,
+    )
 
     if args.save:
         fig.savefig(args.save, dpi=150)

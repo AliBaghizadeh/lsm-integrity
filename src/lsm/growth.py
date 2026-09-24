@@ -35,7 +35,9 @@ from lsm.hashing import data_sha256
 from lsm.indications import attach_severity
 from lsm.model_card import append_growth_section
 
-GATE_GROWTH_MARGIN = 0.0  # baseline_mae - model_mae must exceed this at the CI lower bound
+GATE_GROWTH_MARGIN = (
+    0.0  # baseline_mae - model_mae must exceed this at the CI lower bound
+)
 
 
 def build_growth_frame(matched_all: pd.DataFrame, corpus: pd.DataFrame) -> pd.DataFrame:
@@ -62,18 +64,26 @@ def build_growth_frame(matched_all: pd.DataFrame, corpus: pd.DataFrame) -> pd.Da
     truth = corpus[["survey_id", "chainage_m", "severity_smys"]].rename(
         columns={"chainage_m": "chainage_peak_m", "severity_smys": "y_true"}
     )
-    with_truth = defects_only.merge(truth, on=["survey_id", "chainage_peak_m"], how="left")
+    with_truth = defects_only.merge(
+        truth, on=["survey_id", "chainage_peak_m"], how="left"
+    )
     run_ids = corpus[["survey_id", "run_id"]].drop_duplicates()
     with_run = with_truth.merge(run_ids, on="survey_id", how="left")
 
     n_nan = int(with_run["y_true"].isna().sum())
     if n_nan > 0:
-        print(f"build_growth_frame: dropping {n_nan} matched indication(s) whose peak row "
-              "has a NaN severity_smys (peak landed outside the true label window while "
-              "still within the dig-matching tolerance) -- see train.py's comment.")
+        print(
+            f"build_growth_frame: dropping {n_nan} matched indication(s) whose peak row "
+            "has a NaN severity_smys (peak landed outside the true label window while "
+            "still within the dig-matching tolerance) -- see train.py's comment."
+        )
         with_run = with_run[with_run["y_true"].notna()]
 
-    out = with_run[columns].sort_values(["matched_source_id", "run_id"]).reset_index(drop=True)
+    out = (
+        with_run[columns]
+        .sort_values(["matched_source_id", "run_id"])
+        .reset_index(drop=True)
+    )
     return out
 
 
@@ -111,7 +121,9 @@ def fit_population_log_rate(growth_frame: pd.DataFrame) -> tuple[float, float]:
     for _, group in growth_frame.groupby("matched_source_id"):
         if len(group) < 2:
             continue
-        slope, slope_var = _ols_log_slope(group["run_id"].to_numpy(), group["y_true"].to_numpy())
+        slope, slope_var = _ols_log_slope(
+            group["run_id"].to_numpy(), group["y_true"].to_numpy()
+        )
         if not np.isfinite(slope):
             continue
         weight = 1.0 / slope_var if np.isfinite(slope_var) and slope_var > 0 else 1.0
@@ -126,7 +138,10 @@ def fit_population_log_rate(growth_frame: pd.DataFrame) -> tuple[float, float]:
 
 
 def fit_defect_rates(
-    growth_frame: pd.DataFrame, population_rate: float, population_var: float, min_observations_for_own_rate: int,
+    growth_frame: pd.DataFrame,
+    population_rate: float,
+    population_var: float,
+    min_observations_for_own_rate: int,
 ) -> pd.DataFrame:
     """Per `matched_source_id`: n_obs, own_rate (nan below the minimum),
     own_var, shrunk_rate (precision-weighted convex combination of own_rate
@@ -137,32 +152,58 @@ def fit_defect_rates(
     precision from a variance that was never actually measured.
     """
     rows = []
-    pop_precision = 1.0 / population_var if np.isfinite(population_var) and population_var > 0 else 0.0
+    pop_precision = (
+        1.0 / population_var
+        if np.isfinite(population_var) and population_var > 0
+        else 0.0
+    )
     for source_id, group in growth_frame.groupby("matched_source_id"):
         n_obs = len(group)
         if n_obs < min_observations_for_own_rate:
-            rows.append({
-                "matched_source_id": source_id, "n_obs": n_obs, "own_rate": float("nan"),
-                "own_var": float("nan"), "shrunk_rate": population_rate, "shrinkage_weight": 0.0,
-            })
+            rows.append(
+                {
+                    "matched_source_id": source_id,
+                    "n_obs": n_obs,
+                    "own_rate": float("nan"),
+                    "own_var": float("nan"),
+                    "shrunk_rate": population_rate,
+                    "shrinkage_weight": 0.0,
+                }
+            )
             continue
-        own_rate, own_var = _ols_log_slope(group["run_id"].to_numpy(), group["y_true"].to_numpy())
+        own_rate, own_var = _ols_log_slope(
+            group["run_id"].to_numpy(), group["y_true"].to_numpy()
+        )
         if not np.isfinite(own_rate):
-            rows.append({
-                "matched_source_id": source_id, "n_obs": n_obs, "own_rate": float("nan"),
-                "own_var": float("nan"), "shrunk_rate": population_rate, "shrinkage_weight": 0.0,
-            })
+            rows.append(
+                {
+                    "matched_source_id": source_id,
+                    "n_obs": n_obs,
+                    "own_rate": float("nan"),
+                    "own_var": float("nan"),
+                    "shrunk_rate": population_rate,
+                    "shrinkage_weight": 0.0,
+                }
+            )
             continue
         if not np.isfinite(own_var):
-            own_var = population_var  # 2 observations: borrow the population's own variance
+            own_var = (
+                population_var  # 2 observations: borrow the population's own variance
+            )
         own_precision = 1.0 / own_var if np.isfinite(own_var) and own_var > 0 else 0.0
         total_precision = own_precision + pop_precision
         weight = own_precision / total_precision if total_precision > 0 else 0.0
         shrunk_rate = weight * own_rate + (1 - weight) * population_rate
-        rows.append({
-            "matched_source_id": source_id, "n_obs": n_obs, "own_rate": own_rate,
-            "own_var": own_var, "shrunk_rate": shrunk_rate, "shrinkage_weight": weight,
-        })
+        rows.append(
+            {
+                "matched_source_id": source_id,
+                "n_obs": n_obs,
+                "own_rate": own_rate,
+                "own_var": own_var,
+                "shrunk_rate": shrunk_rate,
+                "shrinkage_weight": weight,
+            }
+        )
     return pd.DataFrame(rows)
 
 
@@ -176,7 +217,9 @@ def no_growth_baseline_predict(last_observed_severity: np.ndarray) -> np.ndarray
 
 
 def project_remaining_life(
-    current_severity: tuple[float, float, float], shrunk_rate: float, limit_state_smys: float,
+    current_severity: tuple[float, float, float],
+    shrunk_rate: float,
+    limit_state_smys: float,
 ) -> tuple[float, float, float]:
     """Solves log(limit_state) = log(current) + rate * t for t (in
     run-intervals), applied to each of the current severity's (lo, med, hi)
@@ -207,8 +250,12 @@ def project_remaining_life(
 
 
 def evaluate_growth_gate(
-    growth_frame: pd.DataFrame, train_run_ids: frozenset[int], test_run_id: int,
-    min_observations_for_own_rate: int, boot_cfg, seed: int,
+    growth_frame: pd.DataFrame,
+    train_run_ids: frozenset[int],
+    test_run_id: int,
+    min_observations_for_own_rate: int,
+    boot_cfg,
+    seed: int,
 ) -> dict:
     """PLAN.md's literal gate, the same split SHAPE as
     `scale_eval.run_temporal_holdout` (train_run_ids={0,1}, test_run_id=2)
@@ -222,7 +269,9 @@ def evaluate_growth_gate(
     test_frame = growth_frame[growth_frame["run_id"] == test_run_id]
 
     population_rate, population_var = fit_population_log_rate(train_frame)
-    defect_rates = fit_defect_rates(train_frame, population_rate, population_var, min_observations_for_own_rate)
+    defect_rates = fit_defect_rates(
+        train_frame, population_rate, population_var, min_observations_for_own_rate
+    )
     rate_by_defect = defect_rates.set_index("matched_source_id")["shrunk_rate"]
 
     model_errors, baseline_errors = [], []
@@ -235,14 +284,22 @@ def evaluate_growth_gate(
         for _, test_row in test_group.iterrows():
             dt_runs = test_row["run_id"] - last_obs["run_id"]
             model_pred = last_obs["y_true"] * np.exp(shrunk_rate * dt_runs)
-            baseline_pred = no_growth_baseline_predict(np.array([last_obs["y_true"]]))[0]
+            baseline_pred = no_growth_baseline_predict(np.array([last_obs["y_true"]]))[
+                0
+            ]
             model_errors.append(abs(model_pred - test_row["y_true"]))
             baseline_errors.append(abs(baseline_pred - test_row["y_true"]))
 
     model_mae = bootstrap_ci(model_errors, boot_cfg.n_resamples, boot_cfg.level, seed)
-    baseline_mae = bootstrap_ci(baseline_errors, boot_cfg.n_resamples, boot_cfg.level, seed + 1)
-    gap = paired_bootstrap_ci(baseline_errors, model_errors, boot_cfg.n_resamples, boot_cfg.level, seed + 2)
-    gate_passed = bool(gap[1] > GATE_GROWTH_MARGIN)  # CI lower bound, not the point estimate
+    baseline_mae = bootstrap_ci(
+        baseline_errors, boot_cfg.n_resamples, boot_cfg.level, seed + 1
+    )
+    gap = paired_bootstrap_ci(
+        baseline_errors, model_errors, boot_cfg.n_resamples, boot_cfg.level, seed + 2
+    )
+    gate_passed = bool(
+        gap[1] > GATE_GROWTH_MARGIN
+    )  # CI lower bound, not the point estimate
 
     return {
         "population_log_rate": population_rate,
@@ -255,8 +312,12 @@ def evaluate_growth_gate(
 
 
 def _project_remaining_life_frame(
-    growth_frame: pd.DataFrame, defect_rates: pd.DataFrame, matched_all: pd.DataFrame, corpus: pd.DataFrame,
-    severity_bundle: dict | None, growth_cfg: dict,
+    growth_frame: pd.DataFrame,
+    defect_rates: pd.DataFrame,
+    matched_all: pd.DataFrame,
+    corpus: pd.DataFrame,
+    severity_bundle: dict | None,
+    growth_cfg: dict,
 ) -> pd.DataFrame:
     """Production remaining-life: for every matched defect, the "current
     severity" anchor is the RELEASED severity bundle's (sev_pred, sev_lo,
@@ -267,8 +328,18 @@ def _project_remaining_life_frame(
     for every indication regardless of a growth model's existence, but
     remaining life needs a starting point to project from).
     """
-    columns = ["matched_source_id", "n_obs", "shrinkage_weight", "shrunk_rate",
-               "sev_pred", "sev_lo", "sev_hi", "life_lo", "life_med", "life_hi"]
+    columns = [
+        "matched_source_id",
+        "n_obs",
+        "shrinkage_weight",
+        "shrunk_rate",
+        "sev_pred",
+        "sev_lo",
+        "sev_hi",
+        "life_lo",
+        "life_med",
+        "life_hi",
+    ]
     if severity_bundle is None or len(growth_frame) == 0:
         return pd.DataFrame(columns=columns)
 
@@ -280,7 +351,11 @@ def _project_remaining_life_frame(
 
     base_feature_cols = [c for c in severity_bundle["feature_cols"] if c != "extent_m"]
     with_severity = attach_severity(
-        latest_indications, corpus, severity_bundle["model"], base_feature_cols, nominal_coverage=1.0,
+        latest_indications,
+        corpus,
+        severity_bundle["model"],
+        base_feature_cols,
+        nominal_coverage=1.0,
     )
 
     rate_lookup = defect_rates.set_index("matched_source_id")
@@ -291,13 +366,24 @@ def _project_remaining_life_frame(
             continue
         rate_row = rate_lookup.loc[source_id]
         life_lo, life_med, life_hi = project_remaining_life(
-            (row["sev_lo"], row["sev_pred"], row["sev_hi"]), rate_row["shrunk_rate"], growth_cfg["limit_state_smys"],
+            (row["sev_lo"], row["sev_pred"], row["sev_hi"]),
+            rate_row["shrunk_rate"],
+            growth_cfg["limit_state_smys"],
         )
-        rows.append({
-            "matched_source_id": source_id, "n_obs": rate_row["n_obs"], "shrinkage_weight": rate_row["shrinkage_weight"],
-            "shrunk_rate": rate_row["shrunk_rate"], "sev_pred": row["sev_pred"], "sev_lo": row["sev_lo"],
-            "sev_hi": row["sev_hi"], "life_lo": life_lo, "life_med": life_med, "life_hi": life_hi,
-        })
+        rows.append(
+            {
+                "matched_source_id": source_id,
+                "n_obs": rate_row["n_obs"],
+                "shrinkage_weight": rate_row["shrinkage_weight"],
+                "shrunk_rate": rate_row["shrunk_rate"],
+                "sev_pred": row["sev_pred"],
+                "sev_lo": row["sev_lo"],
+                "sev_hi": row["sev_hi"],
+                "life_lo": life_lo,
+                "life_med": life_med,
+                "life_hi": life_hi,
+            }
+        )
     return pd.DataFrame(rows, columns=columns)
 
 
@@ -316,21 +402,31 @@ def run_forecast(cfg: Config, conn, as_of: str | None = None) -> dict:
     as_of = as_of or now.isoformat()
     feature_version = cfg.base.features.version
 
-    corpus = train.load_feature_corpus(cfg.env.storage.feature_dir, feature_version, as_of=as_of)
+    corpus = train.load_feature_corpus(
+        cfg.env.storage.feature_dir, feature_version, as_of=as_of
+    )
     if len(corpus) == 0:
         raise RuntimeError("empty feature corpus -- run `lsm features` first")
 
     survey_ids = sorted(corpus["survey_id"].unique())
     truth_geo = train._load_truth_and_geometry(conn, survey_ids)
-    corpus = corpus.merge(truth_geo, on=["survey_id", "sample_idx"], how="left", validate="one_to_one")
+    corpus = corpus.merge(
+        truth_geo, on=["survey_id", "sample_idx"], how="left", validate="one_to_one"
+    )
     feature_cols = train.feature_columns(cfg.base.features)
 
     line_ids = sorted(corpus["line_id"].unique())
     registries = []
     for line_id in line_ids:
-        ref_survey_id = min(corpus.loc[corpus["line_id"] == line_id, "survey_id"].unique())
+        ref_survey_id = min(
+            corpus.loc[corpus["line_id"] == line_id, "survey_id"].unique()
+        )
         ref_rows = corpus[corpus["survey_id"] == ref_survey_id]
-        registries.append(train.build_truth_registry(ref_rows, line_id, ref_rows["chainage_m"].to_numpy()))
+        registries.append(
+            train.build_truth_registry(
+                ref_rows, line_id, ref_rows["chainage_m"].to_numpy()
+            )
+        )
     registry = pd.concat(registries, ignore_index=True)
 
     pipeline_version, anomaly_version, severity_version, _classify_version = (
@@ -339,33 +435,49 @@ def run_forecast(cfg: Config, conn, as_of: str | None = None) -> dict:
     model_dir = Path(cfg.env.storage.model_dir)
     anomaly_bundle = bundle_module.load_bundle(
         model_dir / anomaly_version / "bundle.joblib",
-        expected_feature_version=feature_version, expected_schema_version=cfg.base.schema_version,
+        expected_feature_version=feature_version,
+        expected_schema_version=cfg.base.schema_version,
     )
     corpus["_score"] = anomaly_bundle["model"].score(corpus)
-    all_indications = train._cluster_all_indications(corpus, "_score", anomaly_bundle["threshold"])
+    all_indications = train._cluster_all_indications(
+        corpus, "_score", anomaly_bundle["threshold"]
+    )
     matched_all = train._match_all_indications(all_indications, corpus, registry)
     growth_frame = build_growth_frame(matched_all, corpus)
 
     growth_cfg = cfg.base.model.growth
     boot_cfg = cfg.base.model.bootstrap
     gate = evaluate_growth_gate(
-        growth_frame, frozenset(growth_cfg["train_run_ids"]), growth_cfg["test_run_id"],
-        growth_cfg["min_observations_for_own_rate"], boot_cfg, cfg.seed,
+        growth_frame,
+        frozenset(growth_cfg["train_run_ids"]),
+        growth_cfg["test_run_id"],
+        growth_cfg["min_observations_for_own_rate"],
+        boot_cfg,
+        cfg.seed,
     )
 
     population_rate, population_var = fit_population_log_rate(growth_frame)
     defect_rates = fit_defect_rates(
-        growth_frame, population_rate, population_var, growth_cfg["min_observations_for_own_rate"]
+        growth_frame,
+        population_rate,
+        population_var,
+        growth_cfg["min_observations_for_own_rate"],
     )
 
     severity_bundle = None
     if severity_version is not None:
         severity_bundle = bundle_module.load_bundle(
             model_dir / severity_version / "bundle.joblib",
-            expected_feature_version=feature_version, expected_schema_version=cfg.base.schema_version,
+            expected_feature_version=feature_version,
+            expected_schema_version=cfg.base.schema_version,
         )
     remaining_life_frame = _project_remaining_life_frame(
-        growth_frame, defect_rates, matched_all, corpus, severity_bundle, growth_cfg,
+        growth_frame,
+        defect_rates,
+        matched_all,
+        corpus,
+        severity_bundle,
+        growth_cfg,
     )
 
     result = {
@@ -379,15 +491,38 @@ def run_forecast(cfg: Config, conn, as_of: str | None = None) -> dict:
         "median_days_to_verification": dig_feedback.median_days_to_verification(conn),
     }
 
-    _persist_growth(cfg, conn, now, pipeline_version, as_of, survey_ids, result, population_rate,
-                     population_var, defect_rates, remaining_life_frame, growth_cfg, feature_cols)
+    _persist_growth(
+        cfg,
+        conn,
+        now,
+        pipeline_version,
+        as_of,
+        survey_ids,
+        result,
+        population_rate,
+        population_var,
+        defect_rates,
+        remaining_life_frame,
+        growth_cfg,
+        feature_cols,
+    )
     return result
 
 
 def _persist_growth(
-    cfg: Config, conn, now: dt.datetime, pipeline_version: str, as_of: str, survey_ids: list[str],
-    result: dict, population_rate: float, population_var: float, defect_rates: pd.DataFrame,
-    remaining_life_frame: pd.DataFrame, growth_cfg: dict, feature_cols: list[str],
+    cfg: Config,
+    conn,
+    now: dt.datetime,
+    pipeline_version: str,
+    as_of: str,
+    survey_ids: list[str],
+    result: dict,
+    population_rate: float,
+    population_var: float,
+    defect_rates: pd.DataFrame,
+    remaining_life_frame: pd.DataFrame,
+    growth_cfg: dict,
+    feature_cols: list[str],
 ) -> None:
     """Persists a `model_run` row (task='growth'), a bundle, a
     `pipeline_release.growth_version` UPDATE (never a new release row --
@@ -399,7 +534,8 @@ def _persist_growth(
     """
     git_sha = train._git_sha()
     content_hashes = [
-        row[0] for row in conn.execute(
+        row[0]
+        for row in conn.execute(
             f"SELECT content_sha256 FROM survey WHERE survey_id IN ({','.join('?' * len(survey_ids))})",
             survey_ids,
         ).fetchall()
@@ -409,50 +545,74 @@ def _persist_growth(
     mlflow.set_tracking_uri(cfg.env.mlflow["tracking_uri"])
     mlflow.set_experiment(cfg.base.mlflow.get("experiment", "lsm-integrity"))
     with mlflow.start_run(run_name="stage8-growth") as run:
-        mlflow.log_params({
-            "config_sha256": cfg.config_sha256, "git_sha": git_sha, "data_sha256": corpus_data_sha256,
-            "seed": cfg.seed, "as_of": as_of, "limit_state_smys": growth_cfg["limit_state_smys"],
-        })
-        mlflow.log_metrics({
-            "population_log_rate": result["growth_population_log_rate"],
-            "model_mae": result["growth"]["mae"][0],
-            "baseline_mae": result["growth_baseline"]["mae"][0],
-            "n_growth_samples": result["n_growth_samples"],
-        })
+        mlflow.log_params(
+            {
+                "config_sha256": cfg.config_sha256,
+                "git_sha": git_sha,
+                "data_sha256": corpus_data_sha256,
+                "seed": cfg.seed,
+                "as_of": as_of,
+                "limit_state_smys": growth_cfg["limit_state_smys"],
+            }
+        )
+        mlflow.log_metrics(
+            {
+                "population_log_rate": result["growth_population_log_rate"],
+                "model_mae": result["growth"]["mae"][0],
+                "baseline_mae": result["growth_baseline"]["mae"][0],
+                "n_growth_samples": result["n_growth_samples"],
+            }
+        )
 
         date_tag = now.strftime("%Y.%m.%d")
         short_sha = train._short_sha(git_sha)
         growth_version = f"growth-eb-{date_tag}-{short_sha}"
-        artifact_path = Path(cfg.env.storage.model_dir) / growth_version / "bundle.joblib"
-        bundle_module.save_bundle(artifact_path, {
-            "task": "growth",
-            "model_kind": "empirical_bayes_log_linear",
-            "feature_cols": feature_cols,
-            "population_log_rate": population_rate,
-            "population_log_rate_var": population_var,
-            "defect_rates": defect_rates.to_dict(orient="records"),
-            "limit_state_smys": growth_cfg["limit_state_smys"],
-            "assumed_interval_years": growth_cfg["assumed_interval_years"],
-            "feature_version": cfg.base.features.version,
-            "schema_version": cfg.base.schema_version,
-            "config_sha256": cfg.config_sha256,
-            "git_sha": git_sha,
-            "data_sha256": corpus_data_sha256,
-            "truth_as_of": as_of,
-        })
+        artifact_path = (
+            Path(cfg.env.storage.model_dir) / growth_version / "bundle.joblib"
+        )
+        bundle_module.save_bundle(
+            artifact_path,
+            {
+                "task": "growth",
+                "model_kind": "empirical_bayes_log_linear",
+                "feature_cols": feature_cols,
+                "population_log_rate": population_rate,
+                "population_log_rate_var": population_var,
+                "defect_rates": defect_rates.to_dict(orient="records"),
+                "limit_state_smys": growth_cfg["limit_state_smys"],
+                "assumed_interval_years": growth_cfg["assumed_interval_years"],
+                "feature_version": cfg.base.features.version,
+                "schema_version": cfg.base.schema_version,
+                "config_sha256": cfg.config_sha256,
+                "git_sha": git_sha,
+                "data_sha256": corpus_data_sha256,
+                "truth_as_of": as_of,
+            },
+        )
 
         conn.execute(
             "INSERT OR REPLACE INTO model_run (model_version, task, mlflow_run_id, git_sha, "
             "config_sha256, data_sha256, feature_version, truth_as_of, trained_at, "
             "metrics_json, artifact_uri, final_test_uses) VALUES (?,?,?,?,?,?,?,?,?,?,?,0)",
             (
-                growth_version, "growth", run.info.run_id, git_sha, cfg.config_sha256,
-                corpus_data_sha256, cfg.base.features.version, as_of, now.isoformat(),
-                json.dumps({
-                    "population_log_rate": result["growth_population_log_rate"],
-                    "mae": result["growth"]["mae"], "baseline_mae": result["growth_baseline"]["mae"],
-                    "gate_passed": result["growth_gate_passed"],
-                }, default=list),
+                growth_version,
+                "growth",
+                run.info.run_id,
+                git_sha,
+                cfg.config_sha256,
+                corpus_data_sha256,
+                cfg.base.features.version,
+                as_of,
+                now.isoformat(),
+                json.dumps(
+                    {
+                        "population_log_rate": result["growth_population_log_rate"],
+                        "mae": result["growth"]["mae"],
+                        "baseline_mae": result["growth_baseline"]["mae"],
+                        "gate_passed": result["growth_gate_passed"],
+                    },
+                    default=list,
+                ),
                 str(artifact_path),
             ),
         )
@@ -468,7 +628,9 @@ def _persist_growth(
         remaining_life_frame.to_parquet(report_path, index=False)
         mlflow.log_artifact(str(report_path))
 
-        model_card_path = Path(cfg.env.storage.model_dir) / pipeline_version / "model_card.md"
+        model_card_path = (
+            Path(cfg.env.storage.model_dir) / pipeline_version / "model_card.md"
+        )
         if model_card_path.exists():
             append_growth_section(
                 model_card_path,

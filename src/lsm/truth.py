@@ -22,8 +22,13 @@ import numpy as np
 import pandas as pd
 
 REGISTRY_COLUMNS = [
-    "source_id", "line_id", "kind", "defect_type",
-    "chainage_m", "chainage_start_m", "chainage_end_m",
+    "source_id",
+    "line_id",
+    "kind",
+    "defect_type",
+    "chainage_m",
+    "chainage_start_m",
+    "chainage_end_m",
 ]
 
 
@@ -33,7 +38,9 @@ def _contiguous_runs(flag: np.ndarray) -> list[tuple[int, int]]:
     return list(zip(edges[::2], edges[1::2]))
 
 
-def build_truth_registry(raw_df: pd.DataFrame, line_id: str, chainage_m: np.ndarray) -> pd.DataFrame:
+def build_truth_registry(
+    raw_df: pd.DataFrame, line_id: str, chainage_m: np.ndarray
+) -> pd.DataFrame:
     """One reference survey's raw frame -> a registry of physical truth sources.
 
     Columns: source_id, line_id, kind ('defect'|'interference'), defect_type,
@@ -71,7 +78,9 @@ def build_truth_registry(raw_df: pd.DataFrame, line_id: str, chainage_m: np.ndar
         flag = d[flag_col].to_numpy()
         for i, (a, b) in enumerate(_contiguous_runs(flag)):
             run_chainage = chainage[a:b]
-            defect_type = str(d["defect_type"].iloc[a]) if kind == "defect" else "interference"
+            defect_type = (
+                str(d["defect_type"].iloc[a]) if kind == "defect" else "interference"
+            )
             rows.append(
                 {
                     "source_id": f"{line_id}_{kind}_{i:02d}",

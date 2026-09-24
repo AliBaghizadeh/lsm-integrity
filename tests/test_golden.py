@@ -46,7 +46,9 @@ from lsm.ingest import register_survey
 from lsm.validate import validate_raw_survey
 
 GOLDEN_PATH = Path(__file__).parent / "golden" / "tiny_survey.parquet"
-EXPECTED_CONTENT_SHA256 = "b2576e3012e91f51a85bf099d7976a9757ad5c1fc597ad215d3e938270cd53cc"
+EXPECTED_CONTENT_SHA256 = (
+    "b2576e3012e91f51a85bf099d7976a9757ad5c1fc597ad215d3e938270cd53cc"
+)
 # No longer exactly 200: under rig: scalar the walk is TIME-sampled, not a
 # step_m distance grid, so row count is an emergent property of the walk
 # (speed, sample_rate_hz) rather than length_m/step_m. See the module
@@ -127,8 +129,15 @@ def test_golden_survey_validates_clean(cfg):
     conn = connect(cfg.env.storage.sqlite_path)
     register_survey(conn, sr, schema_version=cfg.base.schema_version)
     report = validate_raw_survey(
-        conn, sr.survey_id, sr.line_id, sr.step_m, sr.chainage_start_m,
-        sr.chainage_end_m, sr.content_sha256, df, cfg.base.validate,
+        conn,
+        sr.survey_id,
+        sr.line_id,
+        sr.step_m,
+        sr.chainage_start_m,
+        sr.chainage_end_m,
+        sr.content_sha256,
+        df,
+        cfg.base.validate,
     )
 
     actual_statuses = {r.check_name: r.status for r in report.results}

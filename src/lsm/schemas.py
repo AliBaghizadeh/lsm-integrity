@@ -163,7 +163,9 @@ class SchemaValidationError(Exception):
             {
                 "column": None if pd.isna(row.get("column")) else str(row["column"]),
                 "check": str(row["check"]),
-                "failure_case": None if pd.isna(row.get("failure_case")) else _to_native(row["failure_case"]),
+                "failure_case": None
+                if pd.isna(row.get("failure_case"))
+                else _to_native(row["failure_case"]),
                 "row_index": None if pd.isna(row.get("index")) else int(row["index"]),
             }
             for row in failure_cases.to_dict("records")
@@ -171,7 +173,9 @@ class SchemaValidationError(Exception):
         row_indices = failure_cases["index"].dropna()
         # A dataframe-level check (no per-row index) still affected >=1 row --
         # never report 0 rows affected for a check that failed.
-        self.n_affected_rows: int = int(row_indices.nunique()) if len(row_indices) else len(self.failures)
+        self.n_affected_rows: int = (
+            int(row_indices.nunique()) if len(row_indices) else len(self.failures)
+        )
         super().__init__(
             f"{len(self.failures)} check failure(s) across {self.n_affected_rows} row(s): "
             f"{self.failures[:5]}"
@@ -190,7 +194,9 @@ def validate_reading_schema(df) -> None:
     """Raise SchemaValidationError with a readable message on any contract violation."""
     try:
         RawReadingSchema.validate(df, lazy=True)
-    except pa.errors.SchemaErrors as exc:  # pragma: no cover - exercised via validate.py
+    except (
+        pa.errors.SchemaErrors
+    ) as exc:  # pragma: no cover - exercised via validate.py
         raise SchemaValidationError(exc.failure_cases) from exc
 
 

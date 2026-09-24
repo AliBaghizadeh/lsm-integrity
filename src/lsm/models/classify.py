@@ -42,10 +42,15 @@ class MajorityClassBaseline:
 
     def predict_proba(self, n: int) -> pd.DataFrame:
         if self.majority_ is None or self.majority_frac_ is None:
-            raise RuntimeError("MajorityClassBaseline.predict_proba() called before fit()")
+            raise RuntimeError(
+                "MajorityClassBaseline.predict_proba() called before fit()"
+            )
         majority_frac = self.majority_frac_
         remainder = (1.0 - majority_frac) / max(len(self.classes) - 1, 1)
-        row = {c: (majority_frac if c == self.majority_ else remainder) for c in self.classes}
+        row = {
+            c: (majority_frac if c == self.majority_ else remainder)
+            for c in self.classes
+        }
         return pd.DataFrame([row] * n, columns=self.classes)
 
     def predict(self, n: int) -> tuple[np.ndarray, np.ndarray]:
@@ -103,7 +108,11 @@ class ClassifyModel:
         return X[self.feature_cols].fillna(0.0)
 
     def fit(
-        self, X_train: pd.DataFrame, y_train: np.ndarray, X_calib: pd.DataFrame, y_calib: np.ndarray
+        self,
+        X_train: pd.DataFrame,
+        y_train: np.ndarray,
+        X_calib: pd.DataFrame,
+        y_calib: np.ndarray,
     ) -> ClassifyModel:
         train_classes = set(y_train)
         if len(train_classes) < 2:
@@ -116,7 +125,9 @@ class ClassifyModel:
                 f"ClassifyModel.fit: only {len(train_classes)} class in y_train "
                 f"({sorted(train_classes)}) -- falling back to a constant prediction."
             )
-            self._constant_class = next(iter(train_classes)) if train_classes else self.classes[0]
+            self._constant_class = (
+                next(iter(train_classes)) if train_classes else self.classes[0]
+            )
             self._is_constant = True
             self.calibrated_ = False
             self._fitted = True
@@ -171,7 +182,9 @@ class ClassifyModel:
         if self._is_constant:
             row = {c: (1.0 if c == self._constant_class else 0.0) for c in self.classes}
             return pd.DataFrame([row] * len(X), columns=self.classes, index=X.index)
-        assert self.calibrated_model is not None  # guaranteed once _fitted and not _is_constant
+        assert (
+            self.calibrated_model is not None
+        )  # guaranteed once _fitted and not _is_constant
         proba = self.calibrated_model.predict_proba(self._matrix(X))
         classes_ = list(self.calibrated_model.classes_)
         df = pd.DataFrame(proba, columns=classes_, index=X.index)

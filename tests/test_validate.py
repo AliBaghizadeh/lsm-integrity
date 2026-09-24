@@ -51,7 +51,9 @@ def test_range_violation_is_caught(tiny_cfg, tmp_path):
     assert n_rows == 0
 
 
-def test_one_bad_value_reports_one_row_affected_not_the_whole_survey(tiny_cfg, tmp_path):
+def test_one_bad_value_reports_one_row_affected_not_the_whole_survey(
+    tiny_cfg, tmp_path
+):
     """Regression: check_schema used to hardcode n_affected=len(df), so a
     SINGLE out-of-range value on a 200-row tiny_cfg survey reported "200 rows
     affected" -- misleading, and exactly what the demo app's refusal card
@@ -60,6 +62,7 @@ def test_one_bad_value_reports_one_row_affected_not_the_whole_survey(tiny_cfg, t
     (pandera's own Check.in_range duplicates the range gate) -- both must
     report the true count, 1, not the survey's row count.
     """
+
     def corrupt(df):
         df.loc[3, "b_lo_nt"] = 999_999.0
         return df
@@ -77,7 +80,9 @@ def test_one_bad_value_reports_one_row_affected_not_the_whole_survey(tiny_cfg, t
 
 def test_saturation_is_caught(tiny_cfg, tmp_path):
     def corrupt(df):
-        df.loc[5:9, "b_mid_nt"] = 1234.5  # 5 identical consecutive values >= run_length=3
+        df.loc[5:9, "b_mid_nt"] = (
+            1234.5  # 5 identical consecutive values >= run_length=3
+        )
         return df
 
     sr = generate_one_survey(tiny_cfg, tmp_path, mutate=corrupt)
@@ -124,7 +129,9 @@ def test_sample_idx_monotonic_violation_is_caught(tiny_cfg, tmp_path):
 
     statuses = _status_by_check(report)
     assert statuses["sample_idx_monotonic"] == "fail"
-    assert statuses["duplicate_sample_idx"] == "pass"  # still all-unique, just reordered
+    assert (
+        statuses["duplicate_sample_idx"] == "pass"
+    )  # still all-unique, just reordered
     assert report.has_fail
 
 
@@ -168,7 +175,9 @@ def test_duplicate_content_is_caught_on_second_ingest(tiny_cfg, tmp_path):
     sr2.run_id = 9
     conn, status2, report2 = run_pipeline_on(tiny_cfg, sr2)
 
-    assert status2 == "accepted"  # registered fine -- quarantine happens via DQ, not a crash
+    assert (
+        status2 == "accepted"
+    )  # registered fine -- quarantine happens via DQ, not a crash
     statuses = _status_by_check(report2)
     assert statuses["duplicate_content"] == "fail"
     assert report2.has_fail
@@ -187,7 +196,9 @@ def test_survey_overlap_flags_near_identical_signal(tiny_cfg, tmp_path):
     # differs only because of a single-value tweak (dodges duplicate_content),
     # but the raw signal is still >99% correlated with sr's.
     def near_identical(df):
-        df.loc[0, "severity_smys"] = df.loc[0, "severity_smys"]  # no-op, forces a fresh write
+        df.loc[0, "severity_smys"] = df.loc[
+            0, "severity_smys"
+        ]  # no-op, forces a fresh write
         return df
 
     sr2 = generate_one_survey(tiny_cfg, tmp_path, mutate=near_identical)
@@ -199,7 +210,9 @@ def test_survey_overlap_flags_near_identical_signal(tiny_cfg, tmp_path):
     statuses = _status_by_check(report2)
     # near-identical raw signal on the same line -> either duplicate_content
     # (if the mutate above didn't change the hash) or survey_overlap must fire.
-    assert statuses["duplicate_content"] == "fail" or statuses["survey_overlap"] == "fail"
+    assert (
+        statuses["duplicate_content"] == "fail" or statuses["survey_overlap"] == "fail"
+    )
 
 
 def test_coverage_warns_on_short_survey(tiny_cfg, tmp_path):
@@ -207,9 +220,7 @@ def test_coverage_warns_on_short_survey(tiny_cfg, tmp_path):
         return df.iloc[: len(df) // 2].copy()
 
     sr = generate_one_survey(tiny_cfg, tmp_path, mutate=truncate)
-    _conn, _status, _report = run_pipeline_on(
-        tiny_cfg, sr
-    )
+    _conn, _status, _report = run_pipeline_on(tiny_cfg, sr)
     # coverage check needs an expected_length_m to fire; run_survey_pipeline
     # does not pass one, so this documents current scope: coverage is exercised
     # directly here instead.

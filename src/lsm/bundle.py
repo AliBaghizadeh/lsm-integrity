@@ -49,7 +49,11 @@ def library_versions() -> dict[str, str]:
 
 
 def training_feature_summary(
-    corpus: pd.DataFrame, feature_cols: list[str], seed: int, n_bins: int = 10, sample_size: int = 2000,
+    corpus: pd.DataFrame,
+    feature_cols: list[str],
+    seed: int,
+    n_bins: int = 10,
+    sample_size: int = 2000,
 ) -> dict[str, dict]:
     """Per-feature mean/std/min/max PLUS quantile bin edges (n_bins+1 edges)
     and a bounded, seeded raw sample -- the Stage 8 drift reference. PSI
@@ -65,14 +69,24 @@ def training_feature_summary(
         x = x[np.isfinite(x)]
         if len(x) == 0:
             summary[col] = {
-                "mean": float("nan"), "std": float("nan"), "min": float("nan"), "max": float("nan"),
-                "bin_edges": [], "sample": [],
+                "mean": float("nan"),
+                "std": float("nan"),
+                "min": float("nan"),
+                "max": float("nan"),
+                "bin_edges": [],
+                "sample": [],
             }
             continue
-        sample = x if len(x) <= sample_size else rng.choice(x, size=sample_size, replace=False)
+        sample = (
+            x
+            if len(x) <= sample_size
+            else rng.choice(x, size=sample_size, replace=False)
+        )
         summary[col] = {
-            "mean": float(np.mean(x)), "std": float(np.std(x)),
-            "min": float(np.min(x)), "max": float(np.max(x)),
+            "mean": float(np.mean(x)),
+            "std": float(np.std(x)),
+            "min": float(np.min(x)),
+            "max": float(np.max(x)),
             "bin_edges": np.quantile(x, np.linspace(0.0, 1.0, n_bins + 1)).tolist(),
             "sample": sample.tolist(),
         }
@@ -80,7 +94,10 @@ def training_feature_summary(
 
 
 def training_prediction_reference(
-    indications_per_km: float, p_defect_cal_sample: np.ndarray, seed: int, sample_size: int = 2000,
+    indications_per_km: float,
+    p_defect_cal_sample: np.ndarray,
+    seed: int,
+    sample_size: int = 2000,
 ) -> dict:
     """{'indications_per_km': float, 'p_defect_cal_sample': list[float]} --
     the Stage 8 prediction-drift reference (validation-and-trust.md Layer 4:
@@ -92,8 +109,13 @@ def training_prediction_reference(
     rng = np.random.default_rng(seed)
     x = np.asarray(p_defect_cal_sample, dtype=float)
     x = x[np.isfinite(x)]
-    sample = x if len(x) <= sample_size else rng.choice(x, size=sample_size, replace=False)
-    return {"indications_per_km": float(indications_per_km), "p_defect_cal_sample": sample.tolist()}
+    sample = (
+        x if len(x) <= sample_size else rng.choice(x, size=sample_size, replace=False)
+    )
+    return {
+        "indications_per_km": float(indications_per_km),
+        "p_defect_cal_sample": sample.tolist(),
+    }
 
 
 def save_bundle(path: str | Path, bundle: dict) -> None:
@@ -109,7 +131,9 @@ def save_bundle(path: str | Path, bundle: dict) -> None:
     joblib.dump(payload, path)
 
 
-def load_bundle(path: str | Path, expected_feature_version: int, expected_schema_version: int) -> dict:
+def load_bundle(
+    path: str | Path, expected_feature_version: int, expected_schema_version: int
+) -> dict:
     path = Path(path)
     if not path.exists():
         raise FileNotFoundError(f"{path} does not exist -- run `lsm train` first")
@@ -134,7 +158,10 @@ def load_bundle(path: str | Path, expected_feature_version: int, expected_schema
         if stored.get(lib) != current[lib]
     }
     if mismatches:
-        detail = ", ".join(f"{lib}: trained={old} vs installed={new}" for lib, (old, new) in mismatches.items())
+        detail = ", ".join(
+            f"{lib}: trained={old} vs installed={new}"
+            for lib, (old, new) in mismatches.items()
+        )
         raise BundleVersionMismatchError(
             f"library version mismatch ({detail}) -- a silent minor-version "
             "difference can change predictions with no error; retrain or "

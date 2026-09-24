@@ -25,7 +25,9 @@ def generate(env: str = "dev") -> None:
     results = generate_all(cfg.base.data, raw_dir, cfg.seed)
     typer.echo(f"Wrote {len(results)} surveys to {raw_dir}")
     for r in results:
-        typer.echo(f"  {r.survey_id}: {r.n_samples} rows, content_sha256={r.content_sha256[:12]}...")
+        typer.echo(
+            f"  {r.survey_id}: {r.n_samples} rows, content_sha256={r.content_sha256[:12]}..."
+        )
 
 
 @app.command()
@@ -87,16 +89,29 @@ def validate(env: str = "dev") -> None:
     for survey_id, line_id, step_m, c_start, c_end, content_hash, source_uri in rows:
         df = pd.read_parquet(source_uri)
         report = validate_raw_survey(
-            conn, survey_id, line_id, step_m, c_start, c_end, content_hash, df,
-            cfg.base.validate, quarantine_dir=quarantine_dir, source_path=Path(source_uri),
+            conn,
+            survey_id,
+            line_id,
+            step_m,
+            c_start,
+            c_end,
+            content_hash,
+            df,
+            cfg.base.validate,
+            quarantine_dir=quarantine_dir,
+            source_path=Path(source_uri),
         )
         summary = report.summary()
-        typer.echo(f"{survey_id}: pass={summary['pass']} warn={summary['warn']} fail={summary['fail']}")
+        typer.echo(
+            f"{survey_id}: pass={summary['pass']} warn={summary['warn']} fail={summary['fail']}"
+        )
         if report.has_fail:
             any_fail = True
             for r in report.results:
                 if r.status == "fail":
-                    typer.echo(f"  FAIL {r.check_name}: n_affected={r.n_affected} {r.detail}")
+                    typer.echo(
+                        f"  FAIL {r.check_name}: n_affected={r.n_affected} {r.detail}"
+                    )
     if any_fail:
         raise typer.Exit(code=1)
 
@@ -117,7 +132,9 @@ def features(
 
     cfg = load_config(env)
     conn = connect(cfg.env.storage.sqlite_path)
-    rows = conn.execute("SELECT survey_id, status FROM survey ORDER BY survey_id").fetchall()
+    rows = conn.execute(
+        "SELECT survey_id, status FROM survey ORDER BY survey_id"
+    ).fetchall()
     if not rows:
         typer.echo("No registered surveys. Run `lsm ingest` first.", err=True)
         raise typer.Exit(code=1)
@@ -163,7 +180,9 @@ def train(env: str = "dev") -> None:
 
 
 @app.command()
-def predict(env: str = "dev", survey_id: str = typer.Argument(..., help="e.g. LINE000_R0")) -> None:
+def predict(
+    env: str = "dev", survey_id: str = typer.Argument(..., help="e.g. LINE000_R0")
+) -> None:
     """[Stage 3+4] Score one already-featurised survey against the latest
     released pipeline -> `indication` rows + `indications.geojson`.
 
@@ -183,7 +202,10 @@ def predict(env: str = "dev", survey_id: str = typer.Argument(..., help="e.g. LI
 @app.command()
 def forecast(
     env: str = "dev",
-    as_of: str = typer.Option(None, help="ISO date -- reconstruct what was knowable on this date; defaults to now"),
+    as_of: str = typer.Option(
+        None,
+        help="ISO date -- reconstruct what was knowable on this date; defaults to now",
+    ),
 ) -> None:
     """[Stage 8] Per-defect growth -> remaining life.
 
@@ -202,13 +224,18 @@ def forecast(
         f"population log-growth-rate: {result['growth_population_log_rate']:.4f} "
         f"(n={result['n_defects_evaluated']} defects evaluated)"
     )
-    typer.echo(f"gate (beats no-growth baseline): {'PASSED' if result['growth_gate_passed'] else 'DID NOT PASS'}")
+    typer.echo(
+        f"gate (beats no-growth baseline): {'PASSED' if result['growth_gate_passed'] else 'DID NOT PASS'}"
+    )
     if not result["growth_gate_passed"]:
         raise typer.Exit(code=1)
 
 
 @app.command()
-def monitor(env: str = "dev", survey_id: str = typer.Argument(..., help="an already-`lsm predict`-ed survey")) -> None:
+def monitor(
+    env: str = "dev",
+    survey_id: str = typer.Argument(..., help="an already-`lsm predict`-ed survey"),
+) -> None:
     """[Stage 8] Drift: PSI/KS vs bundle reference, indications/km, regime shift."""
     from lsm.db import connect
     from lsm.monitor import monitor_report_to_text, monitor_survey
@@ -224,9 +251,15 @@ def monitor(env: str = "dev", survey_id: str = typer.Argument(..., help="an alre
 @app.command()
 def verify(
     env: str = "dev",
-    indication_id: str = typer.Argument(..., help="the indication being verified by an excavation"),
-    severity_smys: float = typer.Argument(..., help="as-found severity (%SMYS) at the dig"),
-    defect_type: str = typer.Option(None, help="verified defect type, if reclassified at the dig"),
+    indication_id: str = typer.Argument(
+        ..., help="the indication being verified by an excavation"
+    ),
+    severity_smys: float = typer.Argument(
+        ..., help="as-found severity (%SMYS) at the dig"
+    ),
+    defect_type: str = typer.Option(
+        None, help="verified defect type, if reclassified at the dig"
+    ),
 ) -> None:
     """[Stage 8] Record an excavation's ground truth -- writes `source=
     'excavation'` truth rows, closing the dig-feedback loop
@@ -238,7 +271,9 @@ def verify(
 
     cfg = load_config(env)
     conn = connect(cfg.env.storage.sqlite_path)
-    defect_id = record_excavation(conn, indication_id, severity_smys, verified_defect_type=defect_type)
+    defect_id = record_excavation(
+        conn, indication_id, severity_smys, verified_defect_type=defect_type
+    )
     typer.echo(f"{indication_id}: verified as {defect_id}")
 
 

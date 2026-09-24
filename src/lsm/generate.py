@@ -4,9 +4,8 @@ validated: a buried pipeline modelled as a line of magnetic dipoles
 ("defects"), sensed by a rod carrying three total-field magnetometers (middle
 + two, 50 cm apart) at varying stand-off height, carried by a human walker at
 irregular speed with GPS that drops out. This replaces the original single
-3-axis-vector-magnetometer-on-a-rail model after a developer interview
-revealed the real instrument (see the Rig-v2 plan's "Context" and "The
-physics that drives everything else" sections).
+3-axis-vector-magnetometer-on-a-rail model with the revised three-head instrument
+design.
 
 THE CENTRAL PHYSICS: each head reports only |B|, not x/y/z. With the anomaly
 (~25 nT) tiny against the ambient field (~48,800 nT), that reading is the
@@ -112,7 +111,9 @@ RAW_COLUMNS_VECTOR = [
 ]
 
 
-def _load_observatory_background(cfg: ObservatoryBackgroundConfig, s: np.ndarray) -> np.ndarray:
+def _load_observatory_background(
+    cfg: ObservatoryBackgroundConfig, s: np.ndarray
+) -> np.ndarray:
     """Resample a real geomagnetic observatory trace (data/reference/*.csv, fetched
     from the USGS Geomagnetism Program) onto the survey's along-track chainage,
     replacing the synthetic drift+wave terms with genuine measured field variation.
@@ -136,7 +137,10 @@ def _load_observatory_background(cfg: ObservatoryBackgroundConfig, s: np.ndarray
             f"at {cfg.survey_speed_m_per_s} m/s -- fetch a longer trace or slow the survey down"
         )
     background = np.column_stack(
-        [np.interp(survey_t_s, t_s, df[col].to_numpy()) for col in ("x_nt", "y_nt", "z_nt")]
+        [
+            np.interp(survey_t_s, t_s, df[col].to_numpy())
+            for col in ("x_nt", "y_nt", "z_nt")
+        ]
     )
     return background - background.mean(axis=0)
 
@@ -223,7 +227,7 @@ def _sample_spaced_chainage(
 # defect types (a point-dipole model has no principled way to fake one
 # honestly, since footprint width is governed by depth/offset, and every
 # defect sits at y_off_m=0), but each type DOES plausibly carry a different
-# INTENSITY. Physics-inspired reasoning, not calibrated to real ROSEN data:
+# INTENSITY. Physics-inspired reasoning, not calibrated to field data:
 # dent = a sharp mechanical stress concentration, the strongest signature;
 # SCC = fine, branching cracks, more diffuse, weakest; corrosion = gradual
 # metal loss, moderate; weld (workmanship anomaly at a joint, distinct from
@@ -246,13 +250,17 @@ def _build_features(cfg: DataConfig, rng: np.random.Generator) -> list[dict]:
     """
     types = list(DEFECT_SEVERITY_RANGES)
     feats = []
-    placed: list[tuple[float, float]] = []  # (chainage_m, half_width_m), for spacing checks
+    placed: list[
+        tuple[float, float]
+    ] = []  # (chainage_m, half_width_m), for spacing checks
     # y_off_m=0 for every defect, so r_eff=depth_m and the half-width is the
     # same constant for all of them.
     defect_half_width = cfg.label_window_scale * cfg.depth_m
 
     for _ in range(cfg.n_defects):
-        chainage = _sample_spaced_chainage(rng, 50, cfg.length_m - 50, defect_half_width, placed)
+        chainage = _sample_spaced_chainage(
+            rng, 50, cfg.length_m - 50, defect_half_width, placed
+        )
         placed.append((chainage, defect_half_width))
         defect_type = rng.choice(types)
         feats.append(
@@ -281,7 +289,9 @@ def _build_features(cfg: DataConfig, rng: np.random.Generator) -> list[dict]:
         # draw already covers distance; this varies the moment on top of it).
         y_off_m = rng.uniform(3, 8) * rng.choice([-1, 1])
         half_width = cfg.label_window_scale * float(np.hypot(cfg.depth_m, y_off_m))
-        chainage = _sample_spaced_chainage(rng, 50, cfg.length_m - 50, half_width, placed)
+        chainage = _sample_spaced_chainage(
+            rng, 50, cfg.length_m - 50, half_width, placed
+        )
         placed.append((chainage, half_width))
         moment_scale = rng.uniform(*cfg.interference_moment_scale_range)
         feats.append(
@@ -392,10 +402,18 @@ def _walk_trajectory(cfg: DataConfig, rng: np.random.Generator) -> dict:
     chainage_provisional = walk.speed_m_per_s * t_s
 
     standoff = walk.standoff_m + _ou_deviation(
-        rng, n, dt_s, walk.standoff_correlation_m / walk.speed_m_per_s, walk.standoff_sigma_m
+        rng,
+        n,
+        dt_s,
+        walk.standoff_correlation_m / walk.speed_m_per_s,
+        walk.standoff_sigma_m,
     )
     lateral = _ou_deviation(
-        rng, n, dt_s, walk.lateral_correlation_m / walk.speed_m_per_s, walk.lateral_sigma_m
+        rng,
+        n,
+        dt_s,
+        walk.lateral_correlation_m / walk.speed_m_per_s,
+        walk.lateral_sigma_m,
     )
     tilt_deg = _ou_deviation(
         rng, n, dt_s, walk.tilt_correlation_m / walk.speed_m_per_s, walk.tilt_sigma_deg
@@ -421,7 +439,10 @@ def _walk_trajectory(cfg: DataConfig, rng: np.random.Generator) -> dict:
 
 
 def _gps_track(
-    cfg: DataConfig, rng: np.random.Generator, chainage_true: np.ndarray, lateral: np.ndarray
+    cfg: DataConfig,
+    rng: np.random.Generator,
+    chainage_true: np.ndarray,
+    lateral: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Lat/lon from true position, with Markov good/bad lock state (NaN through
     a dropout) and horizontal noise while locked.
@@ -473,7 +494,9 @@ def _gps_track(
     return lat, lon
 
 
-def _apply_sensor(rng: np.random.Generator, b_true: np.ndarray, sensor: SensorConfig, n: int) -> np.ndarray:
+def _apply_sensor(
+    rng: np.random.Generator, b_true: np.ndarray, sensor: SensorConfig, n: int
+) -> np.ndarray:
     """One head's imperfect reading from its exact total-field magnitude:
     fixed-per-survey multiplicative gain error + additive offset, independent
     per-row noise, then ADC quantization. Gain MISMATCH between heads (not
@@ -507,7 +530,7 @@ def _make_run_scalar(
     if array.orientation != "vertical":
         raise NotImplementedError(
             f"array.orientation={array.orientation!r} -- only 'vertical' is implemented. "
-            "This is one of the Rig-v2 open questions for ROSEN (mast vertical vs "
+            "This is one of the Rig-v2 open instrument questions (mast vertical vs "
             "across-track); picking a physics path for 'horizontal' without confirming "
             "it would silently answer a question that hasn't been asked yet."
         )
@@ -533,13 +556,14 @@ def _make_run_scalar(
     if cfg.observatory_background.enabled:
         # Stage 2.5 item 3: a real trace, not a synthetic sinusoid -- see
         # _load_observatory_background's docstring for the along-track mapping.
-        background_variation = _load_observatory_background(cfg.observatory_background, s_true)
+        background_variation = _load_observatory_background(
+            cfg.observatory_background, s_true
+        )
     else:
         drift = np.linspace(0, 1, n)[:, None] * rng.normal(0, 40, 3)
-        wave = (
-            np.sin(2 * np.pi * s_true / cfg.length_m * rng.uniform(1, 3))[:, None]
-            * rng.normal(0, 25, 3)
-        )
+        wave = np.sin(2 * np.pi * s_true / cfg.length_m * rng.uniform(1, 3))[
+            :, None
+        ] * rng.normal(0, 25, 3)
         background_variation = drift + wave
     B_bg = base + background_variation
 
@@ -607,7 +631,10 @@ def _make_run_scalar(
         # overlap, so each row goes to its NEAREST feature.
         centers = np.array([f["chainage_m"] for f in features])
         half_widths = np.array(
-            [cfg.label_window_scale * np.hypot(cfg.depth_m, f["y_off_m"]) for f in features]
+            [
+                cfg.label_window_scale * np.hypot(cfg.depth_m, f["y_off_m"])
+                for f in features
+            ]
         )
         dist = np.abs(s_true[:, None] - centers[None, :])
         within = dist <= half_widths[None, :]
@@ -661,7 +688,11 @@ def _make_run_scalar(
 
 
 def _make_run_vector(
-    line_id: str, run_id: int, cfg: DataConfig, features: list[dict], rng: np.random.Generator
+    line_id: str,
+    run_id: int,
+    cfg: DataConfig,
+    features: list[dict],
+    rng: np.random.Generator,
 ) -> pd.DataFrame:
     """The ORIGINAL pre-Rig-v2 generator, unchanged in behaviour: a uniform
     step_m grid, one 3-axis vector head (+ an optional second at
@@ -684,10 +715,14 @@ def _make_run_vector(
 
     base = np.array(cfg.background_nT, dtype=float)
     if cfg.observatory_background.enabled:
-        background_variation = _load_observatory_background(cfg.observatory_background, s)
+        background_variation = _load_observatory_background(
+            cfg.observatory_background, s
+        )
     else:
         drift = np.linspace(0, 1, n)[:, None] * rng.normal(0, 40, 3)
-        wave = np.sin(2 * np.pi * s / cfg.length_m * rng.uniform(1, 3))[:, None] * rng.normal(0, 25, 3)
+        wave = np.sin(2 * np.pi * s / cfg.length_m * rng.uniform(1, 3))[
+            :, None
+        ] * rng.normal(0, 25, 3)
         background_variation = drift + wave
     B = base + background_variation
 
@@ -800,7 +835,9 @@ def _make_run(
 def find_raw_survey_path(raw_dir: Path, survey_id: str) -> Path:
     """survey_id 'LINE000_R2' -> data/raw/line_id=LINE000/run_id=2/survey.parquet"""
     line_id, run_part = survey_id.rsplit("_R", 1)
-    return Path(raw_dir) / f"line_id={line_id}" / f"run_id={run_part}" / "survey.parquet"
+    return (
+        Path(raw_dir) / f"line_id={line_id}" / f"run_id={run_part}" / "survey.parquet"
+    )
 
 
 def load_survey_result(path: Path, step_m: float, standoff_m: float) -> SurveyResult:
@@ -855,7 +892,11 @@ def generate_all(cfg: DataConfig, raw_dir: Path, seed: int) -> list[SurveyResult
     chainage_col = "chainage_m" if cfg.rig == "vector" else "chainage_true_m"
     # Nominal mean spacing, for metadata only under rig: scalar (the actual row
     # spacing is irregular by design -- see DataConfig.step_m's docstring).
-    reported_step_m = cfg.step_m if cfg.rig == "vector" else cfg.walk.speed_m_per_s / cfg.walk.sample_rate_hz
+    reported_step_m = (
+        cfg.step_m
+        if cfg.rig == "vector"
+        else cfg.walk.speed_m_per_s / cfg.walk.sample_rate_hz
+    )
     reported_standoff_m = cfg.depth_m if cfg.rig == "vector" else cfg.walk.standoff_m
 
     for line_idx in range(cfg.n_lines):

@@ -58,7 +58,12 @@ CORRUPTED_SURVEY_ID = "LINEDEMO_R0"
 
 def _raw_path(cfg, survey_id: str) -> Path:
     line_id, run_id = survey_id.split("_R")
-    return Path(cfg.env.storage.raw_dir) / f"line_id={line_id}" / f"run_id={run_id}" / "survey.parquet"
+    return (
+        Path(cfg.env.storage.raw_dir)
+        / f"line_id={line_id}"
+        / f"run_id={run_id}"
+        / "survey.parquet"
+    )
 
 
 def _bake_clean_scenario(conn, cfg, survey_id: str, pipeline_version: str) -> None:
@@ -69,15 +74,25 @@ def _bake_clean_scenario(conn, cfg, survey_id: str, pipeline_version: str) -> No
     (SERVING_DIR / "demo_surveys").mkdir(parents=True, exist_ok=True)
     shutil.copyfile(raw_src, SERVING_DIR / "demo_surveys" / f"{survey_id}.parquet")
 
-    feat_src = feature_store_dir(cfg.env.storage.feature_dir, cfg.base.features.version, line_id, run_id) / "features.parquet"
+    feat_src = (
+        feature_store_dir(
+            cfg.env.storage.feature_dir, cfg.base.features.version, line_id, run_id
+        )
+        / "features.parquet"
+    )
     (SERVING_DIR / "precomputed").mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(feat_src, SERVING_DIR / "precomputed" / f"{survey_id}_features.parquet")
+    shutil.copyfile(
+        feat_src, SERVING_DIR / "precomputed" / f"{survey_id}_features.parquet"
+    )
 
     indications = pd.read_sql_query(
         "SELECT * FROM indication WHERE survey_id=? AND pipeline_version=? AND is_shadow=0",
-        conn, params=(survey_id, pipeline_version),
+        conn,
+        params=(survey_id, pipeline_version),
     )
-    indications.to_parquet(SERVING_DIR / "precomputed" / f"{survey_id}_indications.parquet", index=False)
+    indications.to_parquet(
+        SERVING_DIR / "precomputed" / f"{survey_id}_indications.parquet", index=False
+    )
     print(f"  {survey_id}: {len(indications)} precomputed indications")
 
 
@@ -86,7 +101,9 @@ def _bake_corrupted_scenario(cfg) -> dict:
     df = pd.read_parquet(src)
     df["line_id"] = "LINEDEMO"
     df["run_id"] = 0
-    df.loc[3, "b_lo_nt"] = 999_999.0  # outside field_range_nT -- trips check_range, same
+    df.loc[3, "b_lo_nt"] = (
+        999_999.0  # outside field_range_nT -- trips check_range, same
+    )
     # recipe tests/test_validate.py already proves, reused rather than invented.
 
     (SERVING_DIR / "demo_surveys").mkdir(parents=True, exist_ok=True)
@@ -126,8 +143,10 @@ def _bake_corrupted_scenario(cfg) -> dict:
             "generator or validator changed underneath this fixture; fix the "
             "corruption recipe before shipping a 'corrupted' scenario that isn't."
         )
-    print(f"  {CORRUPTED_SURVEY_ID}: DQ report has_fail={report.has_fail}, "
-          f"failed checks={[r.check_name for r in report.results if r.status == 'fail']}")
+    print(
+        f"  {CORRUPTED_SURVEY_ID}: DQ report has_fail={report.has_fail}, "
+        f"failed checks={[r.check_name for r in report.results if r.status == 'fail']}"
+    )
 
     return {
         "survey_id": report.survey_id,
@@ -140,7 +159,9 @@ def main() -> None:
     cfg = load_config("dev")
     conn = connect(cfg.env.storage.sqlite_path)
 
-    pipeline_version, anomaly_version, severity_version, classify_version = latest_pipeline_release(conn)
+    pipeline_version, anomaly_version, severity_version, classify_version = (
+        latest_pipeline_release(conn)
+    )
     print(f"Baking against pipeline_version={pipeline_version}")
 
     # latest_pipeline_release() doesn't carry growth_version -- growth is UPDATEd
@@ -168,7 +189,12 @@ def main() -> None:
     (SERVING_DIR / "bundles").mkdir(parents=True, exist_ok=True)
     model_dir = Path(cfg.env.storage.model_dir)
     model_run_rows: dict[str, dict] = {}
-    for model_version in (anomaly_version, severity_version, classify_version, growth_version):
+    for model_version in (
+        anomaly_version,
+        severity_version,
+        classify_version,
+        growth_version,
+    ):
         if model_version is None:
             continue
         src_bundle = model_dir / model_version / "bundle.joblib"
@@ -183,9 +209,20 @@ def main() -> None:
             "final_test_uses FROM model_run WHERE model_version=?",
             (model_version,),
         ).fetchone()
-        cols = ["model_version", "task", "mlflow_run_id", "git_sha", "config_sha256",
-                "data_sha256", "feature_version", "truth_as_of", "trained_at",
-                "metrics_json", "artifact_uri", "final_test_uses"]
+        cols = [
+            "model_version",
+            "task",
+            "mlflow_run_id",
+            "git_sha",
+            "config_sha256",
+            "data_sha256",
+            "feature_version",
+            "truth_as_of",
+            "trained_at",
+            "metrics_json",
+            "artifact_uri",
+            "final_test_uses",
+        ]
         model_run_rows[model_version] = dict(zip(cols, row))
 
     model_card_src = model_dir / pipeline_version / "model_card.md"
@@ -197,9 +234,18 @@ def main() -> None:
         "alias FROM pipeline_release WHERE pipeline_version=?",
         (pipeline_version,),
     ).fetchone()
-    pr_cols = ["pipeline_version", "anomaly_version", "severity_version", "classify_version",
-               "growth_version", "feature_version", "schema_version", "container_digest",
-               "released_at", "alias"]
+    pr_cols = [
+        "pipeline_version",
+        "anomaly_version",
+        "severity_version",
+        "classify_version",
+        "growth_version",
+        "feature_version",
+        "schema_version",
+        "container_digest",
+        "released_at",
+        "alias",
+    ]
 
     manifest = {
         "baked_from_pipeline_version": pipeline_version,
@@ -209,16 +255,26 @@ def main() -> None:
         "pipeline_release": dict(zip(pr_cols, pr_row)),
         "model_run": model_run_rows,
         "demo_scenarios": [
-            {"survey_id": sid, "label": label, "kind": "clean"} for sid, label in CLEAN_SCENARIOS
-        ] + [
-            {"survey_id": CORRUPTED_SURVEY_ID, "label": "Corrupted survey (bad sensor reading)", "kind": "corrupted"}
+            {"survey_id": sid, "label": label, "kind": "clean"}
+            for sid, label in CLEAN_SCENARIOS
+        ]
+        + [
+            {
+                "survey_id": CORRUPTED_SURVEY_ID,
+                "label": "Corrupted survey (bad sensor reading)",
+                "kind": "corrupted",
+            }
         ],
         "corrupted_scenario_dq_report": corrupted_dq_report,
     }
-    (SERVING_DIR / "manifest.json").write_text(json.dumps(manifest, indent=2, default=str), encoding="utf-8")
+    (SERVING_DIR / "manifest.json").write_text(
+        json.dumps(manifest, indent=2, default=str), encoding="utf-8"
+    )
     print(f"\nWrote {SERVING_DIR}/manifest.json")
-    print(f"serving/ is ready: {len(CLEAN_SCENARIOS)} clean + 1 corrupted scenario, "
-          f"feature_version={manifest['feature_version']}, schema_version={manifest['schema_version']}")
+    print(
+        f"serving/ is ready: {len(CLEAN_SCENARIOS)} clean + 1 corrupted scenario, "
+        f"feature_version={manifest['feature_version']}, schema_version={manifest['schema_version']}"
+    )
 
 
 if __name__ == "__main__":

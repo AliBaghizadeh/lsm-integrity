@@ -113,13 +113,19 @@ def main() -> None:
             if not f["is_defect"]:
                 continue
             angle_cos = float(abs(np.dot(unit(f["orientation"]), b0hat)))
-            defect_rows.append({
-                "line_id": line_id, "defect_idx": i,
-                "chainage_true_m": f["chainage_m"], "angle_cos": angle_cos,
-                "severity": f["severity"],
-            })
-        runs = [_make_run(line_id, run_id, cfg.base.data, features, welds, line_rng)
-                for run_id in range(cfg.base.data.n_runs)]
+            defect_rows.append(
+                {
+                    "line_id": line_id,
+                    "defect_idx": i,
+                    "chainage_true_m": f["chainage_m"],
+                    "angle_cos": angle_cos,
+                    "severity": f["severity"],
+                }
+            )
+        runs = [
+            _make_run(line_id, run_id, cfg.base.data, features, welds, line_rng)
+            for run_id in range(cfg.base.data.n_runs)
+        ]
         surveys_by_line[line_id] = runs
 
     defects = pd.DataFrame(defect_rows)
@@ -143,65 +149,120 @@ def main() -> None:
                 else:
                     peak_z = float(np.max(np.abs(r_mid[window] - med)) / sigma)
                     hit = peak_z > MAD_Z_THRESHOLD
-                detected.append({
-                    "line_id": line_id, "defect_idx": d["defect_idx"],
-                    "angle_cos": d["angle_cos"], "severity": d["severity"],
-                    "hit": hit, "peak_z": peak_z,
-                })
+                detected.append(
+                    {
+                        "line_id": line_id,
+                        "defect_idx": d["defect_idx"],
+                        "angle_cos": d["angle_cos"],
+                        "severity": d["severity"],
+                        "hit": hit,
+                        "peak_z": peak_z,
+                    }
+                )
 
     det_df = pd.DataFrame(detected)
-    per_defect = det_df.groupby(["line_id", "defect_idx"]).agg(
-        angle_cos=("angle_cos", "first"), severity=("severity", "first"),
-        detected_fraction=("hit", "mean"), mean_peak_z=("peak_z", "mean"), n_runs=("hit", "size"),
-    ).reset_index()
+    per_defect = (
+        det_df.groupby(["line_id", "defect_idx"])
+        .agg(
+            angle_cos=("angle_cos", "first"),
+            severity=("severity", "first"),
+            detected_fraction=("hit", "mean"),
+            mean_peak_z=("peak_z", "mean"),
+            n_runs=("hit", "size"),
+        )
+        .reset_index()
+    )
     # Severity-normalised SNR: peak_z scales roughly linearly with moment
     # magnitude (severity), a large confound (20-80, a 4x range) on top of
     # the angle effect this script is actually trying to isolate -- see
     # module docstring's CAVEAT.
-    per_defect["peak_z_per_severity"] = per_defect["mean_peak_z"] / per_defect["severity"]
+    per_defect["peak_z_per_severity"] = (
+        per_defect["mean_peak_z"] / per_defect["severity"]
+    )
 
-    print(f"\n{len(per_defect)} physical defects, {len(det_df)} (defect, run) observations.")
+    print(
+        f"\n{len(per_defect)} physical defects, {len(det_df)} (defect, run) observations."
+    )
     print(per_defect.sort_values("angle_cos").to_string(index=False))
 
-    corr_binary, p_binary = scipy_stats.spearmanr(per_defect["angle_cos"], per_defect["detected_fraction"])
-    corr_z, p_z = scipy_stats.spearmanr(per_defect["angle_cos"], per_defect["mean_peak_z"])
-    corr_zn, p_zn = scipy_stats.spearmanr(per_defect["angle_cos"], per_defect["peak_z_per_severity"])
-    print(f"\nSpearman correlation(angle_cos, detected_fraction)   = {corr_binary:+.3f} (p={p_binary:.4f})")
-    print(f"Spearman correlation(angle_cos, mean_peak_z)         = {corr_z:+.3f} (p={p_z:.4f})")
-    print(f"Spearman correlation(angle_cos, peak_z_per_severity) = {corr_zn:+.3f} (p={p_zn:.4f}) "
-          f"-- severity-normalised, isolates the angle effect from the severity confound")
+    corr_binary, p_binary = scipy_stats.spearmanr(
+        per_defect["angle_cos"], per_defect["detected_fraction"]
+    )
+    corr_z, p_z = scipy_stats.spearmanr(
+        per_defect["angle_cos"], per_defect["mean_peak_z"]
+    )
+    corr_zn, p_zn = scipy_stats.spearmanr(
+        per_defect["angle_cos"], per_defect["peak_z_per_severity"]
+    )
+    print(
+        f"\nSpearman correlation(angle_cos, detected_fraction)   = {corr_binary:+.3f} (p={p_binary:.4f})"
+    )
+    print(
+        f"Spearman correlation(angle_cos, mean_peak_z)         = {corr_z:+.3f} (p={p_z:.4f})"
+    )
+    print(
+        f"Spearman correlation(angle_cos, peak_z_per_severity) = {corr_zn:+.3f} (p={p_zn:.4f}) "
+        f"-- severity-normalised, isolates the angle effect from the severity confound"
+    )
     print(f"(n={len(per_defect)} physical defects for all three)")
 
     # Binned view: low/mid/high |cos(angle to B_hat0)|, bootstrap CI per bin
     # over PHYSICAL DEFECTS (same grouping discipline as every other
     # detection metric in this project -- SKILL invariant #10).
-    bins = pd.qcut(per_defect["angle_cos"], q=3, duplicates="drop", labels=["near-perpendicular", "mid", "near-parallel"])
+    bins = pd.qcut(
+        per_defect["angle_cos"],
+        q=3,
+        duplicates="drop",
+        labels=["near-perpendicular", "mid", "near-parallel"],
+    )
     per_defect = per_defect.assign(angle_bin=bins)
     boot_cfg = cfg.base.model.bootstrap
-    print("\nDetection rate by angle-to-B_hat0 bin (bootstrap CI over physical defects):")
-    for label, group in per_defect.groupby("angle_bin", observed=True):
-        point, lo, hi = bootstrap_ci(group["detected_fraction"].to_numpy(), boot_cfg.n_resamples, boot_cfg.level, seed=17)
-        print(f"  {label:20s} (n={len(group):2d}, angle_cos range [{group['angle_cos'].min():.2f}, "
-              f"{group['angle_cos'].max():.2f}]): {point:.3f} [{lo:.3f}, {hi:.3f}]")
-    print("\nSeverity-normalised peak SNR by angle-to-B_hat0 bin (bootstrap CI over physical defects):")
+    print(
+        "\nDetection rate by angle-to-B_hat0 bin (bootstrap CI over physical defects):"
+    )
     for label, group in per_defect.groupby("angle_bin", observed=True):
         point, lo, hi = bootstrap_ci(
-            group["peak_z_per_severity"].to_numpy(), boot_cfg.n_resamples, boot_cfg.level, seed=18
+            group["detected_fraction"].to_numpy(),
+            boot_cfg.n_resamples,
+            boot_cfg.level,
+            seed=17,
+        )
+        print(
+            f"  {label:20s} (n={len(group):2d}, angle_cos range [{group['angle_cos'].min():.2f}, "
+            f"{group['angle_cos'].max():.2f}]): {point:.3f} [{lo:.3f}, {hi:.3f}]"
+        )
+    print(
+        "\nSeverity-normalised peak SNR by angle-to-B_hat0 bin (bootstrap CI over physical defects):"
+    )
+    for label, group in per_defect.groupby("angle_bin", observed=True):
+        point, lo, hi = bootstrap_ci(
+            group["peak_z_per_severity"].to_numpy(),
+            boot_cfg.n_resamples,
+            boot_cfg.level,
+            seed=18,
         )
         print(f"  {label:20s} (n={len(group):2d}): {point:.5f} [{lo:.5f}, {hi:.5f}]")
 
     out_path = PROJECT_ROOT / "reports" / "pod-by-angle.md"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     lines = [
-        "# Stage D: POD vs defect-moment angle to B_hat0", "",
-        f"B_hat0 = {b0hat.tolist()} (from background_nT={cfg.base.data.background_nT})", "",
-        f"{len(per_defect)} physical defects, {N_LINES} lines, {cfg.base.data.n_runs} runs each.", "",
+        "# Stage D: POD vs defect-moment angle to B_hat0",
+        "",
+        f"B_hat0 = {b0hat.tolist()} (from background_nT={cfg.base.data.background_nT})",
+        "",
+        f"{len(per_defect)} physical defects, {N_LINES} lines, {cfg.base.data.n_runs} runs each.",
+        "",
         f"Spearman correlation(angle_cos, detected_fraction)   = {corr_binary:+.3f} (p={p_binary:.4f})",
         f"Spearman correlation(angle_cos, mean_peak_z)         = {corr_z:+.3f} (p={p_z:.4f})",
-        (f"Spearman correlation(angle_cos, peak_z_per_severity) = {corr_zn:+.3f} (p={p_zn:.4f}) "
-         "-- severity-normalised, isolates the angle effect from the severity confound"),
+        (
+            f"Spearman correlation(angle_cos, peak_z_per_severity) = {corr_zn:+.3f} (p={p_zn:.4f}) "
+            "-- severity-normalised, isolates the angle effect from the severity confound"
+        ),
         "",
-        "```", per_defect.sort_values("angle_cos").to_string(index=False), "```", "",
+        "```",
+        per_defect.sort_values("angle_cos").to_string(index=False),
+        "```",
+        "",
     ]
     out_path.write_text("\n".join(lines), encoding="utf-8")
     print(f"\nWrote {out_path}")

@@ -137,7 +137,13 @@ GATE_SCC_RECALL = 0.90
 # model key on "this class always sits at this chainage" -- true only on
 # THIS synthetic corpus's fixed defect placement, and a shortcut that would
 # never generalise to a real, different pipeline.
-CLASSIFY_DENYLIST = ["chainage_m", "chainage_peak_m", "chainage_start_m", "chainage_end_m", "sample_idx"]
+CLASSIFY_DENYLIST = [
+    "chainage_m",
+    "chainage_peak_m",
+    "chainage_start_m",
+    "chainage_end_m",
+    "sample_idx",
+]
 
 # Same reasoning as CONFORMAL_CALIB_FRACTION, for the classifier's isotonic
 # probability calibration -- a defect-grouped split, never by row.
@@ -154,13 +160,23 @@ def _git_sha(cwd: str | Path | None = None) -> str:
     """
     try:
         out = subprocess.run(
-            ["git", "rev-parse", "HEAD"], capture_output=True, text=True, timeout=5, cwd=cwd, check=False,
+            ["git", "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            cwd=cwd,
+            check=False,
         )
         sha = out.stdout.strip()
         if out.returncode != 0 or not sha:
             return "uncommitted"
         status = subprocess.run(
-            ["git", "status", "--porcelain"], capture_output=True, text=True, timeout=5, cwd=cwd, check=False,
+            ["git", "status", "--porcelain"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            cwd=cwd,
+            check=False,
         )
         if status.returncode == 0 and status.stdout.strip():
             return f"{sha}-dirty"
@@ -197,7 +213,15 @@ def _load_truth_and_geometry(conn, survey_ids: list[str]) -> pd.DataFrame:
     for survey_id, source_uri in rows:
         df = pd.read_parquet(
             source_uri,
-            columns=["sample_idx", "lat", "lon", "defect", "defect_type", "interference", "severity_smys"],
+            columns=[
+                "sample_idx",
+                "lat",
+                "lon",
+                "defect",
+                "defect_type",
+                "interference",
+                "severity_smys",
+            ],
         )
         df["survey_id"] = survey_id
         frames.append(df)
@@ -242,7 +266,11 @@ def _run_grouped_cv(
             emphasis_repeats=cfg.base.model.anomaly.get("emphasis_repeats", 1),
         ).fit(train)
 
-        mad_thresholds.append(calibrated_threshold(mad.score(train), cfg.base.model.anomaly["contamination"]))
+        mad_thresholds.append(
+            calibrated_threshold(
+                mad.score(train), cfg.base.model.anomaly["contamination"]
+            )
+        )
         corpus.loc[test_mask, "score_mad"] = mad.score(test)
         corpus.loc[test_mask, "score_if"] = iso.score(test)
 
@@ -251,7 +279,11 @@ def _run_grouped_cv(
 
 
 def _dig_and_match(
-    corpus: pd.DataFrame, score_col: str, threshold: float, registry: pd.DataFrame, cfg: Config
+    corpus: pd.DataFrame,
+    score_col: str,
+    threshold: float,
+    registry: pd.DataFrame,
+    cfg: Config,
 ) -> dict[str, pd.DataFrame]:
     """Per survey: cluster indications, apply the dig budget, match to truth.
     Returns {survey_id: matched_dug_dataframe}.
@@ -272,12 +304,17 @@ def _dig_and_match(
             digs_per_km=cfg.base.model.dig_budget_per_km,
         )
         line_registry = registry[registry["line_id"] == survey_rows["line_id"].iloc[0]]
-        matched_by_run[str(survey_id)] = match_dug_indications(dug, line_registry, MATCH_TOLERANCE_M)
+        matched_by_run[str(survey_id)] = match_dug_indications(
+            dug, line_registry, MATCH_TOLERANCE_M
+        )
     return matched_by_run
 
 
 def _cluster_all_indications(
-    corpus: pd.DataFrame, score_col: str, threshold: float, pipeline_version: str = "cv-eval"
+    corpus: pd.DataFrame,
+    score_col: str,
+    threshold: float,
+    pipeline_version: str = "cv-eval",
 ) -> pd.DataFrame:
     """Every survey's supra-threshold rows clustered into indications -- the
     FULL candidate list, not a dig-budget-selected slice. Severity applies to
@@ -285,12 +322,22 @@ def _cluster_all_indications(
     """
     all_indications = []
     for survey_id, survey_rows in corpus.groupby("survey_id"):
-        survey_rows = survey_rows.sort_values("sample_idx").rename(columns={score_col: "_score"})
+        survey_rows = survey_rows.sort_values("sample_idx").rename(
+            columns={score_col: "_score"}
+        )
         indications = cluster_indications(
-            survey_rows, "_score", threshold, survey_id=str(survey_id), pipeline_version=pipeline_version
+            survey_rows,
+            "_score",
+            threshold,
+            survey_id=str(survey_id),
+            pipeline_version=pipeline_version,
         )
         all_indications.append(indications)
-    return pd.concat(all_indications, ignore_index=True) if all_indications else pd.DataFrame()
+    return (
+        pd.concat(all_indications, ignore_index=True)
+        if all_indications
+        else pd.DataFrame()
+    )
 
 
 def _match_all_indications(
@@ -309,7 +356,9 @@ def _match_all_indications(
     for survey_id, group in indications.groupby("survey_id"):
         line_id = corpus.loc[corpus["survey_id"] == survey_id, "line_id"].iloc[0]
         line_registry = registry[registry["line_id"] == line_id]
-        matched_frames.append(match_dug_indications(group, line_registry, MATCH_TOLERANCE_M))
+        matched_frames.append(
+            match_dug_indications(group, line_registry, MATCH_TOLERANCE_M)
+        )
     return pd.concat(matched_frames, ignore_index=True)
 
 
@@ -334,11 +383,17 @@ def _build_severity_training_frame(
     truth = corpus[["survey_id", "chainage_m", "severity_smys"]].rename(
         columns={"chainage_m": "chainage_peak_m", "severity_smys": "y_true"}
     )
-    with_features = with_features.merge(truth, on=["survey_id", "chainage_peak_m"], how="left")
+    with_features = with_features.merge(
+        truth, on=["survey_id", "chainage_peak_m"], how="left"
+    )
 
     # fold: whichever fold the peak row belongs to (assigned in _run_grouped_cv).
-    fold_lookup = corpus[["survey_id", "chainage_m", "fold"]].rename(columns={"chainage_m": "chainage_peak_m"})
-    with_features = with_features.merge(fold_lookup, on=["survey_id", "chainage_peak_m"], how="left")
+    fold_lookup = corpus[["survey_id", "chainage_m", "fold"]].rename(
+        columns={"chainage_m": "chainage_peak_m"}
+    )
+    with_features = with_features.merge(
+        fold_lookup, on=["survey_id", "chainage_peak_m"], how="left"
+    )
 
     # generate.py initialises severity_smys to NaN off-defect (row outside
     # every defect's label window), not 0 -- a real, longstanding discrepancy
@@ -354,15 +409,20 @@ def _build_severity_training_frame(
     # 0% -- drop these rows here, loudly, rather than let that cascade.
     n_nan_y_true = int(with_features["y_true"].isna().sum())
     if n_nan_y_true > 0:
-        print(f"_build_severity_training_frame: dropping {n_nan_y_true} matched indication(s) "
-              "whose peak row has a NaN severity_smys (peak landed outside the true label "
-              "window while still within the dig-matching tolerance) -- see train.py's comment.")
+        print(
+            f"_build_severity_training_frame: dropping {n_nan_y_true} matched indication(s) "
+            "whose peak row has a NaN severity_smys (peak landed outside the true label "
+            "window while still within the dig-matching tolerance) -- see train.py's comment."
+        )
         with_features = with_features[with_features["y_true"].notna()]
     return with_features
 
 
 def _build_classify_training_frame(
-    matched: pd.DataFrame, corpus: pd.DataFrame, feature_cols: list[str], registry: pd.DataFrame
+    matched: pd.DataFrame,
+    corpus: pd.DataFrame,
+    feature_cols: list[str],
+    registry: pd.DataFrame,
 ) -> pd.DataFrame:
     """Every already-matched indication that matches a real DEFECT OR
     INTERFERENCE source -- widened from severity's defect-only restriction,
@@ -378,11 +438,18 @@ def _build_classify_training_frame(
     with_features = attach_indication_features(labelled, corpus, feature_cols)
 
     with_features = with_features.merge(
-        registry[["source_id", "defect_type"]], left_on="matched_source_id", right_on="source_id", how="left"
+        registry[["source_id", "defect_type"]],
+        left_on="matched_source_id",
+        right_on="source_id",
+        how="left",
     ).drop(columns=["source_id"])
 
-    fold_lookup = corpus[["survey_id", "chainage_m", "fold"]].rename(columns={"chainage_m": "chainage_peak_m"})
-    return with_features.merge(fold_lookup, on=["survey_id", "chainage_peak_m"], how="left")
+    fold_lookup = corpus[["survey_id", "chainage_m", "fold"]].rename(
+        columns={"chainage_m": "chainage_peak_m"}
+    )
+    return with_features.merge(
+        fold_lookup, on=["survey_id", "chainage_peak_m"], how="left"
+    )
 
 
 def _run_severity_cv(
@@ -412,7 +479,11 @@ def _run_severity_cv(
 
         dev_defects = dev["matched_source_id"].unique()
         rng.shuffle(dev_defects)
-        n_calib = max(1, round(len(dev_defects) * CONFORMAL_CALIB_FRACTION)) if len(dev_defects) > 1 else 0
+        n_calib = (
+            max(1, round(len(dev_defects) * CONFORMAL_CALIB_FRACTION))
+            if len(dev_defects) > 1
+            else 0
+        )
         calib_defects = set(dev_defects[:n_calib])
         train = dev[~dev["matched_source_id"].isin(calib_defects)]
         calib = dev[dev["matched_source_id"].isin(calib_defects)]
@@ -424,8 +495,11 @@ def _run_severity_cv(
             train, calib = dev, dev.iloc[0:0]
 
         model = SeverityModel(
-            feature_cols=feature_cols, quantiles=quantiles, conformal_alpha=conformal_alpha,
-            seed=seed, lgbm_cfg=lgbm_cfg,
+            feature_cols=feature_cols,
+            quantiles=quantiles,
+            conformal_alpha=conformal_alpha,
+            seed=seed,
+            lgbm_cfg=lgbm_cfg,
             min_child_samples=sev_cfg.get("min_child_samples", 3),
             n_estimators=sev_cfg.get("n_estimators", 50),
             num_leaves=sev_cfg.get("num_leaves", 7),
@@ -439,29 +513,51 @@ def _run_severity_cv(
 
         for i, (_, row) in enumerate(test.iterrows()):
             model_rows.append(
-                {"defect_id": row["matched_source_id"], "y_true": row["y_true"],
-                 "y_pred": med[i], "lo": lo[i], "hi": hi[i]}
+                {
+                    "defect_id": row["matched_source_id"],
+                    "y_true": row["y_true"],
+                    "y_pred": med[i],
+                    "lo": lo[i],
+                    "hi": hi[i],
+                }
             )
             baseline_rows.append(
-                {"defect_id": row["matched_source_id"], "y_true": row["y_true"],
-                 "y_pred": bmed[i], "lo": blo[i], "hi": bhi[i]}
+                {
+                    "defect_id": row["matched_source_id"],
+                    "y_true": row["y_true"],
+                    "y_pred": bmed[i],
+                    "lo": blo[i],
+                    "hi": bhi[i],
+                }
             )
 
     return pd.DataFrame(model_rows), pd.DataFrame(baseline_rows)
 
 
-def _severity_bootstrap_metrics(oof: pd.DataFrame, cfg: Config, seed: int) -> dict[str, tuple[float, float, float]]:
+def _severity_bootstrap_metrics(
+    oof: pd.DataFrame, cfg: Config, seed: int
+) -> dict[str, tuple[float, float, float]]:
     boot_cfg = cfg.base.model.bootstrap
     per_group = per_group_severity_metrics(oof, "defect_id")
     return {
-        "coverage": bootstrap_ci(per_group["coverage"], boot_cfg.n_resamples, boot_cfg.level, seed),
-        "mae": bootstrap_ci(per_group["mae"], boot_cfg.n_resamples, boot_cfg.level, seed + 1),
-        "interval_width": bootstrap_ci(per_group["interval_width"], boot_cfg.n_resamples, boot_cfg.level, seed + 2),
+        "coverage": bootstrap_ci(
+            per_group["coverage"], boot_cfg.n_resamples, boot_cfg.level, seed
+        ),
+        "mae": bootstrap_ci(
+            per_group["mae"], boot_cfg.n_resamples, boot_cfg.level, seed + 1
+        ),
+        "interval_width": bootstrap_ci(
+            per_group["interval_width"], boot_cfg.n_resamples, boot_cfg.level, seed + 2
+        ),
     }
 
 
 def _stratified_defect_calib_split(
-    dev: pd.DataFrame, class_col: str, group_col: str, calib_fraction: float, rng: np.random.Generator
+    dev: pd.DataFrame,
+    class_col: str,
+    group_col: str,
+    calib_fraction: float,
+    rng: np.random.Generator,
 ) -> tuple[set, set]:
     """Allocate each class's OWN distinct defects to calib proportionally,
     rather than a bare shuffle of all defects -- a plain shuffle risks a rare
@@ -478,7 +574,9 @@ def _stratified_defect_calib_split(
     for _, class_group in dev.groupby(class_col):
         defects = class_group[group_col].unique()
         rng.shuffle(defects)
-        n_calib = max(1, round(len(defects) * calib_fraction)) if len(defects) > 1 else 0
+        n_calib = (
+            max(1, round(len(defects) * calib_fraction)) if len(defects) > 1 else 0
+        )
         calib_ids.update(defects[:n_calib])
         train_ids.update(defects[n_calib:])
     return train_ids, calib_ids
@@ -521,31 +619,47 @@ def _run_classify_cv(
             train, calib = dev, dev.iloc[0:0]
 
         model = ClassifyModel(
-            feature_cols=feature_cols, classes=CLASSIFY_CLASSES, seed=seed, lgbm_cfg=lgbm_cfg,
+            feature_cols=feature_cols,
+            classes=CLASSIFY_CLASSES,
+            seed=seed,
+            lgbm_cfg=lgbm_cfg,
             class_weight=classify_cfg.get("class_weight", "balanced"),
             min_child_samples=classify_cfg.get("min_child_samples", 3),
-        ).fit(train, train["defect_type"].to_numpy(), calib, calib["defect_type"].to_numpy())
+        ).fit(
+            train,
+            train["defect_type"].to_numpy(),
+            calib,
+            calib["defect_type"].to_numpy(),
+        )
         proba = model.predict_proba(test)
         pred_type, pred_conf = model.predict(test)
 
-        baseline = MajorityClassBaseline(classes=CLASSIFY_CLASSES).fit(train["defect_type"].to_numpy())
+        baseline = MajorityClassBaseline(classes=CLASSIFY_CLASSES).fit(
+            train["defect_type"].to_numpy()
+        )
         baseline_proba = baseline.predict_proba(len(test))
         base_pred_type, base_pred_conf = baseline.predict(len(test))
 
         for i in range(len(test)):
             row = test.iloc[i]
             model_row = {
-                "defect_id": row["matched_source_id"], "true_class": row["defect_type"],
-                "pred_type": pred_type[i], "pred_conf": pred_conf[i],
+                "defect_id": row["matched_source_id"],
+                "true_class": row["defect_type"],
+                "pred_type": pred_type[i],
+                "pred_conf": pred_conf[i],
             }
             model_row.update({c: proba.iloc[i][c] for c in CLASSIFY_CLASSES})
             model_rows.append(model_row)
 
             baseline_row = {
-                "defect_id": row["matched_source_id"], "true_class": row["defect_type"],
-                "pred_type": base_pred_type[i], "pred_conf": base_pred_conf[i],
+                "defect_id": row["matched_source_id"],
+                "true_class": row["defect_type"],
+                "pred_type": base_pred_type[i],
+                "pred_conf": base_pred_conf[i],
             }
-            baseline_row.update({c: baseline_proba.iloc[i][c] for c in CLASSIFY_CLASSES})
+            baseline_row.update(
+                {c: baseline_proba.iloc[i][c] for c in CLASSIFY_CLASSES}
+            )
             baseline_rows.append(baseline_row)
 
     return pd.DataFrame(model_rows), pd.DataFrame(baseline_rows)
@@ -553,19 +667,27 @@ def _run_classify_cv(
 
 def _classify_bootstrap_metrics(oof: pd.DataFrame, cfg: Config, seed: int) -> dict:
     boot_cfg = cfg.base.model.bootstrap
-    recall_units = per_class_recall_units(oof, "defect_id", "true_class", "pred_type", CLASSIFY_CLASSES)
+    recall_units = per_class_recall_units(
+        oof, "defect_id", "true_class", "pred_type", CLASSIFY_CLASSES
+    )
     per_class_recall = {
         c: bootstrap_ci(recall_units[c], boot_cfg.n_resamples, boot_cfg.level, seed + i)
         for i, c in enumerate(CLASSIFY_CLASSES)
     }
-    interference_prec_units = interference_precision_units(oof, "defect_id", "true_class", "pred_type")
-    brier_units = brier_by_group(oof, "defect_id", "true_class", CLASSIFY_CLASSES, CLASSIFY_CLASSES)
+    interference_prec_units = interference_precision_units(
+        oof, "defect_id", "true_class", "pred_type"
+    )
+    brier_units = brier_by_group(
+        oof, "defect_id", "true_class", CLASSIFY_CLASSES, CLASSIFY_CLASSES
+    )
     return {
         "per_class_recall": per_class_recall,
         "interference_precision": bootstrap_ci(
             interference_prec_units, boot_cfg.n_resamples, boot_cfg.level, seed + 100
         ),
-        "brier": bootstrap_ci(brier_units, boot_cfg.n_resamples, boot_cfg.level, seed + 101),
+        "brier": bootstrap_ci(
+            brier_units, boot_cfg.n_resamples, boot_cfg.level, seed + 101
+        ),
     }
 
 
@@ -579,7 +701,9 @@ def _lightgbm_shap_importance(model: ClassifyModel, X: pd.DataFrame) -> pd.Serie
     upgrading). This is what `evaluate.shap_denylist_check` (the physics-
     consistency gate) runs against.
     """
-    assert model.model is not None, "_lightgbm_shap_importance requires a real (non-constant-fallback) model"
+    assert model.model is not None, (
+        "_lightgbm_shap_importance requires a real (non-constant-fallback) model"
+    )
     X_mat = X[model.feature_cols].fillna(0.0)
     contrib = model.model.predict(X_mat, pred_contrib=True)
     n_features = len(model.feature_cols)
@@ -604,7 +728,9 @@ def _explain_indications_sample(
     need (no consumer yet); a real productionisation would add one once a
     dashboard panel actually reads it.
     """
-    assert model.model is not None, "_explain_indications_sample requires a real (non-constant-fallback) model"
+    assert model.model is not None, (
+        "_explain_indications_sample requires a real (non-constant-fallback) model"
+    )
     X_mat = X[model.feature_cols].fillna(0.0)
     contrib = np.asarray(model.model.predict(X_mat, pred_contrib=True))
     n_features = len(model.feature_cols)
@@ -620,34 +746,60 @@ def _explain_indications_sample(
         if len(rows_of_class) == 0:
             continue
         i, ci = rows_of_class[0], class_index[c]
-        examples[c] = dict(zip(model.feature_cols, reshaped[i, ci, :n_features].tolist()))
+        examples[c] = dict(
+            zip(model.feature_cols, reshaped[i, ci, :n_features].tolist())
+        )
         if len(examples) >= n_examples:
             break
     return examples
 
 
 def _bootstrap_metrics(
-    matched_by_run: dict[str, pd.DataFrame], registry: pd.DataFrame, run_line_id: dict[str, str], cfg: Config
-) -> tuple[dict[str, tuple[float, float, float]], dict[str, float], list[float], list[float]]:
+    matched_by_run: dict[str, pd.DataFrame],
+    registry: pd.DataFrame,
+    run_line_id: dict[str, str],
+    cfg: Config,
+) -> tuple[
+    dict[str, tuple[float, float, float]], dict[str, float], list[float], list[float]
+]:
     boot_cfg = cfg.base.model.bootstrap
     hit_rates = defect_hit_rates(matched_by_run, registry, run_line_id=run_line_id)
     false_digs = [false_dig_rate_per_run(m) for m in matched_by_run.values()]
-    interference_fracs = [interference_dig_fraction_per_run(m) for m in matched_by_run.values()]
-    loc_errors = np.concatenate([localisation_errors_m(m) for m in matched_by_run.values()])
-    loc_errors_cm = np.concatenate([localisation_errors_cm(m) for m in matched_by_run.values()])
+    interference_fracs = [
+        interference_dig_fraction_per_run(m) for m in matched_by_run.values()
+    ]
+    loc_errors = np.concatenate(
+        [localisation_errors_m(m) for m in matched_by_run.values()]
+    )
+    loc_errors_cm = np.concatenate(
+        [localisation_errors_cm(m) for m in matched_by_run.values()]
+    )
 
-    return {
-        "recall_at_budget": bootstrap_ci(list(hit_rates.values()), boot_cfg.n_resamples, boot_cfg.level, cfg.seed),
-        "false_dig_rate": bootstrap_ci(false_digs, boot_cfg.n_resamples, boot_cfg.level, cfg.seed + 1),
-        "interference_dig_fraction": bootstrap_ci(
-            interference_fracs, boot_cfg.n_resamples, boot_cfg.level, cfg.seed + 2
-        ),
-        "localisation_error_m": bootstrap_ci(loc_errors, boot_cfg.n_resamples, boot_cfg.level, cfg.seed + 3),
-        # Same values, cm units: the ~1 cm dig-marking requirement (Rig-v2
-        # plan) is the actual thing being asked about -- see
-        # evaluate.py::localisation_errors_cm's docstring.
-        "localisation_error_cm": bootstrap_ci(loc_errors_cm, boot_cfg.n_resamples, boot_cfg.level, cfg.seed + 3),
-    }, hit_rates, false_digs, interference_fracs
+    return (
+        {
+            "recall_at_budget": bootstrap_ci(
+                list(hit_rates.values()), boot_cfg.n_resamples, boot_cfg.level, cfg.seed
+            ),
+            "false_dig_rate": bootstrap_ci(
+                false_digs, boot_cfg.n_resamples, boot_cfg.level, cfg.seed + 1
+            ),
+            "interference_dig_fraction": bootstrap_ci(
+                interference_fracs, boot_cfg.n_resamples, boot_cfg.level, cfg.seed + 2
+            ),
+            "localisation_error_m": bootstrap_ci(
+                loc_errors, boot_cfg.n_resamples, boot_cfg.level, cfg.seed + 3
+            ),
+            # Same values, cm units: the ~1 cm dig-marking requirement (Rig-v2
+            # plan) is the actual thing being asked about -- see
+            # evaluate.py::localisation_errors_cm's docstring.
+            "localisation_error_cm": bootstrap_ci(
+                loc_errors_cm, boot_cfg.n_resamples, boot_cfg.level, cfg.seed + 3
+            ),
+        },
+        hit_rates,
+        false_digs,
+        interference_fracs,
+    )
 
 
 def _evaluate_corpus(
@@ -695,21 +847,37 @@ def _evaluate_corpus(
         seed + 10,
     )
     interference_gap = paired_bootstrap_ci(
-        interference_mad, interference_if, boot_cfg.n_resamples, boot_cfg.level, seed + 11
+        interference_mad,
+        interference_if,
+        boot_cfg.n_resamples,
+        boot_cfg.level,
+        seed + 11,
     )
 
-    gate_passed = recall_gap[1] >= GATE_RECALL_MARGIN  # lower CI bound, not the point estimate
-    interference_attributable = interference_gap[1] > 0  # MAD wastes MORE digs on interference, at the CI floor
+    gate_passed = (
+        recall_gap[1] >= GATE_RECALL_MARGIN
+    )  # lower CI bound, not the point estimate
+    interference_attributable = (
+        interference_gap[1] > 0
+    )  # MAD wastes MORE digs on interference, at the CI floor
 
     result = {
-        "mad": {"recall_at_budget": metrics_mad["recall_at_budget"], "false_dig_rate": metrics_mad["false_dig_rate"],
-                "interference_dig_fraction": metrics_mad["interference_dig_fraction"],
-                "localisation_error_m": metrics_mad["localisation_error_m"],
-                "localisation_error_cm": metrics_mad["localisation_error_cm"], "pr_auc": pr_auc_mad},
-        "isolation_forest": {"recall_at_budget": metrics_if["recall_at_budget"], "false_dig_rate": metrics_if["false_dig_rate"],
-                              "interference_dig_fraction": metrics_if["interference_dig_fraction"],
-                              "localisation_error_m": metrics_if["localisation_error_m"],
-                              "localisation_error_cm": metrics_if["localisation_error_cm"], "pr_auc": pr_auc_if},
+        "mad": {
+            "recall_at_budget": metrics_mad["recall_at_budget"],
+            "false_dig_rate": metrics_mad["false_dig_rate"],
+            "interference_dig_fraction": metrics_mad["interference_dig_fraction"],
+            "localisation_error_m": metrics_mad["localisation_error_m"],
+            "localisation_error_cm": metrics_mad["localisation_error_cm"],
+            "pr_auc": pr_auc_mad,
+        },
+        "isolation_forest": {
+            "recall_at_budget": metrics_if["recall_at_budget"],
+            "false_dig_rate": metrics_if["false_dig_rate"],
+            "interference_dig_fraction": metrics_if["interference_dig_fraction"],
+            "localisation_error_m": metrics_if["localisation_error_m"],
+            "localisation_error_cm": metrics_if["localisation_error_cm"],
+            "pr_auc": pr_auc_if,
+        },
         "recall_gap_if_minus_mad": recall_gap,
         "interference_gap_mad_minus_if": interference_gap,
         "gate_passed": gate_passed,
@@ -734,9 +902,13 @@ def _evaluate_corpus(
         )
         if len(oof_model) > 0:
             sev_metrics = _severity_bootstrap_metrics(oof_model, cfg, seed=seed + 20)
-            base_metrics = _severity_bootstrap_metrics(oof_baseline, cfg, seed=seed + 30)
+            base_metrics = _severity_bootstrap_metrics(
+                oof_baseline, cfg, seed=seed + 30
+            )
             severity_gate_passed = (
-                GATE_SEVERITY_COVERAGE_RANGE[0] <= sev_metrics["coverage"][0] <= GATE_SEVERITY_COVERAGE_RANGE[1]
+                GATE_SEVERITY_COVERAGE_RANGE[0]
+                <= sev_metrics["coverage"][0]
+                <= GATE_SEVERITY_COVERAGE_RANGE[1]
             )
             result["severity"] = sev_metrics
             result["severity_baseline"] = base_metrics
@@ -745,7 +917,9 @@ def _evaluate_corpus(
                 str(k): v
                 for k, v in mae_by_severity_decile(
                     oof_model["y_true"].to_numpy(), oof_model["y_pred"].to_numpy()
-                ).to_dict().items()
+                )
+                .to_dict()
+                .items()
             }
 
     # Stage 5: the p_defect_cal calibrator -- fit on the UNFILTERED matched
@@ -764,27 +938,43 @@ def _evaluate_corpus(
     # own indications-per-km rate and calibrated P(defect) distribution,
     # captured here (not re-derived at monitor time, which could itself have
     # drifted). Stashed on `result` so _log_and_persist can bundle it.
-    total_km = corpus.groupby("survey_id")["chainage_m"].agg(lambda s: s.max() - s.min()).sum() / 1000.0
-    result["indications_per_km"] = len(all_indications) / total_km if total_km > 0 else 0.0
+    total_km = (
+        corpus.groupby("survey_id")["chainage_m"].agg(lambda s: s.max() - s.min()).sum()
+        / 1000.0
+    )
+    result["indications_per_km"] = (
+        len(all_indications) / total_km if total_km > 0 else 0.0
+    )
     result["p_defect_cal_sample"] = (
         defect_calibrator.predict(matched_all["anomaly_score"].to_numpy())
-        if defect_calibrator is not None else np.array([])
+        if defect_calibrator is not None
+        else np.array([])
     )
 
     # Stage 5: classification, conditional on enough matched, multi-class
     # data to fit and evaluate at all (mirrors severity's own sample-size
     # guard, widened to also require class diversity).
-    classify_frame = _build_classify_training_frame(matched_all, corpus, feature_cols, registry)
+    classify_frame = _build_classify_training_frame(
+        matched_all, corpus, feature_cols, registry
+    )
     result["n_classify_samples"] = len(classify_frame)
     if len(classify_frame) >= 8 and classify_frame["defect_type"].nunique() >= 3:
         oof_classify, oof_classify_baseline = _run_classify_cv(
             classify_frame, [*feature_cols, "extent_m"], cfg, seed=seed
         )
         if len(oof_classify) > 0:
-            classify_metrics = _classify_bootstrap_metrics(oof_classify, cfg, seed=seed + 40)
-            classify_baseline_metrics = _classify_bootstrap_metrics(oof_classify_baseline, cfg, seed=seed + 50)
-            scc_recall_ci = classify_metrics["per_class_recall"].get("scc", (float("nan"),) * 3)
-            scc_gate_passed = scc_recall_ci[1] >= GATE_SCC_RECALL  # lower CI bound, not the point estimate
+            classify_metrics = _classify_bootstrap_metrics(
+                oof_classify, cfg, seed=seed + 40
+            )
+            classify_baseline_metrics = _classify_bootstrap_metrics(
+                oof_classify_baseline, cfg, seed=seed + 50
+            )
+            scc_recall_ci = classify_metrics["per_class_recall"].get(
+                "scc", (float("nan"),) * 3
+            )
+            scc_gate_passed = (
+                scc_recall_ci[1] >= GATE_SCC_RECALL
+            )  # lower CI bound, not the point estimate
             result["classify"] = classify_metrics
             result["classify_baseline"] = classify_baseline_metrics
             result["classify_recall_gate_passed"] = scc_gate_passed
@@ -803,13 +993,17 @@ def run_train(cfg: Config, conn) -> dict:
     feature_version = cfg.base.features.version
     as_of = dt.datetime.now(dt.UTC).isoformat()
 
-    corpus = load_feature_corpus(cfg.env.storage.feature_dir, feature_version, as_of=as_of)
+    corpus = load_feature_corpus(
+        cfg.env.storage.feature_dir, feature_version, as_of=as_of
+    )
     if len(corpus) == 0:
         raise RuntimeError("empty feature corpus -- run `lsm features` first")
 
     survey_ids = sorted(corpus["survey_id"].unique())
     truth = _load_truth_and_geometry(conn, survey_ids)
-    corpus = corpus.merge(truth, on=["survey_id", "sample_idx"], how="left", validate="one_to_one")
+    corpus = corpus.merge(
+        truth, on=["survey_id", "sample_idx"], how="left", validate="one_to_one"
+    )
 
     feature_cols = feature_columns(cfg.base.features)
 
@@ -819,25 +1013,46 @@ def run_train(cfg: Config, conn) -> dict:
     line_ids = sorted(corpus["line_id"].unique())
     registries = []
     for line_id in line_ids:
-        ref_survey_id = min(corpus.loc[corpus["line_id"] == line_id, "survey_id"].unique())
+        ref_survey_id = min(
+            corpus.loc[corpus["line_id"] == line_id, "survey_id"].unique()
+        )
         ref_rows = corpus[corpus["survey_id"] == ref_survey_id]
-        registries.append(build_truth_registry(ref_rows, line_id, ref_rows["chainage_m"].to_numpy()))
+        registries.append(
+            build_truth_registry(ref_rows, line_id, ref_rows["chainage_m"].to_numpy())
+        )
     registry = pd.concat(registries, ignore_index=True)
 
-    run_line_id = corpus.drop_duplicates("survey_id").set_index("survey_id")["line_id"].to_dict()
+    run_line_id = (
+        corpus.drop_duplicates("survey_id").set_index("survey_id")["line_id"].to_dict()
+    )
 
     split_cfg = cfg.base.model.split
     corpus = add_fold_column(
-        corpus, "line_id", "chainage_m", block_m=split_cfg.fallback_block_m, n_folds=split_cfg.n_folds
+        corpus,
+        "line_id",
+        "chainage_m",
+        block_m=split_cfg.fallback_block_m,
+        n_folds=split_cfg.n_folds,
     )
-    corpus, result, severity_frame, classify_frame, defect_calibrator = _evaluate_corpus(
-        corpus, feature_cols, cfg, cfg.seed, registry, run_line_id, survey_ids
+    corpus, result, severity_frame, classify_frame, defect_calibrator = (
+        _evaluate_corpus(
+            corpus, feature_cols, cfg, cfg.seed, registry, run_line_id, survey_ids
+        )
     )
     mad_threshold = corpus.attrs["mad_threshold"]
 
     _log_and_persist(
-        cfg, conn, corpus, feature_cols, registry, survey_ids, result, mad_threshold,
-        severity_frame, classify_frame, defect_calibrator,
+        cfg,
+        conn,
+        corpus,
+        feature_cols,
+        registry,
+        survey_ids,
+        result,
+        mad_threshold,
+        severity_frame,
+        classify_frame,
+        defect_calibrator,
     )
     _print_report(result)
     return result
@@ -856,7 +1071,11 @@ def _fit_final_severity_model(
     rng = np.random.default_rng(seed)
     defects = severity_frame["matched_source_id"].unique()
     rng.shuffle(defects)
-    n_calib = max(1, round(len(defects) * CONFORMAL_CALIB_FRACTION)) if len(defects) > 1 else 0
+    n_calib = (
+        max(1, round(len(defects) * CONFORMAL_CALIB_FRACTION))
+        if len(defects) > 1
+        else 0
+    )
     calib_defects = set(defects[:n_calib])
     train = severity_frame[~severity_frame["matched_source_id"].isin(calib_defects)]
     calib = severity_frame[severity_frame["matched_source_id"].isin(calib_defects)]
@@ -865,15 +1084,18 @@ def _fit_final_severity_model(
 
     sev_cfg = cfg.base.model.severity
     model = SeverityModel(
-        feature_cols=feature_cols, quantiles=tuple(sev_cfg["quantiles"]), conformal_alpha=sev_cfg["conformal_alpha"],
-        seed=seed, lgbm_cfg=cfg.base.model.lightgbm.model_dump(),
+        feature_cols=feature_cols,
+        quantiles=tuple(sev_cfg["quantiles"]),
+        conformal_alpha=sev_cfg["conformal_alpha"],
+        seed=seed,
+        lgbm_cfg=cfg.base.model.lightgbm.model_dump(),
         min_child_samples=sev_cfg.get("min_child_samples", 3),
         n_estimators=sev_cfg.get("n_estimators", 50),
         num_leaves=sev_cfg.get("num_leaves", 7),
     ).fit(train, train["y_true"].to_numpy(), calib, calib["y_true"].to_numpy())
-    baseline = GlobalMeanSeverityBaseline(conformal_alpha=sev_cfg["conformal_alpha"]).fit(
-        train["y_true"].to_numpy(), calib["y_true"].to_numpy()
-    )
+    baseline = GlobalMeanSeverityBaseline(
+        conformal_alpha=sev_cfg["conformal_alpha"]
+    ).fit(train["y_true"].to_numpy(), calib["y_true"].to_numpy())
     return model, baseline
 
 
@@ -899,7 +1121,9 @@ def _fit_final_classify_model(
         train, calib = classify_frame, classify_frame.iloc[0:0]
 
     model = ClassifyModel(
-        feature_cols=feature_cols, classes=CLASSIFY_CLASSES, seed=seed,
+        feature_cols=feature_cols,
+        classes=CLASSIFY_CLASSES,
+        seed=seed,
         lgbm_cfg={
             **cfg.base.model.lightgbm.model_dump(),
             "n_estimators": classify_cfg.get("n_estimators", 50),
@@ -907,8 +1131,12 @@ def _fit_final_classify_model(
         },
         class_weight=classify_cfg.get("class_weight", "balanced"),
         min_child_samples=classify_cfg.get("min_child_samples", 3),
-    ).fit(train, train["defect_type"].to_numpy(), calib, calib["defect_type"].to_numpy())
-    baseline = MajorityClassBaseline(classes=CLASSIFY_CLASSES).fit(train["defect_type"].to_numpy())
+    ).fit(
+        train, train["defect_type"].to_numpy(), calib, calib["defect_type"].to_numpy()
+    )
+    baseline = MajorityClassBaseline(classes=CLASSIFY_CLASSES).fit(
+        train["defect_type"].to_numpy()
+    )
     return model, baseline
 
 
@@ -965,18 +1193,25 @@ def _log_and_persist(
         for model_name in ("mad", "isolation_forest"):
             m = result[model_name]
             for metric_name in (
-                "recall_at_budget", "false_dig_rate", "interference_dig_fraction",
-                "localisation_error_m", "localisation_error_cm",
+                "recall_at_budget",
+                "false_dig_rate",
+                "interference_dig_fraction",
+                "localisation_error_m",
+                "localisation_error_cm",
             ):
                 point, lo, hi = m[metric_name]
                 mlflow.log_metric(f"{model_name}_{metric_name}", point)
                 mlflow.log_metric(f"{model_name}_{metric_name}_lo", lo)
                 mlflow.log_metric(f"{model_name}_{metric_name}_hi", hi)
             mlflow.log_metric(f"{model_name}_pr_auc", m["pr_auc"])
-        mlflow.log_metric("recall_gap_if_minus_mad", result["recall_gap_if_minus_mad"][0])
+        mlflow.log_metric(
+            "recall_gap_if_minus_mad", result["recall_gap_if_minus_mad"][0]
+        )
         mlflow.log_metric("recall_gap_lo", result["recall_gap_if_minus_mad"][1])
         mlflow.log_metric("gate_passed", int(result["gate_passed"]))
-        mlflow.log_metric("interference_attributable", int(result["interference_attributable"]))
+        mlflow.log_metric(
+            "interference_attributable", int(result["interference_attributable"])
+        )
         mlflow.log_metric("n_severity_samples", result["n_severity_samples"])
 
         if "severity" in result:
@@ -987,8 +1222,12 @@ def _log_and_persist(
                     mlflow.log_metric(f"{model_name}_{metric_name}", point)
                     mlflow.log_metric(f"{model_name}_{metric_name}_lo", lo)
                     mlflow.log_metric(f"{model_name}_{metric_name}_hi", hi)
-            mlflow.log_metric("severity_gate_passed", int(result["severity_gate_passed"]))
-            mlflow.log_dict(result["severity_mae_by_decile"], "severity_mae_by_decile.json")
+            mlflow.log_metric(
+                "severity_gate_passed", int(result["severity_gate_passed"])
+            )
+            mlflow.log_dict(
+                result["severity_mae_by_decile"], "severity_mae_by_decile.json"
+            )
 
         mlflow.log_metric("n_classify_samples", result["n_classify_samples"])
         if "classify" in result:
@@ -1003,7 +1242,10 @@ def _log_and_persist(
                     mlflow.log_metric(f"{model_name}_{metric_name}", point)
                     mlflow.log_metric(f"{model_name}_{metric_name}_lo", lo)
                     mlflow.log_metric(f"{model_name}_{metric_name}_hi", hi)
-            mlflow.log_metric("classify_recall_gate_passed", int(result["classify_recall_gate_passed"]))
+            mlflow.log_metric(
+                "classify_recall_gate_passed",
+                int(result["classify_recall_gate_passed"]),
+            )
             mlflow.log_dict(result["classify_reliability"], "classify_reliability.json")
 
         dq_rows = conn.execute(
@@ -1012,12 +1254,20 @@ def _log_and_persist(
             survey_ids,
         ).fetchall()
         mlflow.log_dict(
-            {"checks": [dict(zip(("survey_id", "check_name", "status", "n_affected"), r)) for r in dq_rows]},
+            {
+                "checks": [
+                    dict(zip(("survey_id", "check_name", "status", "n_affected"), r))
+                    for r in dq_rows
+                ]
+            },
             "dq_report.json",
         )
 
         fig, ax = plt.subplots(figsize=(6, 5))
-        for model_name, score_col in (("MAD", "score_mad"), ("IsolationForest", "score_if")):
+        for model_name, score_col in (
+            ("MAD", "score_mad"),
+            ("IsolationForest", "score_if"),
+        ):
             y_true = corpus["defect"].to_numpy()
             y_score = corpus[score_col].to_numpy()
             if len(np.unique(y_true)) > 1:
@@ -1025,14 +1275,18 @@ def _log_and_persist(
                 ax.plot(recall, precision, label=model_name)
         ax.set_xlabel("recall (row-level, diagnostic only)")
         ax.set_ylabel("precision")
-        ax.set_title("Stage 3: row-level PR curve (indication-level recall@budget is the gate)")
+        ax.set_title(
+            "Stage 3: row-level PR curve (indication-level recall@budget is the gate)"
+        )
         ax.legend()
         mlflow.log_figure(fig, "pr_curve.png")
         plt.close(fig)
 
         # Refit on the FULL corpus -- the model that actually ships.
         mad_final = MADBaseline(residual_col="r_mid_nt").fit(corpus)
-        mad_final_threshold = calibrated_threshold(mad_final.score(corpus), cfg.base.model.anomaly["contamination"])
+        mad_final_threshold = calibrated_threshold(
+            mad_final.score(corpus), cfg.base.model.anomaly["contamination"]
+        )
         iso_final = IsolationForestAnomalyModel(
             feature_cols=feature_cols,
             contamination=cfg.base.model.anomaly["contamination"],
@@ -1050,7 +1304,9 @@ def _log_and_persist(
         truth_as_of = now.isoformat()
         feature_summary = training_feature_summary(corpus, feature_cols, seed=cfg.seed)
         prediction_reference = training_prediction_reference(
-            result["indications_per_km"], result["p_defect_cal_sample"], seed=cfg.seed,
+            result["indications_per_km"],
+            result["p_defect_cal_sample"],
+            seed=cfg.seed,
         )
 
         for model_version, model_obj, model_kind, threshold in (
@@ -1077,15 +1333,25 @@ def _log_and_persist(
                     "training_prediction_reference": prediction_reference,
                 },
             )
-            metrics_for_model = result["mad" if model_kind == "mad" else "isolation_forest"]
+            metrics_for_model = result[
+                "mad" if model_kind == "mad" else "isolation_forest"
+            ]
             conn.execute(
                 "INSERT OR REPLACE INTO model_run (model_version, task, mlflow_run_id, git_sha, "
                 "config_sha256, data_sha256, feature_version, truth_as_of, trained_at, "
                 "metrics_json, artifact_uri, final_test_uses) VALUES (?,?,?,?,?,?,?,?,?,?,?,0)",
                 (
-                    model_version, "anomaly", run.info.run_id, git_sha, cfg.config_sha256,
-                    corpus_data_sha256, cfg.base.features.version, truth_as_of, now.isoformat(),
-                    json.dumps(metrics_for_model, default=list), str(artifact_path),
+                    model_version,
+                    "anomaly",
+                    run.info.run_id,
+                    git_sha,
+                    cfg.config_sha256,
+                    corpus_data_sha256,
+                    cfg.base.features.version,
+                    truth_as_of,
+                    now.isoformat(),
+                    json.dumps(metrics_for_model, default=list),
+                    str(artifact_path),
                 ),
             )
         conn.commit()
@@ -1094,7 +1360,9 @@ def _log_and_persist(
         # enough matched, severity-labelled data to do so at all.
         severity_version = None
         sev_feature_cols = [*feature_cols, "extent_m"]
-        sev_final, _sev_baseline_final = _fit_final_severity_model(severity_frame, sev_feature_cols, cfg, cfg.seed)
+        sev_final, _sev_baseline_final = _fit_final_severity_model(
+            severity_frame, sev_feature_cols, cfg, cfg.seed
+        )
         if sev_final is not None:
             severity_version = f"severity-lgbm-{date_tag}-{short_sha}"
             baseline_version = f"severity-mean-{date_tag}-{short_sha}"
@@ -1122,9 +1390,17 @@ def _log_and_persist(
                 "config_sha256, data_sha256, feature_version, truth_as_of, trained_at, "
                 "metrics_json, artifact_uri, final_test_uses) VALUES (?,?,?,?,?,?,?,?,?,?,?,0)",
                 (
-                    severity_version, "severity", run.info.run_id, git_sha, cfg.config_sha256,
-                    corpus_data_sha256, cfg.base.features.version, truth_as_of, now.isoformat(),
-                    json.dumps(result.get("severity", {}), default=list), str(sev_artifact_path),
+                    severity_version,
+                    "severity",
+                    run.info.run_id,
+                    git_sha,
+                    cfg.config_sha256,
+                    corpus_data_sha256,
+                    cfg.base.features.version,
+                    truth_as_of,
+                    now.isoformat(),
+                    json.dumps(result.get("severity", {}), default=list),
+                    str(sev_artifact_path),
                 ),
             )
             # baseline logged for comparison/audit only -- not referenced by any release.
@@ -1133,9 +1409,17 @@ def _log_and_persist(
                 "config_sha256, data_sha256, feature_version, truth_as_of, trained_at, "
                 "metrics_json, artifact_uri, final_test_uses) VALUES (?,?,?,?,?,?,?,?,?,?,?,0)",
                 (
-                    baseline_version, "severity", run.info.run_id, git_sha, cfg.config_sha256,
-                    corpus_data_sha256, cfg.base.features.version, truth_as_of, now.isoformat(),
-                    json.dumps(result.get("severity_baseline", {}), default=list), "n/a (baseline, no artifact)",
+                    baseline_version,
+                    "severity",
+                    run.info.run_id,
+                    git_sha,
+                    cfg.config_sha256,
+                    corpus_data_sha256,
+                    cfg.base.features.version,
+                    truth_as_of,
+                    now.isoformat(),
+                    json.dumps(result.get("severity_baseline", {}), default=list),
+                    "n/a (baseline, no artifact)",
                 ),
             )
         conn.commit()
@@ -1153,10 +1437,13 @@ def _log_and_persist(
             # the FINAL model, not a CV fold's, since this is the gate on what
             # actually ships.
             shap_importance = _lightgbm_shap_importance(classify_final, classify_frame)
-            shap_check = shap_denylist_check(shap_importance, CLASSIFY_DENYLIST, top_k=10)
+            shap_check = shap_denylist_check(
+                shap_importance, CLASSIFY_DENYLIST, top_k=10
+            )
             result["classify_shap_check"] = shap_check
             result["classify_gate_passed"] = (
-                result.get("classify_recall_gate_passed", False) and shap_check["passed"]
+                result.get("classify_recall_gate_passed", False)
+                and shap_check["passed"]
             )
             mlflow.log_metric("classify_shap_check_passed", int(shap_check["passed"]))
             mlflow.log_dict(shap_check, "classify_shap_denylist_check.json")
@@ -1172,7 +1459,9 @@ def _log_and_persist(
 
             pred_type_full, _ = classify_final.predict(classify_frame)
             mlflow.log_dict(
-                _explain_indications_sample(classify_final, classify_frame, pred_type_full),
+                _explain_indications_sample(
+                    classify_final, classify_frame, pred_type_full
+                ),
                 "classify_shap_examples.json",
             )
 
@@ -1204,9 +1493,17 @@ def _log_and_persist(
                 "config_sha256, data_sha256, feature_version, truth_as_of, trained_at, "
                 "metrics_json, artifact_uri, final_test_uses) VALUES (?,?,?,?,?,?,?,?,?,?,?,0)",
                 (
-                    classify_version, "classify", run.info.run_id, git_sha, cfg.config_sha256,
-                    corpus_data_sha256, cfg.base.features.version, truth_as_of, now.isoformat(),
-                    json.dumps(result.get("classify", {}), default=list), str(classify_artifact_path),
+                    classify_version,
+                    "classify",
+                    run.info.run_id,
+                    git_sha,
+                    cfg.config_sha256,
+                    corpus_data_sha256,
+                    cfg.base.features.version,
+                    truth_as_of,
+                    now.isoformat(),
+                    json.dumps(result.get("classify", {}), default=list),
+                    str(classify_artifact_path),
                 ),
             )
             # baseline logged for comparison/audit only -- not referenced by any release.
@@ -1215,9 +1512,17 @@ def _log_and_persist(
                 "config_sha256, data_sha256, feature_version, truth_as_of, trained_at, "
                 "metrics_json, artifact_uri, final_test_uses) VALUES (?,?,?,?,?,?,?,?,?,?,?,0)",
                 (
-                    classify_baseline_version, "classify", run.info.run_id, git_sha, cfg.config_sha256,
-                    corpus_data_sha256, cfg.base.features.version, truth_as_of, now.isoformat(),
-                    json.dumps(result.get("classify_baseline", {}), default=list), "n/a (baseline, no artifact)",
+                    classify_baseline_version,
+                    "classify",
+                    run.info.run_id,
+                    git_sha,
+                    cfg.config_sha256,
+                    corpus_data_sha256,
+                    cfg.base.features.version,
+                    truth_as_of,
+                    now.isoformat(),
+                    json.dumps(result.get("classify_baseline", {}), default=list),
+                    "n/a (baseline, no artifact)",
                 ),
             )
         conn.commit()
@@ -1228,8 +1533,16 @@ def _log_and_persist(
             "severity_version, classify_version, growth_version, feature_version, "
             "schema_version, container_digest, released_at, alias) VALUES (?,?,?,?,?,?,?,?,?,?)",
             (
-                pipeline_version, if_version, severity_version, classify_version, None, cfg.base.features.version,
-                cfg.base.schema_version, "local-dev", now.isoformat(), "challenger",
+                pipeline_version,
+                if_version,
+                severity_version,
+                classify_version,
+                None,
+                cfg.base.features.version,
+                cfg.base.schema_version,
+                "local-dev",
+                now.isoformat(),
+                "challenger",
             ),
         )
         conn.commit()
@@ -1238,11 +1551,17 @@ def _log_and_persist(
         write_model_card(
             model_card_path,
             provenance={
-                "pipeline_version": pipeline_version, "config_sha256": cfg.config_sha256,
-                "git_sha": git_sha, "data_sha256": corpus_data_sha256,
-                "feature_version": cfg.base.features.version, "schema_version": cfg.base.schema_version,
-                "n_defects": result["n_defects"], "n_surveys": result["n_surveys"],
-                "consequence_proxy": cfg.base.model.classify.get("consequence_proxy", {}),
+                "pipeline_version": pipeline_version,
+                "config_sha256": cfg.config_sha256,
+                "git_sha": git_sha,
+                "data_sha256": corpus_data_sha256,
+                "feature_version": cfg.base.features.version,
+                "schema_version": cfg.base.schema_version,
+                "n_defects": result["n_defects"],
+                "n_surveys": result["n_surveys"],
+                "consequence_proxy": cfg.base.model.classify.get(
+                    "consequence_proxy", {}
+                ),
             },
             result=result,
         )
@@ -1257,9 +1576,15 @@ def _log_and_persist(
         sev_cfg = cfg.base.model.severity
         all_indications = []
         for survey_id, survey_rows in corpus.groupby("survey_id"):
-            survey_rows = survey_rows.sort_values("sample_idx").rename(columns={"_final_score": "_score"})
+            survey_rows = survey_rows.sort_values("sample_idx").rename(
+                columns={"_final_score": "_score"}
+            )
             indications = cluster_indications(
-                survey_rows, "_score", 0.0, survey_id=str(survey_id), pipeline_version=pipeline_version
+                survey_rows,
+                "_score",
+                0.0,
+                survey_id=str(survey_id),
+                pipeline_version=pipeline_version,
             )
             # Fill Stage 4/5 fields here too, with the SAME final models just
             # fit above -- not just on a later `lsm predict`. write_indications
@@ -1270,18 +1595,32 @@ def _log_and_persist(
             # anomaly-only forever.
             if sev_final is not None:
                 indications = attach_severity(
-                    indications, survey_rows, sev_final, feature_cols,
+                    indications,
+                    survey_rows,
+                    sev_final,
+                    feature_cols,
                     nominal_coverage=1.0 - sev_cfg["conformal_alpha"],
                 )
             if classify_final is not None:
                 indications = attach_classification(
-                    indications, survey_rows, classify_final, defect_calibrator,
-                    feature_cols, cfg.base.model.classify["consequence_proxy"],
+                    indications,
+                    survey_rows,
+                    classify_final,
+                    defect_calibrator,
+                    feature_cols,
+                    cfg.base.model.classify["consequence_proxy"],
                 )
             all_indications.append(indications)
-        indications_df = pd.concat(all_indications, ignore_index=True) if all_indications else pd.DataFrame()
+        indications_df = (
+            pd.concat(all_indications, ignore_index=True)
+            if all_indications
+            else pd.DataFrame()
+        )
         n_written = write_indications(conn, indications_df)
-        mlflow.log_dict({"indications": indications_df.to_dict(orient="records")}, "indications.json")
+        mlflow.log_dict(
+            {"indications": indications_df.to_dict(orient="records")},
+            "indications.json",
+        )
         mlflow.log_metric("n_indications_written", n_written)
 
     log.info(
@@ -1300,8 +1639,13 @@ def _print_report(result: dict) -> None:
         point, lo, hi = triple
         return f"  {name:28s} {point:6.3f}  [{lo:.3f}, {hi:.3f}]"
 
-    print("\n=== Stage 3: MAD baseline vs IsolationForest (grouped CV, out-of-fold) ===")
-    for model_name, label in (("mad", "MAD baseline"), ("isolation_forest", "IsolationForest")):
+    print(
+        "\n=== Stage 3: MAD baseline vs IsolationForest (grouped CV, out-of-fold) ==="
+    )
+    for model_name, label in (
+        ("mad", "MAD baseline"),
+        ("isolation_forest", "IsolationForest"),
+    ):
         m = result[model_name]
         print(f"\n{label}:")
         print(fmt("recall @ dig budget", m["recall_at_budget"]))
@@ -1314,25 +1658,42 @@ def _print_report(result: dict) -> None:
     point, lo, hi = result["recall_gap_if_minus_mad"]
     print(f"\nRecall gap (IsolationForest - MAD): {point:.3f}  [{lo:.3f}, {hi:.3f}]")
     verdict = "PASSES" if result["gate_passed"] else "DOES NOT PASS"
-    print(f"Stage 3 gate (>= {GATE_RECALL_MARGIN:.2f} recall gap, at the CI lower bound): {verdict}")
+    print(
+        f"Stage 3 gate (>= {GATE_RECALL_MARGIN:.2f} recall gap, at the CI lower bound): {verdict}"
+    )
 
     ipoint, ilo, ihi = result["interference_gap_mad_minus_if"]
-    print(f"\nInterference-dig-fraction gap (MAD - IsolationForest): {ipoint:.3f}  [{ilo:.3f}, {ihi:.3f}]")
+    print(
+        f"\nInterference-dig-fraction gap (MAD - IsolationForest): {ipoint:.3f}  [{ilo:.3f}, {ihi:.3f}]"
+    )
     if result["interference_attributable"]:
-        print("-> the recall gap IS attributable to interference rejection: MAD wastes "
-              "more of its dig budget on interference than IsolationForest does.")
+        print(
+            "-> the recall gap IS attributable to interference rejection: MAD wastes "
+            "more of its dig budget on interference than IsolationForest does."
+        )
     else:
-        print("-> the recall gap is NOT clearly attributable to interference rejection at this "
-              "confidence level -- reporting this honestly, as the gate requires, rather than "
-              "claiming a mechanism the data doesn't support.")
-    print(f"\n({result['n_defects']} physical defects, {result['n_surveys']} surveys evaluated)")
+        print(
+            "-> the recall gap is NOT clearly attributable to interference rejection at this "
+            "confidence level -- reporting this honestly, as the gate requires, rather than "
+            "claiming a mechanism the data doesn't support."
+        )
+    print(
+        f"\n({result['n_defects']} physical defects, {result['n_surveys']} surveys evaluated)"
+    )
 
-    print("\n=== Stage 4: severity -- LightGBM quantile + split conformal vs global-mean baseline ===")
+    print(
+        "\n=== Stage 4: severity -- LightGBM quantile + split conformal vs global-mean baseline ==="
+    )
     if "severity" not in result:
-        print(f"  Skipped: only {result['n_severity_samples']} matched, severity-labelled indications "
-              "-- too few (or too few distinct defects) to fit and calibrate at all.")
+        print(
+            f"  Skipped: only {result['n_severity_samples']} matched, severity-labelled indications "
+            "-- too few (or too few distinct defects) to fit and calibrate at all."
+        )
     else:
-        for model_name, label in (("severity_baseline", "Global-mean baseline"), ("severity", "LightGBM CQR")):
+        for model_name, label in (
+            ("severity_baseline", "Global-mean baseline"),
+            ("severity", "LightGBM CQR"),
+        ):
             m = result[model_name]
             print(f"\n{label}:")
             print(fmt("coverage @ 90% nominal", m["coverage"]))
@@ -1340,18 +1701,29 @@ def _print_report(result: dict) -> None:
             print(fmt("mean interval width", m["interval_width"]))
 
         verdict = "PASSES" if result["severity_gate_passed"] else "DOES NOT PASS"
-        print(f"\nStage 4 gate (coverage in [{GATE_SEVERITY_COVERAGE_RANGE[0]}, "
-              f"{GATE_SEVERITY_COVERAGE_RANGE[1]}]): {verdict}")
+        print(
+            f"\nStage 4 gate (coverage in [{GATE_SEVERITY_COVERAGE_RANGE[0]}, "
+            f"{GATE_SEVERITY_COVERAGE_RANGE[1]}]): {verdict}"
+        )
         print(f"MAE by severity decile: {result['severity_mae_by_decile']}")
-        print(f"(n={result['n_severity_samples']} matched, severity-labelled indications)")
+        print(
+            f"(n={result['n_severity_samples']} matched, severity-labelled indications)"
+        )
 
-    print("\n=== Stage 5: classification -- LightGBM multiclass + isotonic calibration vs majority-class baseline ===")
+    print(
+        "\n=== Stage 5: classification -- LightGBM multiclass + isotonic calibration vs majority-class baseline ==="
+    )
     if "classify" not in result:
-        print(f"  Skipped: only {result['n_classify_samples']} matched, classifiable indications "
-              "-- too few (or too few distinct classes) to fit and calibrate at all.")
+        print(
+            f"  Skipped: only {result['n_classify_samples']} matched, classifiable indications "
+            "-- too few (or too few distinct classes) to fit and calibrate at all."
+        )
         return
 
-    for model_name, label in (("classify_baseline", "Majority-class baseline"), ("classify", "LightGBM multiclass")):
+    for model_name, label in (
+        ("classify_baseline", "Majority-class baseline"),
+        ("classify", "LightGBM multiclass"),
+    ):
         m = result[model_name]
         print(f"\n{label}:")
         for cls, triple in m["per_class_recall"].items():
@@ -1359,17 +1731,29 @@ def _print_report(result: dict) -> None:
         print(fmt("interference precision", m["interference_precision"]))
         print(fmt("Brier score", m["brier"]))
 
-    scc_point, scc_lo, _ = result["classify"]["per_class_recall"].get("scc", (float("nan"),) * 3)
+    scc_point, scc_lo, _ = result["classify"]["per_class_recall"].get(
+        "scc", (float("nan"),) * 3
+    )
     verdict = "PASSES" if result["classify_recall_gate_passed"] else "DOES NOT PASS"
     print(f"\nSCC recall: {scc_point:.3f} [CI lower bound {scc_lo:.3f}]")
-    print(f"Stage 5 recall gate (SCC recall >= {GATE_SCC_RECALL:.2f} at the CI lower bound): {verdict}")
+    print(
+        f"Stage 5 recall gate (SCC recall >= {GATE_SCC_RECALL:.2f} at the CI lower bound): {verdict}"
+    )
 
     if "classify_shap_check" in result:
-        shap_verdict = "PASSES" if result["classify_shap_check"]["passed"] else "DOES NOT PASS"
-        print(f"Stage 5 physics-consistency gate (no {CLASSIFY_DENYLIST} feature in top-10 "
-              f"by contribution): {shap_verdict}")
+        shap_verdict = (
+            "PASSES" if result["classify_shap_check"]["passed"] else "DOES NOT PASS"
+        )
+        print(
+            f"Stage 5 physics-consistency gate (no {CLASSIFY_DENYLIST} feature in top-10 "
+            f"by contribution): {shap_verdict}"
+        )
         if not result["classify_shap_check"]["passed"]:
-            print(f"  Leaked features: {result['classify_shap_check']['leaked_denylist_features']}")
-        overall_verdict = "PASSES" if result.get("classify_gate_passed") else "DOES NOT PASS"
+            print(
+                f"  Leaked features: {result['classify_shap_check']['leaked_denylist_features']}"
+            )
+        overall_verdict = (
+            "PASSES" if result.get("classify_gate_passed") else "DOES NOT PASS"
+        )
         print(f"Stage 5 gate overall: {overall_verdict}")
     print(f"(n={result['n_classify_samples']} matched, classifiable indications)")

@@ -109,10 +109,18 @@ def init_live_session(base_cfg: Config) -> tuple[sqlite3.Connection, Config]:
             "config_sha256, data_sha256, feature_version, truth_as_of, trained_at, "
             "metrics_json, artifact_uri, final_test_uses) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
             (
-                mr["model_version"], mr["task"], mr["mlflow_run_id"], mr["git_sha"],
-                mr["config_sha256"], mr["data_sha256"], mr["feature_version"],
-                mr["truth_as_of"], mr["trained_at"], mr["metrics_json"],
-                mr["artifact_uri"], mr["final_test_uses"],
+                mr["model_version"],
+                mr["task"],
+                mr["mlflow_run_id"],
+                mr["git_sha"],
+                mr["config_sha256"],
+                mr["data_sha256"],
+                mr["feature_version"],
+                mr["truth_as_of"],
+                mr["trained_at"],
+                mr["metrics_json"],
+                mr["artifact_uri"],
+                mr["final_test_uses"],
             ),
         )
     pr = manifest["pipeline_release"]
@@ -121,16 +129,25 @@ def init_live_session(base_cfg: Config) -> tuple[sqlite3.Connection, Config]:
         "classify_version, growth_version, feature_version, schema_version, "
         "container_digest, released_at, alias) VALUES (?,?,?,?,?,?,?,?,?,?)",
         (
-            pr["pipeline_version"], pr["anomaly_version"], pr["severity_version"],
-            pr["classify_version"], pr["growth_version"], pr["feature_version"],
-            pr["schema_version"], pr["container_digest"], pr["released_at"], pr["alias"],
+            pr["pipeline_version"],
+            pr["anomaly_version"],
+            pr["severity_version"],
+            pr["classify_version"],
+            pr["growth_version"],
+            pr["feature_version"],
+            pr["schema_version"],
+            pr["container_digest"],
+            pr["released_at"],
+            pr["alias"],
         ),
     )
     conn.commit()
     return conn, cfg
 
 
-def run_live_scenario(conn: sqlite3.Connection, cfg: Config, survey_id: str) -> tuple[DQReport, pd.DataFrame | None]:
+def run_live_scenario(
+    conn: sqlite3.Connection, cfg: Config, survey_id: str
+) -> tuple[DQReport, pd.DataFrame | None]:
     """Load one baked demo survey and run it through the real
     register -> validate -> features -> score path, live."""
     raw_path = SERVING_DIR / "demo_surveys" / f"{survey_id}.parquet"
@@ -144,7 +161,12 @@ def load_live_features(cfg: Config, survey_id: str) -> pd.DataFrame | None:
     not the intermediate detrended/gradient features Beat 2 plots."""
     line_id, run_part = survey_id.split("_R")
     path = (
-        feature_store_dir(cfg.env.storage.feature_dir, cfg.base.features.version, line_id, int(run_part))
+        feature_store_dir(
+            cfg.env.storage.feature_dir,
+            cfg.base.features.version,
+            line_id,
+            int(run_part),
+        )
         / "features.parquet"
     )
     return pd.read_parquet(path) if path.exists() else None

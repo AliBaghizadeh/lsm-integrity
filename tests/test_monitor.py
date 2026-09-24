@@ -46,7 +46,9 @@ def _train_a_pipeline(cfg):
     return conn
 
 
-def _write_and_predict_shifted_survey(cfg, conn, line_id="LINE000", run_id=3, bx_offset=1000.0):
+def _write_and_predict_shifted_survey(
+    cfg, conn, line_id="LINE000", run_id=3, bx_offset=1000.0
+):
     """A 4th run of the ALREADY-TRAINED line, with a deliberately shifted DC
     background on bx_nt -- a background-regime check needs same-line HISTORY
     to compare against (background_regime_shift, same as validate.py's own
@@ -59,7 +61,10 @@ def _write_and_predict_shifted_survey(cfg, conn, line_id="LINE000", run_id=3, bx
     `generate_one_survey` helper post-processes an already-generated file.
     """
     data_cfg = cfg.base.data.model_copy(deep=True)
-    data_cfg.background_nT = [data_cfg.background_nT[0] + bx_offset, *data_cfg.background_nT[1:]]
+    data_cfg.background_nT = [
+        data_cfg.background_nT[0] + bx_offset,
+        *data_cfg.background_nT[1:],
+    ]
 
     rng = np.random.default_rng(cfg.seed)  # matches generate_all's line_idx=0 seed
     features = _build_features(data_cfg, rng)
@@ -80,15 +85,29 @@ def _write_and_predict_shifted_survey(cfg, conn, line_id="LINE000", run_id=3, bx
     # Rig-v2 scalar-rig raw columns (RAW_COLUMNS_SCALAR in generate.py) --
     # the old bx/by/bz(2)_nt vector-axis columns are gone.
     write_cols = [
-        "sample_idx", "t_s", "chainage_true_m", "chainage_provisional_m",
-        "lat", "lon", "b_lo_nt", "b_mid_nt", "b_hi_nt",
-        "defect", "defect_type", "severity_smys", "interference", "girth_weld",
-        "line_id", "run_id",
+        "sample_idx",
+        "t_s",
+        "chainage_true_m",
+        "chainage_provisional_m",
+        "lat",
+        "lon",
+        "b_lo_nt",
+        "b_mid_nt",
+        "b_hi_nt",
+        "defect",
+        "defect_type",
+        "severity_smys",
+        "interference",
+        "girth_weld",
+        "line_id",
+        "run_id",
     ]
     out_dir = Path(cfg.env.storage.raw_dir) / f"line_id={line_id}" / f"run_id={run_id}"
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / "survey.parquet"
-    df[write_cols].sort_values("sample_idx").to_parquet(out_path, index=False, compression="zstd")
+    df[write_cols].sort_values("sample_idx").to_parquet(
+        out_path, index=False, compression="zstd"
+    )
 
     sr = load_survey_result(out_path, data_cfg.step_m, data_cfg.walk.standoff_m)
     _status, _report = run_survey_pipeline(conn, sr, cfg)

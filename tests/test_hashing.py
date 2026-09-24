@@ -63,7 +63,9 @@ def test_file_hash_differs_from_content_hash_semantics(tmp_path):
     p1 = tmp_path / "a.parquet"
     p2 = tmp_path / "b.parquet"
     df.to_parquet(p1, index=False)
-    df[df.columns[::-1]].to_parquet(p2, index=False)  # same content, different column order
+    df[df.columns[::-1]].to_parquet(
+        p2, index=False
+    )  # same content, different column order
 
     assert file_sha256(p1) != file_sha256(p2)
     assert content_sha256(pd.read_parquet(p1)) == content_sha256(pd.read_parquet(p2))

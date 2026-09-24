@@ -96,7 +96,10 @@ def cluster_indications(
     above = scores > threshold
 
     edges = np.flatnonzero(np.diff(np.concatenate([[0], above.astype(int), [0]])))
-    starts, ends = edges[::2], edges[1::2]  # [start, end) row-index pairs, end exclusive
+    starts, ends = (
+        edges[::2],
+        edges[1::2],
+    )  # [start, end) row-index pairs, end exclusive
 
     now = dt.datetime.now(dt.UTC).isoformat()
     rows = []
@@ -108,7 +111,10 @@ def cluster_indications(
         rows.append(
             {
                 "indication_id": _make_indication_id(
-                    survey_id, pipeline_version, float(peak["chainage_m"]), int(peak["sample_idx"])
+                    survey_id,
+                    pipeline_version,
+                    float(peak["chainage_m"]),
+                    int(peak["sample_idx"]),
                 ),
                 "survey_id": survey_id,
                 "pipeline_version": pipeline_version,
@@ -116,8 +122,12 @@ def cluster_indications(
                 "chainage_peak_m": float(peak["chainage_m"]),
                 "chainage_start_m": float(run["chainage_m"].min()),
                 "chainage_end_m": float(run["chainage_m"].max()),
-                "lat": float(peak["lat"]) if "lat" in d.columns and pd.notna(peak.get("lat")) else None,
-                "lon": float(peak["lon"]) if "lon" in d.columns and pd.notna(peak.get("lon")) else None,
+                "lat": float(peak["lat"])
+                if "lat" in d.columns and pd.notna(peak.get("lat"))
+                else None,
+                "lon": float(peak["lon"])
+                if "lon" in d.columns and pd.notna(peak.get("lon"))
+                else None,
                 "anomaly_score": peak_score,
                 "p_defect_cal": float(np.mean(scores <= peak_score)),
                 # Stage 4/5 fields -- filled in later by attach_severity() /
@@ -179,14 +189,22 @@ def block_risk_heatmap(
     if indications is None or indications.empty:
         return pd.DataFrame(columns=BLOCK_HEATMAP_COLUMNS)
 
-    has_risk = "risk_score" in indications.columns and indications["risk_score"].notna().any()
+    has_risk = (
+        "risk_score" in indications.columns and indications["risk_score"].notna().any()
+    )
     metric = "risk_score" if has_risk else "anomaly_score"
     if metric not in indications.columns:
         return pd.DataFrame(columns=BLOCK_HEATMAP_COLUMNS)
 
     df = (
         indications[[line_id_col, chainage_col, metric]]
-        .rename(columns={line_id_col: "line_id", chainage_col: "chainage_peak_m", metric: "value"})
+        .rename(
+            columns={
+                line_id_col: "line_id",
+                chainage_col: "chainage_peak_m",
+                metric: "value",
+            }
+        )
         .dropna(subset=["line_id", "chainage_peak_m", "value"])
     )
     if df.empty:

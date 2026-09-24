@@ -60,7 +60,9 @@ class GlobalMeanSeverityBaseline:
         self.mean_: float | None = None
         self.margin_: float | None = None
 
-    def fit(self, y_train: np.ndarray, y_calib: np.ndarray) -> GlobalMeanSeverityBaseline:
+    def fit(
+        self, y_train: np.ndarray, y_calib: np.ndarray
+    ) -> GlobalMeanSeverityBaseline:
         self.mean_ = float(np.mean(y_train))
         residuals = np.abs(y_calib - self.mean_)
         self.margin_ = conformal_margin(residuals, self.conformal_alpha)
@@ -117,7 +119,11 @@ class SeverityModel:
         )
 
     def fit(
-        self, X_train: pd.DataFrame, y_train: np.ndarray, X_calib: pd.DataFrame, y_calib: np.ndarray
+        self,
+        X_train: pd.DataFrame,
+        y_train: np.ndarray,
+        X_calib: pd.DataFrame,
+        y_calib: np.ndarray,
     ) -> SeverityModel:
         X_train_mat = X_train[self.feature_cols].fillna(0.0)
         for q in (self.q_lo, self.q_med, self.q_hi):
@@ -133,14 +139,20 @@ class SeverityModel:
         # defence-in-depth guard, not the primary fix.
         calib_valid = ~np.isnan(y_calib)
         if len(y_calib) > 0 and not calib_valid.all():
-            print(f"SeverityModel.fit: dropping {int((~calib_valid).sum())} calibration row(s) "
-                  "with NaN y_calib -- a NaN score would otherwise silently NaN the whole "
-                  "conformal margin.")
+            print(
+                f"SeverityModel.fit: dropping {int((~calib_valid).sum())} calibration row(s) "
+                "with NaN y_calib -- a NaN score would otherwise silently NaN the whole "
+                "conformal margin."
+            )
             X_calib, y_calib = X_calib[calib_valid], y_calib[calib_valid]
 
         if len(X_calib) > 0:
-            lo_pred = self.models[self.q_lo].predict(X_calib[self.feature_cols].fillna(0.0))
-            hi_pred = self.models[self.q_hi].predict(X_calib[self.feature_cols].fillna(0.0))
+            lo_pred = self.models[self.q_lo].predict(
+                X_calib[self.feature_cols].fillna(0.0)
+            )
+            hi_pred = self.models[self.q_hi].predict(
+                X_calib[self.feature_cols].fillna(0.0)
+            )
             # CQR nonconformity score: how far y falls outside the raw [lo, hi]
             # interval, signed so a point INSIDE the interval scores negative.
             scores = np.maximum(lo_pred - y_calib, y_calib - hi_pred)

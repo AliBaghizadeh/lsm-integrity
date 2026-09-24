@@ -67,7 +67,9 @@ def assign_fold_by_line(line_id: str, n_folds: int) -> int:
     return int(digest, 16) % n_folds
 
 
-def add_fold_column_by_line(df: pd.DataFrame, line_id_col: str, n_folds: int) -> pd.DataFrame:
+def add_fold_column_by_line(
+    df: pd.DataFrame, line_id_col: str, n_folds: int
+) -> pd.DataFrame:
     """Returns a copy of `df` with `group_key` (== line_id) and `fold` columns
     -- same two-column contract as `add_fold_column`, so downstream consumers
     (`train._run_grouped_cv`, the severity/classify fold merges) don't need to
@@ -143,7 +145,9 @@ def defect_hit_rates(
     hits = {d: 0 for d in defect_ids}
     n_runs = {d: 0 for d in defect_ids}
     for survey_id, matched in matched_by_run.items():
-        found = set(matched.loc[matched["matched_kind"] == "defect", "matched_source_id"])
+        found = set(
+            matched.loc[matched["matched_kind"] == "defect", "matched_source_id"]
+        )
         for d in defect_ids:
             if run_line_id is not None and run_line_id.get(survey_id) != defect_line[d]:
                 continue
@@ -223,7 +227,11 @@ def bootstrap_ci(
         boots[i] = compute_fn(sample)
     lo_pct = (1 - level) / 2 * 100
     hi_pct = (1 + level) / 2 * 100
-    return point, float(np.percentile(boots, lo_pct)), float(np.percentile(boots, hi_pct))
+    return (
+        point,
+        float(np.percentile(boots, lo_pct)),
+        float(np.percentile(boots, hi_pct)),
+    )
 
 
 def paired_bootstrap_ci(
@@ -248,7 +256,9 @@ def paired_bootstrap_ci(
     a = np.asarray(units_a, dtype=float)
     b = np.asarray(units_b, dtype=float)
     if len(a) != len(b):
-        raise ValueError("paired_bootstrap_ci requires index-aligned, equal-length arrays")
+        raise ValueError(
+            "paired_bootstrap_ci requires index-aligned, equal-length arrays"
+        )
     if len(a) == 0:
         return float("nan"), float("nan"), float("nan")
     point = float(np.mean(a) - np.mean(b))
@@ -260,7 +270,11 @@ def paired_bootstrap_ci(
         boots[i] = np.mean(a[idx]) - np.mean(b[idx])
     lo_pct = (1 - level) / 2 * 100
     hi_pct = (1 + level) / 2 * 100
-    return point, float(np.percentile(boots, lo_pct)), float(np.percentile(boots, hi_pct))
+    return (
+        point,
+        float(np.percentile(boots, lo_pct)),
+        float(np.percentile(boots, hi_pct)),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -268,14 +282,18 @@ def paired_bootstrap_ci(
 # ---------------------------------------------------------------------------
 
 
-def mae_by_severity_decile(y_true: np.ndarray, y_pred: np.ndarray, n_bins: int = 10) -> pd.Series:
+def mae_by_severity_decile(
+    y_true: np.ndarray, y_pred: np.ndarray, n_bins: int = 10
+) -> pd.Series:
     """MAE within each decile of TRUE severity. A single overall MAE hides a
     model that is only accurate on benign defects -- validation-and-trust.md is
     explicit that this is "useless", not just an incomplete report. With today's
     handful of matched defects, `n_bins` collapses automatically (via
     `duplicates='drop'`) rather than producing empty or duplicate-edge bins.
     """
-    df = pd.DataFrame({"y_true": y_true, "abs_err": np.abs(np.asarray(y_true) - np.asarray(y_pred))})
+    df = pd.DataFrame(
+        {"y_true": y_true, "abs_err": np.abs(np.asarray(y_true) - np.asarray(y_pred))}
+    )
     if df["y_true"].nunique() < 2:
         return pd.Series({"all": float(df["abs_err"].mean())})
     bins = min(n_bins, df["y_true"].nunique())
@@ -283,7 +301,9 @@ def mae_by_severity_decile(y_true: np.ndarray, y_pred: np.ndarray, n_bins: int =
     return df.groupby("decile", observed=True)["abs_err"].mean()
 
 
-def per_group_severity_metrics(df: pd.DataFrame, group_col: str) -> dict[str, list[float]]:
+def per_group_severity_metrics(
+    df: pd.DataFrame, group_col: str
+) -> dict[str, list[float]]:
     """`df` needs `group_col`, `y_true`, `y_pred`, `lo`, `hi` -- one row per
     matched indication. Returns per-GROUP scalar coverage/MAE/interval-width
     lists, the bootstrap unit for severity metrics (same physical-defect
@@ -292,7 +312,9 @@ def per_group_severity_metrics(df: pd.DataFrame, group_col: str) -> dict[str, li
     """
     coverage, mae, width = [], [], []
     for _, g in df.groupby(group_col):
-        coverage.append(float(np.mean((g["y_true"] >= g["lo"]) & (g["y_true"] <= g["hi"]))))
+        coverage.append(
+            float(np.mean((g["y_true"] >= g["lo"]) & (g["y_true"] <= g["hi"])))
+        )
         mae.append(float(np.mean(np.abs(g["y_true"] - g["y_pred"]))))
         width.append(float(np.mean(g["hi"] - g["lo"])))
     return {"coverage": coverage, "mae": mae, "interval_width": width}
@@ -322,7 +344,9 @@ def per_class_recall_units(
     return out
 
 
-def interference_precision_units(df: pd.DataFrame, group_col: str, true_col: str, pred_col: str) -> list[float]:
+def interference_precision_units(
+    df: pd.DataFrame, group_col: str, true_col: str, pred_col: str
+) -> list[float]:
     """Of indications PREDICTED 'interference', per-source fraction whose TRUE
     class really was interference -- the false-positive-trap converse of
     interference recall (already covered by `per_class_recall_units`)."""
@@ -335,7 +359,9 @@ def interference_precision_units(df: pd.DataFrame, group_col: str, true_col: str
     ]
 
 
-def multiclass_brier_score(y_true: np.ndarray, proba: pd.DataFrame, classes: list[str]) -> float:
+def multiclass_brier_score(
+    y_true: np.ndarray, proba: pd.DataFrame, classes: list[str]
+) -> float:
     """Mean squared error between calibrated probability and one-hot truth,
     summed over classes, averaged over rows -- the standard multiclass Brier
     score generalisation. 0 is a perfect calibrated prediction; a uniform
@@ -348,7 +374,11 @@ def multiclass_brier_score(y_true: np.ndarray, proba: pd.DataFrame, classes: lis
 
 
 def brier_by_group(
-    df: pd.DataFrame, group_col: str, true_col: str, proba_cols: list[str], classes: list[str]
+    df: pd.DataFrame,
+    group_col: str,
+    true_col: str,
+    proba_cols: list[str],
+    classes: list[str],
 ) -> list[float]:
     """Per-physical-source mean Brier score -- feed into `bootstrap_ci`, same
     grouping discipline as every other Stage 5 metric."""
@@ -358,7 +388,9 @@ def brier_by_group(
     ]
 
 
-def reliability_curve(confidences: np.ndarray, correct: np.ndarray, n_bins: int = 10) -> pd.DataFrame:
+def reliability_curve(
+    confidences: np.ndarray, correct: np.ndarray, n_bins: int = 10
+) -> pd.DataFrame:
     """Bin by predicted max-probability confidence; empirical accuracy per bin
     -- a well-calibrated classifier's points fall near the diagonal
     (confidence == accuracy). What train.py plots as the reliability diagram.
@@ -369,18 +401,25 @@ def reliability_curve(confidences: np.ndarray, correct: np.ndarray, n_bins: int 
     n_unique = df["confidence"].nunique()
     if n_unique < 2:
         return pd.DataFrame(
-            {"bin_mean_confidence": [df["confidence"].mean()], "bin_accuracy": [df["correct"].mean()],
-             "n": [len(df)]}
+            {
+                "bin_mean_confidence": [df["confidence"].mean()],
+                "bin_accuracy": [df["correct"].mean()],
+                "n": [len(df)],
+            }
         )
     bins = min(n_bins, n_unique)
     df["bin"] = pd.qcut(df["confidence"], q=bins, duplicates="drop")
     grouped = df.groupby("bin", observed=True).agg(
-        bin_mean_confidence=("confidence", "mean"), bin_accuracy=("correct", "mean"), n=("correct", "size")
+        bin_mean_confidence=("confidence", "mean"),
+        bin_accuracy=("correct", "mean"),
+        n=("correct", "size"),
     )
     return grouped.reset_index(drop=True)
 
 
-def shap_denylist_check(shap_importance: pd.Series, denylist: list[str], top_k: int = 10) -> dict:
+def shap_denylist_check(
+    shap_importance: pd.Series, denylist: list[str], top_k: int = 10
+) -> dict:
     """Pure logic, no SHAP/contribution computation itself -- takes an
     already-computed mean-|contribution| `Series` indexed by feature name.
     The physics-consistency gate: the model should key on residual amplitude/
@@ -391,7 +430,11 @@ def shap_denylist_check(shap_importance: pd.Series, denylist: list[str], top_k: 
     ranked = shap_importance.sort_values(ascending=False)
     top_features = ranked.index[:top_k].tolist()
     leaked = [f for f in top_features if f in denylist]
-    return {"top_features": top_features, "leaked_denylist_features": leaked, "passed": len(leaked) == 0}
+    return {
+        "top_features": top_features,
+        "leaked_denylist_features": leaked,
+        "passed": len(leaked) == 0,
+    }
 
 
 # -- Stage 8: drift monitoring (validation-and-trust.md Layer 4) -------------
@@ -435,8 +478,11 @@ def ks_drift(reference: np.ndarray, current: np.ndarray) -> tuple[float, float]:
 
 
 def feature_drift_report(
-    reference: dict[str, dict], current: pd.DataFrame, feature_cols: list[str],
-    psi_warn: float, psi_block: float,
+    reference: dict[str, dict],
+    current: pd.DataFrame,
+    feature_cols: list[str],
+    psi_warn: float,
+    psi_block: float,
 ) -> pd.DataFrame:
     """One row per feature: psi, ks_stat, ks_pvalue, status ('ok'|'warn'|
     'block'). `reference` is a bundle's `training_feature_summary` dict
@@ -451,16 +497,35 @@ def feature_drift_report(
         ref = reference[col]
         ref_sample = np.asarray(ref.get("sample", []), dtype=float)
         bin_edges = np.asarray(ref.get("bin_edges", []), dtype=float)
-        cur_values = current[col].dropna().to_numpy(dtype=float) if col in current.columns else np.array([])
+        cur_values = (
+            current[col].dropna().to_numpy(dtype=float)
+            if col in current.columns
+            else np.array([])
+        )
         psi_val = psi(ref_sample, cur_values, bin_edges)
         ks_stat, ks_pvalue = ks_drift(ref_sample, cur_values)
-        status = "block" if psi_val >= psi_block else "warn" if psi_val >= psi_warn else "ok"
-        rows.append({"feature": col, "psi": psi_val, "ks_stat": ks_stat, "ks_pvalue": ks_pvalue, "status": status})
-    return pd.DataFrame(rows, columns=["feature", "psi", "ks_stat", "ks_pvalue", "status"])
+        status = (
+            "block" if psi_val >= psi_block else "warn" if psi_val >= psi_warn else "ok"
+        )
+        rows.append(
+            {
+                "feature": col,
+                "psi": psi_val,
+                "ks_stat": ks_stat,
+                "ks_pvalue": ks_pvalue,
+                "status": status,
+            }
+        )
+    return pd.DataFrame(
+        rows, columns=["feature", "psi", "ks_stat", "ks_pvalue", "status"]
+    )
 
 
 def prediction_drift_report(
-    reference: dict, current_p_defect_cal: np.ndarray, current_indications_per_km: float, ratio_warn: float,
+    reference: dict,
+    current_p_defect_cal: np.ndarray,
+    current_indications_per_km: float,
+    ratio_warn: float,
 ) -> dict:
     """KS of the current survey's calibrated P(defect) against the training
     reference sample, plus the indications-per-km ratio vs the training
@@ -469,9 +534,15 @@ def prediction_drift_report(
     the ratio falls outside [1/ratio_warn, ratio_warn].
     """
     ref_sample = np.asarray(reference.get("p_defect_cal_sample", []), dtype=float)
-    ks_stat, ks_pvalue = ks_drift(ref_sample, np.asarray(current_p_defect_cal, dtype=float))
+    ks_stat, ks_pvalue = ks_drift(
+        ref_sample, np.asarray(current_p_defect_cal, dtype=float)
+    )
     ref_rate = reference.get("indications_per_km", 0.0)
-    ratio = current_indications_per_km / ref_rate if ref_rate and ref_rate > 0 else float("nan")
+    ratio = (
+        current_indications_per_km / ref_rate
+        if ref_rate and ref_rate > 0
+        else float("nan")
+    )
     flagged = not np.isnan(ratio) and not (1.0 / ratio_warn <= ratio <= ratio_warn)
     return {
         "p_defect_cal_ks_stat": ks_stat,
@@ -510,13 +581,18 @@ def background_regime_shift(
     calibration noise rather than trust a 3-point empirical estimate; not
     implemented here (Stage D re-measurement scope, not a DQ-check rewrite).
     """
-    hist_mean, hist_std = history_medians.mean(), history_medians.std().replace(0, np.nan)
+    hist_mean, hist_std = (
+        history_medians.mean(),
+        history_medians.std().replace(0, np.nan),
+    )
     z = ((current_median - hist_mean) / hist_std).abs()
     n_bad = int((z > z_threshold).fillna(False).sum())
     return {"z_scores": z.to_dict(), "n_bad": n_bad}
 
 
-def coverage_vs_nominal(y_true: np.ndarray, lo: np.ndarray, hi: np.ndarray, nominal: float) -> dict:
+def coverage_vs_nominal(
+    y_true: np.ndarray, lo: np.ndarray, hi: np.ndarray, nominal: float
+) -> dict:
     """Empirical coverage of `[lo, hi]` vs `nominal`. The Stage 8 coverage-
     tracking check: as `truth_observation` rows accumulate from the
     dig-feedback loop, re-run this; if empirical coverage drifts below
@@ -529,6 +605,16 @@ def coverage_vs_nominal(y_true: np.ndarray, lo: np.ndarray, hi: np.ndarray, nomi
     hi = np.asarray(hi, dtype=float)
     n = len(y_true)
     if n == 0:
-        return {"empirical": float("nan"), "nominal": nominal, "n": 0, "below_nominal": False}
+        return {
+            "empirical": float("nan"),
+            "nominal": nominal,
+            "n": 0,
+            "below_nominal": False,
+        }
     empirical = float(np.mean((lo <= y_true) & (y_true <= hi)))
-    return {"empirical": empirical, "nominal": nominal, "n": n, "below_nominal": empirical < nominal}
+    return {
+        "empirical": empirical,
+        "nominal": nominal,
+        "n": n,
+        "below_nominal": empirical < nominal,
+    }

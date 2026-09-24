@@ -91,18 +91,48 @@ def test_population_log_rate_recovers_growth_law(cfg):
 
     result = run_forecast(cfg, conn)
 
-    assert abs(result["growth_population_log_rate"] - math.log(cfg.base.data.growth)) < 0.1
+    assert (
+        abs(result["growth_population_log_rate"] - math.log(cfg.base.data.growth)) < 0.1
+    )
 
 
 def test_single_observation_defects_are_fully_shrunk():
-    growth_frame = pd.DataFrame([
-        {"matched_source_id": "D0", "survey_id": "S0", "run_id": 0, "y_true": 30.0, "distance_m": 0.5},
-        {"matched_source_id": "D0", "survey_id": "S1", "run_id": 1, "y_true": 34.5, "distance_m": 0.5},
-        {"matched_source_id": "D0", "survey_id": "S2", "run_id": 2, "y_true": 39.675, "distance_m": 0.5},
-        {"matched_source_id": "D1", "survey_id": "S0", "run_id": 0, "y_true": 50.0, "distance_m": 0.5},
-    ])
+    growth_frame = pd.DataFrame(
+        [
+            {
+                "matched_source_id": "D0",
+                "survey_id": "S0",
+                "run_id": 0,
+                "y_true": 30.0,
+                "distance_m": 0.5,
+            },
+            {
+                "matched_source_id": "D0",
+                "survey_id": "S1",
+                "run_id": 1,
+                "y_true": 34.5,
+                "distance_m": 0.5,
+            },
+            {
+                "matched_source_id": "D0",
+                "survey_id": "S2",
+                "run_id": 2,
+                "y_true": 39.675,
+                "distance_m": 0.5,
+            },
+            {
+                "matched_source_id": "D1",
+                "survey_id": "S0",
+                "run_id": 0,
+                "y_true": 50.0,
+                "distance_m": 0.5,
+            },
+        ]
+    )
     pop_rate, pop_var = fit_population_log_rate(growth_frame)
-    rates = fit_defect_rates(growth_frame, pop_rate, pop_var, min_observations_for_own_rate=2)
+    rates = fit_defect_rates(
+        growth_frame, pop_rate, pop_var, min_observations_for_own_rate=2
+    )
 
     single = rates[rates["matched_source_id"] == "D1"].iloc[0]
     assert single["n_obs"] == 1
@@ -137,13 +167,20 @@ def test_evaluate_growth_gate_on_synthetic_data_matching_the_generator_law():
         base = rng.uniform(20, 60)
         for run_id in range(3):
             sev = base * 1.15**run_id + rng.normal(0, 0.5)
-            rows.append({
-                "matched_source_id": f"D{i}", "survey_id": f"S_R{run_id}", "run_id": run_id,
-                "y_true": sev, "distance_m": 0.5,
-            })
+            rows.append(
+                {
+                    "matched_source_id": f"D{i}",
+                    "survey_id": f"S_R{run_id}",
+                    "run_id": run_id,
+                    "y_true": sev,
+                    "distance_m": 0.5,
+                }
+            )
     growth_frame = pd.DataFrame(rows)
 
-    gate = evaluate_growth_gate(growth_frame, frozenset({0, 1}), 2, 2, _BOOT_CFG, seed=0)
+    gate = evaluate_growth_gate(
+        growth_frame, frozenset({0, 1}), 2, 2, _BOOT_CFG, seed=0
+    )
 
     assert gate["gate_passed"] is True
     assert gate["gap_baseline_minus_model"][1] > 0.0
@@ -170,16 +207,26 @@ def test_match_residual_is_recorded_and_finite(cfg):
     from lsm.predict import latest_pipeline_release
 
     as_of = dt.datetime.now(dt.UTC).isoformat()
-    corpus = load_feature_corpus(cfg.env.storage.feature_dir, cfg.base.features.version, as_of=as_of)
+    corpus = load_feature_corpus(
+        cfg.env.storage.feature_dir, cfg.base.features.version, as_of=as_of
+    )
     survey_ids = sorted(corpus["survey_id"].unique())
     truth = train_module._load_truth_and_geometry(conn, survey_ids)
-    corpus = corpus.merge(truth, on=["survey_id", "sample_idx"], how="left", validate="one_to_one")
+    corpus = corpus.merge(
+        truth, on=["survey_id", "sample_idx"], how="left", validate="one_to_one"
+    )
     line_ids = sorted(corpus["line_id"].unique())
     registries = []
     for line_id in line_ids:
-        ref_survey_id = min(corpus.loc[corpus["line_id"] == line_id, "survey_id"].unique())
+        ref_survey_id = min(
+            corpus.loc[corpus["line_id"] == line_id, "survey_id"].unique()
+        )
         ref_rows = corpus[corpus["survey_id"] == ref_survey_id]
-        registries.append(train_module.build_truth_registry(ref_rows, line_id, ref_rows["chainage_m"].to_numpy()))
+        registries.append(
+            train_module.build_truth_registry(
+                ref_rows, line_id, ref_rows["chainage_m"].to_numpy()
+            )
+        )
     registry = pd.concat(registries, ignore_index=True)
 
     # Reuse the actually-released anomaly bundle to score+cluster, matching
@@ -187,10 +234,13 @@ def test_match_residual_is_recorded_and_finite(cfg):
     _, anomaly_version, _, _ = latest_pipeline_release(conn)
     anomaly_bundle = _load_bundle(
         Path(cfg.env.storage.model_dir) / anomaly_version / "bundle.joblib",
-        expected_feature_version=cfg.base.features.version, expected_schema_version=cfg.base.schema_version,
+        expected_feature_version=cfg.base.features.version,
+        expected_schema_version=cfg.base.schema_version,
     )
     corpus["_score"] = anomaly_bundle["model"].score(corpus)
-    all_indications = train_module._cluster_all_indications(corpus, "_score", anomaly_bundle["threshold"])
+    all_indications = train_module._cluster_all_indications(
+        corpus, "_score", anomaly_bundle["threshold"]
+    )
     matched_all = train_module._match_all_indications(all_indications, corpus, registry)
 
     growth_frame = build_growth_frame(matched_all, corpus)
@@ -205,7 +255,9 @@ def test_remaining_life_interval_is_monotonic():
 
 
 def test_remaining_life_is_zero_at_or_past_the_limit_state():
-    life_lo, life_med, life_hi = project_remaining_life((100.0, 110.0, 120.0), 0.1, 100.0)
+    life_lo, life_med, life_hi = project_remaining_life(
+        (100.0, 110.0, 120.0), 0.1, 100.0
+    )
     assert life_lo == life_med == life_hi == 0.0
 
 
@@ -219,12 +271,16 @@ def test_forecast_persists_growth_bundle_and_release(cfg):
     conn = _build_and_train(cfg)
     run_forecast(cfg, conn)
 
-    rows = conn.execute("SELECT model_version, artifact_uri FROM model_run WHERE task='growth'").fetchall()
+    rows = conn.execute(
+        "SELECT model_version, artifact_uri FROM model_run WHERE task='growth'"
+    ).fetchall()
     assert len(rows) == 1
     growth_version, artifact_uri = rows[0]
 
     bundle = load_bundle(
-        artifact_uri, expected_feature_version=cfg.base.features.version, expected_schema_version=cfg.base.schema_version,
+        artifact_uri,
+        expected_feature_version=cfg.base.features.version,
+        expected_schema_version=cfg.base.schema_version,
     )
     assert bundle["task"] == "growth"
     assert "population_log_rate" in bundle
@@ -236,10 +292,15 @@ def test_forecast_persists_growth_bundle_and_release(cfg):
     assert growth_version_released == growth_version
 
     from pathlib import Path
-    report_path = Path(cfg.env.storage.reports_dir) / pipeline_version / "growth_forecast.parquet"
+
+    report_path = (
+        Path(cfg.env.storage.reports_dir) / pipeline_version / "growth_forecast.parquet"
+    )
     assert report_path.exists()
 
-    model_card_path = Path(cfg.env.storage.model_dir) / pipeline_version / "model_card.md"
+    model_card_path = (
+        Path(cfg.env.storage.model_dir) / pipeline_version / "model_card.md"
+    )
     card_text = model_card_path.read_text(encoding="utf-8")
     assert "## Growth" in card_text
 
@@ -251,14 +312,21 @@ def test_as_of_flag_restricts_which_runs_are_used(cfg):
     # Backdate surveyed_at so run 2 is clearly "in the future" relative to a
     # chosen as_of cut -- generate_all stamps every run with the SAME
     # wall-clock timestamp by default, so this must be done explicitly.
-    conn.execute("UPDATE survey SET surveyed_at='2024-01-01T00:00:00+00:00' WHERE run_id=0")
-    conn.execute("UPDATE survey SET surveyed_at='2025-01-01T00:00:00+00:00' WHERE run_id=1")
-    conn.execute("UPDATE survey SET surveyed_at='2026-01-01T00:00:00+00:00' WHERE run_id=2")
+    conn.execute(
+        "UPDATE survey SET surveyed_at='2024-01-01T00:00:00+00:00' WHERE run_id=0"
+    )
+    conn.execute(
+        "UPDATE survey SET surveyed_at='2025-01-01T00:00:00+00:00' WHERE run_id=1"
+    )
+    conn.execute(
+        "UPDATE survey SET surveyed_at='2026-01-01T00:00:00+00:00' WHERE run_id=2"
+    )
     conn.commit()
     # meta.json (read by load_feature_corpus) is keyed off the survey row at
     # feature-compute time -- recompute features so the backdated
     # surveyed_at actually propagates into the feature store's own metadata.
     from lsm.pipeline import run_feature_pipeline as _run_feature_pipeline
+
     survey_ids = [r[0] for r in conn.execute("SELECT survey_id FROM survey").fetchall()]
     for survey_id in survey_ids:
         _run_feature_pipeline(conn, survey_id, cfg, force=True)

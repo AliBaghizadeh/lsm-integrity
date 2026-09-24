@@ -7,7 +7,9 @@ from lsm.logging_utils import get_logger
 
 def test_log_output_is_valid_json_with_correlation_fields(capsys):
     log = get_logger("lsm.test")
-    log.info("something happened", extra={"survey_id": "LINE000_R0", "status": "accepted"})
+    log.info(
+        "something happened", extra={"survey_id": "LINE000_R0", "status": "accepted"}
+    )
 
     captured = capsys.readouterr()
     line = captured.out.strip().splitlines()[-1]

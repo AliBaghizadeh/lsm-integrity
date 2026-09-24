@@ -49,13 +49,21 @@ def load_feature_corpus_duckdb(
     import duckdb
 
     root = Path(feature_dir) / f"fv={feature_version}"
-    glob_pattern = str(root / "line_id=*" / "run_id=*" / "features.parquet").replace("\\", "/")
+    glob_pattern = str(root / "line_id=*" / "run_id=*" / "features.parquet").replace(
+        "\\", "/"
+    )
 
     meta_rows = []
     for meta_path in sorted(root.glob("line_id=*/run_id=*/meta.json")):
         meta = read_feature_meta(meta_path.parent)
         if meta is not None:
-            meta_rows.append({"line_id": meta["line_id"], "run_id": meta["run_id"], "surveyed_at": meta["surveyed_at"]})
+            meta_rows.append(
+                {
+                    "line_id": meta["line_id"],
+                    "run_id": meta["run_id"],
+                    "surveyed_at": meta["surveyed_at"],
+                }
+            )
 
     if not meta_rows:
         return pd.DataFrame(columns=FEATURE_KEY_COLUMNS + ["surveyed_at"])
@@ -65,16 +73,22 @@ def load_feature_corpus_duckdb(
         return pd.DataFrame(columns=FEATURE_KEY_COLUMNS + ["surveyed_at"])
 
     meta_df = pd.DataFrame(meta_rows)
-    corpus = corpus.merge(meta_df, on=["line_id", "run_id"], how="left", validate="many_to_one")
+    corpus = corpus.merge(
+        meta_df, on=["line_id", "run_id"], how="left", validate="many_to_one"
+    )
     if line_ids is not None:
         corpus = corpus[corpus["line_id"].isin(line_ids)]
     corpus = corpus[corpus["surveyed_at"].astype(str) <= str(as_of)]
     corpus = corpus.reset_index(drop=True)
-    assert_point_in_time(corpus, as_of, what=f"feature corpus fv={feature_version} (duckdb)")
+    assert_point_in_time(
+        corpus, as_of, what=f"feature corpus fv={feature_version} (duckdb)"
+    )
     return corpus
 
 
-def load_truth_and_geometry_duckdb(conn: sqlite3.Connection, survey_ids: list[str]) -> pd.DataFrame:
+def load_truth_and_geometry_duckdb(
+    conn: sqlite3.Connection, survey_ids: list[str]
+) -> pd.DataFrame:
     """DuckDB-backed alternative to `train._load_truth_and_geometry`: same
     `(survey_id, source_uri)` lookup from SQLite `survey` (cheap, unchanged),
     then ONE DuckDB call reading every survey's raw Parquet at once
@@ -86,10 +100,22 @@ def load_truth_and_geometry_duckdb(conn: sqlite3.Connection, survey_ids: list[st
 
     placeholders = ",".join("?" * len(survey_ids))
     rows = conn.execute(
-        f"SELECT survey_id, source_uri FROM survey WHERE survey_id IN ({placeholders})", survey_ids
+        f"SELECT survey_id, source_uri FROM survey WHERE survey_id IN ({placeholders})",
+        survey_ids,
     ).fetchall()
     if not rows:
-        return pd.DataFrame(columns=["sample_idx", "lat", "lon", "defect", "defect_type", "interference", "severity_smys", "survey_id"])
+        return pd.DataFrame(
+            columns=[
+                "sample_idx",
+                "lat",
+                "lon",
+                "defect",
+                "defect_type",
+                "interference",
+                "severity_smys",
+                "survey_id",
+            ]
+        )
 
     uri_to_survey = {uri: sid for sid, uri in rows}
     uris = list(uri_to_survey)
@@ -124,8 +150,10 @@ def run_whole_line_cv(
     counts.
     """
     corpus = add_fold_column_by_line(corpus, "line_id", n_folds=n_folds)
-    _corpus, result, _severity_frame, _classify_frame, _defect_calibrator = train._evaluate_corpus(
-        corpus, feature_cols, cfg, seed, registry, run_line_id, survey_ids
+    _corpus, result, _severity_frame, _classify_frame, _defect_calibrator = (
+        train._evaluate_corpus(
+            corpus, feature_cols, cfg, seed, registry, run_line_id, survey_ids
+        )
     )
     return result
 
@@ -164,7 +192,9 @@ def run_temporal_holdout(
         emphasize_features=anomaly_cfg.get("emphasize_features"),
         emphasis_repeats=anomaly_cfg.get("emphasis_repeats", 1),
     ).fit(train_corpus)
-    mad_threshold = calibrated_threshold(mad.score(train_corpus), anomaly_cfg["contamination"])
+    mad_threshold = calibrated_threshold(
+        mad.score(train_corpus), anomaly_cfg["contamination"]
+    )
 
     for c in (train_corpus, test_corpus):
         c["score_mad"] = mad.score(c)
@@ -175,22 +205,31 @@ def run_temporal_holdout(
         c["fold"] = 0
 
     test_survey_ids = sorted(test_corpus["survey_id"].unique())
-    matched_mad = train._dig_and_match(test_corpus, "score_mad", mad_threshold, registry, cfg)
+    matched_mad = train._dig_and_match(
+        test_corpus, "score_mad", mad_threshold, registry, cfg
+    )
     matched_if = train._dig_and_match(test_corpus, "score_if", 0.0, registry, cfg)
-    metrics_mad, hit_rates_mad, _false_digs_mad, _interference_mad = train._bootstrap_metrics(
-        matched_mad, registry, run_line_id, cfg
+    metrics_mad, hit_rates_mad, _false_digs_mad, _interference_mad = (
+        train._bootstrap_metrics(matched_mad, registry, run_line_id, cfg)
     )
-    metrics_if, hit_rates_if, _false_digs_if, _interference_if = train._bootstrap_metrics(
-        matched_if, registry, run_line_id, cfg
+    metrics_if, hit_rates_if, _false_digs_if, _interference_if = (
+        train._bootstrap_metrics(matched_if, registry, run_line_id, cfg)
     )
-    pr_auc_mad = train.pr_auc(test_corpus["defect"].to_numpy(), test_corpus["score_mad"].to_numpy())
-    pr_auc_if = train.pr_auc(test_corpus["defect"].to_numpy(), test_corpus["score_if"].to_numpy())
+    pr_auc_mad = train.pr_auc(
+        test_corpus["defect"].to_numpy(), test_corpus["score_mad"].to_numpy()
+    )
+    pr_auc_if = train.pr_auc(
+        test_corpus["defect"].to_numpy(), test_corpus["score_if"].to_numpy()
+    )
 
     boot_cfg = cfg.base.model.bootstrap
     defect_ids = sorted(hit_rates_mad)
     recall_gap = train.paired_bootstrap_ci(
-        [hit_rates_if[d] for d in defect_ids], [hit_rates_mad[d] for d in defect_ids],
-        boot_cfg.n_resamples, boot_cfg.level, seed + 10,
+        [hit_rates_if[d] for d in defect_ids],
+        [hit_rates_mad[d] for d in defect_ids],
+        boot_cfg.n_resamples,
+        boot_cfg.level,
+        seed + 10,
     )
 
     result: dict = {
@@ -200,14 +239,22 @@ def run_temporal_holdout(
         # print a scale_eval result died with KeyError -- AFTER both holdout CVs
         # had already run to completion. `train._bootstrap_metrics` (called
         # above) has always produced it; this was only ever a pass-through gap.
-        "mad": {"recall_at_budget": metrics_mad["recall_at_budget"], "false_dig_rate": metrics_mad["false_dig_rate"],
-                "interference_dig_fraction": metrics_mad["interference_dig_fraction"],
-                "localisation_error_m": metrics_mad["localisation_error_m"],
-                "localisation_error_cm": metrics_mad["localisation_error_cm"], "pr_auc": pr_auc_mad},
-        "isolation_forest": {"recall_at_budget": metrics_if["recall_at_budget"], "false_dig_rate": metrics_if["false_dig_rate"],
-                              "interference_dig_fraction": metrics_if["interference_dig_fraction"],
-                              "localisation_error_m": metrics_if["localisation_error_m"],
-                              "localisation_error_cm": metrics_if["localisation_error_cm"], "pr_auc": pr_auc_if},
+        "mad": {
+            "recall_at_budget": metrics_mad["recall_at_budget"],
+            "false_dig_rate": metrics_mad["false_dig_rate"],
+            "interference_dig_fraction": metrics_mad["interference_dig_fraction"],
+            "localisation_error_m": metrics_mad["localisation_error_m"],
+            "localisation_error_cm": metrics_mad["localisation_error_cm"],
+            "pr_auc": pr_auc_mad,
+        },
+        "isolation_forest": {
+            "recall_at_budget": metrics_if["recall_at_budget"],
+            "false_dig_rate": metrics_if["false_dig_rate"],
+            "interference_dig_fraction": metrics_if["interference_dig_fraction"],
+            "localisation_error_m": metrics_if["localisation_error_m"],
+            "localisation_error_cm": metrics_if["localisation_error_cm"],
+            "pr_auc": pr_auc_if,
+        },
         "recall_gap_if_minus_mad": recall_gap,
         "interference_gap_mad_minus_if": (float("nan"),) * 3,
         "gate_passed": recall_gap[1] >= train.GATE_RECALL_MARGIN,
@@ -216,50 +263,84 @@ def run_temporal_holdout(
         "n_surveys": len(test_survey_ids),
     }
 
-    all_indications_train = train._cluster_all_indications(train_corpus, "score_if", 0.0)
-    matched_all_train = train._match_all_indications(all_indications_train, train_corpus, registry)
+    all_indications_train = train._cluster_all_indications(
+        train_corpus, "score_if", 0.0
+    )
+    matched_all_train = train._match_all_indications(
+        all_indications_train, train_corpus, registry
+    )
     all_indications_test = train._cluster_all_indications(test_corpus, "score_if", 0.0)
-    matched_all_test = train._match_all_indications(all_indications_test, test_corpus, registry)
+    matched_all_test = train._match_all_indications(
+        all_indications_test, test_corpus, registry
+    )
 
-    severity_frame_train = train._build_severity_training_frame(matched_all_train, train_corpus, feature_cols)
-    severity_frame_test = train._build_severity_training_frame(matched_all_test, test_corpus, feature_cols)
+    severity_frame_train = train._build_severity_training_frame(
+        matched_all_train, train_corpus, feature_cols
+    )
+    severity_frame_test = train._build_severity_training_frame(
+        matched_all_test, test_corpus, feature_cols
+    )
     result["n_severity_samples"] = len(severity_frame_test)
     if (
-        len(severity_frame_train) >= 4 and severity_frame_train["matched_source_id"].nunique() >= 2
+        len(severity_frame_train) >= 4
+        and severity_frame_train["matched_source_id"].nunique() >= 2
         and len(severity_frame_test) > 0
     ):
         sev_feature_cols = [*feature_cols, "extent_m"]
-        sev_model, sev_baseline = train._fit_final_severity_model(severity_frame_train, sev_feature_cols, cfg, seed)
+        sev_model, sev_baseline = train._fit_final_severity_model(
+            severity_frame_train, sev_feature_cols, cfg, seed
+        )
         if sev_model is not None and sev_baseline is not None:
             med, lo, hi = sev_model.predict(severity_frame_test)
             bmed, blo, bhi = sev_baseline.predict(len(severity_frame_test))
-            oof_model = pd.DataFrame({
-                "defect_id": severity_frame_test["matched_source_id"].to_numpy(),
-                "y_true": severity_frame_test["y_true"].to_numpy(), "y_pred": med, "lo": lo, "hi": hi,
-            })
-            oof_baseline = pd.DataFrame({
-                "defect_id": severity_frame_test["matched_source_id"].to_numpy(),
-                "y_true": severity_frame_test["y_true"].to_numpy(), "y_pred": bmed, "lo": blo, "hi": bhi,
-            })
+            oof_model = pd.DataFrame(
+                {
+                    "defect_id": severity_frame_test["matched_source_id"].to_numpy(),
+                    "y_true": severity_frame_test["y_true"].to_numpy(),
+                    "y_pred": med,
+                    "lo": lo,
+                    "hi": hi,
+                }
+            )
+            oof_baseline = pd.DataFrame(
+                {
+                    "defect_id": severity_frame_test["matched_source_id"].to_numpy(),
+                    "y_true": severity_frame_test["y_true"].to_numpy(),
+                    "y_pred": bmed,
+                    "lo": blo,
+                    "hi": bhi,
+                }
+            )
             sev_metrics = train._severity_bootstrap_metrics(oof_model, cfg, seed + 20)
-            base_metrics = train._severity_bootstrap_metrics(oof_baseline, cfg, seed + 30)
+            base_metrics = train._severity_bootstrap_metrics(
+                oof_baseline, cfg, seed + 30
+            )
             result["severity"] = sev_metrics
             result["severity_baseline"] = base_metrics
             result["severity_gate_passed"] = (
-                train.GATE_SEVERITY_COVERAGE_RANGE[0] <= sev_metrics["coverage"][0] <= train.GATE_SEVERITY_COVERAGE_RANGE[1]
+                train.GATE_SEVERITY_COVERAGE_RANGE[0]
+                <= sev_metrics["coverage"][0]
+                <= train.GATE_SEVERITY_COVERAGE_RANGE[1]
             )
             result["severity_mae_by_decile"] = {
                 str(k): v
                 for k, v in train.mae_by_severity_decile(
                     oof_model["y_true"].to_numpy(), oof_model["y_pred"].to_numpy()
-                ).to_dict().items()
+                )
+                .to_dict()
+                .items()
             }
 
-    classify_frame_train = train._build_classify_training_frame(matched_all_train, train_corpus, feature_cols, registry)
-    classify_frame_test = train._build_classify_training_frame(matched_all_test, test_corpus, feature_cols, registry)
+    classify_frame_train = train._build_classify_training_frame(
+        matched_all_train, train_corpus, feature_cols, registry
+    )
+    classify_frame_test = train._build_classify_training_frame(
+        matched_all_test, test_corpus, feature_cols, registry
+    )
     result["n_classify_samples"] = len(classify_frame_test)
     if (
-        len(classify_frame_train) >= 8 and classify_frame_train["defect_type"].nunique() >= 3
+        len(classify_frame_train) >= 8
+        and classify_frame_train["defect_type"].nunique() >= 3
         and len(classify_frame_test) > 0
     ):
         classify_feature_cols = [*feature_cols, "extent_m"]
@@ -270,29 +351,45 @@ def run_temporal_holdout(
             proba = classify_model.predict_proba(classify_frame_test)
             pred_type, pred_conf = classify_model.predict(classify_frame_test)
             base_proba = classify_baseline.predict_proba(len(classify_frame_test))
-            base_pred_type, base_pred_conf = classify_baseline.predict(len(classify_frame_test))
+            base_pred_type, base_pred_conf = classify_baseline.predict(
+                len(classify_frame_test)
+            )
 
-            oof_classify = pd.DataFrame({
-                "defect_id": classify_frame_test["matched_source_id"].to_numpy(),
-                "true_class": classify_frame_test["defect_type"].to_numpy(),
-                "pred_type": pred_type, "pred_conf": pred_conf,
-            })
+            oof_classify = pd.DataFrame(
+                {
+                    "defect_id": classify_frame_test["matched_source_id"].to_numpy(),
+                    "true_class": classify_frame_test["defect_type"].to_numpy(),
+                    "pred_type": pred_type,
+                    "pred_conf": pred_conf,
+                }
+            )
             for c in train.CLASSIFY_CLASSES:
                 oof_classify[c] = proba[c].to_numpy()
-            oof_classify_baseline = pd.DataFrame({
-                "defect_id": classify_frame_test["matched_source_id"].to_numpy(),
-                "true_class": classify_frame_test["defect_type"].to_numpy(),
-                "pred_type": base_pred_type, "pred_conf": base_pred_conf,
-            })
+            oof_classify_baseline = pd.DataFrame(
+                {
+                    "defect_id": classify_frame_test["matched_source_id"].to_numpy(),
+                    "true_class": classify_frame_test["defect_type"].to_numpy(),
+                    "pred_type": base_pred_type,
+                    "pred_conf": base_pred_conf,
+                }
+            )
             for c in train.CLASSIFY_CLASSES:
                 oof_classify_baseline[c] = base_proba[c].to_numpy()
 
-            classify_metrics = train._classify_bootstrap_metrics(oof_classify, cfg, seed + 40)
-            classify_baseline_metrics = train._classify_bootstrap_metrics(oof_classify_baseline, cfg, seed + 50)
-            scc_recall_ci = classify_metrics["per_class_recall"].get("scc", (float("nan"),) * 3)
+            classify_metrics = train._classify_bootstrap_metrics(
+                oof_classify, cfg, seed + 40
+            )
+            classify_baseline_metrics = train._classify_bootstrap_metrics(
+                oof_classify_baseline, cfg, seed + 50
+            )
+            scc_recall_ci = classify_metrics["per_class_recall"].get(
+                "scc", (float("nan"),) * 3
+            )
             result["classify"] = classify_metrics
             result["classify_baseline"] = classify_baseline_metrics
-            result["classify_recall_gate_passed"] = scc_recall_ci[1] >= train.GATE_SCC_RECALL
+            result["classify_recall_gate_passed"] = (
+                scc_recall_ci[1] >= train.GATE_SCC_RECALL
+            )
 
     return result
 
@@ -309,27 +406,41 @@ def run_scale_evaluation(cfg: Config, conn: sqlite3.Connection) -> dict:
     feature_version = cfg.base.features.version
     as_of = pd.Timestamp.now(tz="UTC").isoformat()
 
-    corpus = train.load_feature_corpus(cfg.env.storage.feature_dir, feature_version, as_of=as_of)
+    corpus = train.load_feature_corpus(
+        cfg.env.storage.feature_dir, feature_version, as_of=as_of
+    )
     if len(corpus) == 0:
         raise RuntimeError("empty feature corpus -- run `lsm features` first")
 
     survey_ids = sorted(corpus["survey_id"].unique())
     truth = train._load_truth_and_geometry(conn, survey_ids)
-    corpus = corpus.merge(truth, on=["survey_id", "sample_idx"], how="left", validate="one_to_one")
+    corpus = corpus.merge(
+        truth, on=["survey_id", "sample_idx"], how="left", validate="one_to_one"
+    )
 
     feature_cols = train.feature_columns(cfg.base.features)
 
     line_ids = sorted(corpus["line_id"].unique())
     registries = []
     for line_id in line_ids:
-        ref_survey_id = min(corpus.loc[corpus["line_id"] == line_id, "survey_id"].unique())
+        ref_survey_id = min(
+            corpus.loc[corpus["line_id"] == line_id, "survey_id"].unique()
+        )
         ref_rows = corpus[corpus["survey_id"] == ref_survey_id]
-        registries.append(train.build_truth_registry(ref_rows, line_id, ref_rows["chainage_m"].to_numpy()))
+        registries.append(
+            train.build_truth_registry(
+                ref_rows, line_id, ref_rows["chainage_m"].to_numpy()
+            )
+        )
     registry = pd.concat(registries, ignore_index=True)
-    run_line_id = corpus.drop_duplicates("survey_id").set_index("survey_id")["line_id"].to_dict()
+    run_line_id = (
+        corpus.drop_duplicates("survey_id").set_index("survey_id")["line_id"].to_dict()
+    )
 
     whole_line_result = run_whole_line_cv(
         corpus.copy(), feature_cols, cfg, cfg.seed, registry, run_line_id, survey_ids
     )
-    temporal_result = run_temporal_holdout(corpus.copy(), feature_cols, cfg, cfg.seed, registry, run_line_id)
+    temporal_result = run_temporal_holdout(
+        corpus.copy(), feature_cols, cfg, cfg.seed, registry, run_line_id
+    )
     return {"whole_line_cv": whole_line_result, "temporal_holdout": temporal_result}

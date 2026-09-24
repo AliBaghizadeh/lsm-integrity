@@ -80,10 +80,14 @@ def check_schema(df: pd.DataFrame, gate: str) -> DQCheckResult:
         # n_affected is the count of DISTINCT rows that actually violated a
         # check, not len(df) -- one bad value in a 4000-row survey is "1 row
         # affected", not "the whole survey is bad".
-        return DQCheckResult("schema", gate, exc.n_affected_rows, {"failures": exc.failures})
+        return DQCheckResult(
+            "schema", gate, exc.n_affected_rows, {"failures": exc.failures}
+        )
 
 
-def check_range(df: pd.DataFrame, field_range: tuple[float, float], gate: str) -> DQCheckResult:
+def check_range(
+    df: pd.DataFrame, field_range: tuple[float, float], gate: str
+) -> DQCheckResult:
     """Rig-v2: three total-field HEADS (b_lo/mid/hi_nt), not three vector axes
     -- a value out of range now means that HEAD's magnitude reading is
     physically implausible, not that one axis component railed.
@@ -117,7 +121,10 @@ def check_saturation(df: pd.DataFrame, run_length: int, gate: str) -> DQCheckRes
             heads_hit.append(h)
         n_affected += int(hit.sum())
     return DQCheckResult(
-        "saturation", _gate_status(n_affected > 0, gate), n_affected, {"heads": heads_hit}
+        "saturation",
+        _gate_status(n_affected > 0, gate),
+        n_affected,
+        {"heads": heads_hit},
     )
 
 
@@ -127,7 +134,9 @@ def check_sample_idx_monotonic(df: pd.DataFrame, gate: str) -> DQCheckResult:
     return DQCheckResult("sample_idx_monotonic", _gate_status(n > 0, gate), n)
 
 
-def check_sample_idx_gap(df: pd.DataFrame, step_m: float, max_gap_m: float, gate: str) -> DQCheckResult:
+def check_sample_idx_gap(
+    df: pd.DataFrame, step_m: float, max_gap_m: float, gate: str
+) -> DQCheckResult:
     idx = np.sort(df["sample_idx"].to_numpy())
     if len(idx) < 2:
         return DQCheckResult("sample_idx_gap", "pass", 0)
@@ -155,7 +164,10 @@ def check_duplicate_content(
     )
     dupes = [r[0] for r in cur.fetchall()]
     return DQCheckResult(
-        "duplicate_content", _gate_status(len(dupes) > 0, gate), len(dupes), {"duplicates_of": dupes}
+        "duplicate_content",
+        _gate_status(len(dupes) > 0, gate),
+        len(dupes),
+        {"duplicates_of": dupes},
     )
 
 
@@ -199,13 +211,17 @@ def check_survey_overlap(
         if lo >= hi:
             continue
         other = pd.read_sql_query(
-            "SELECT sample_idx, b_mid_nt FROM reading WHERE survey_id=?", conn, params=(other_id,)
+            "SELECT sample_idx, b_mid_nt FROM reading WHERE survey_id=?",
+            conn,
+            params=(other_id,),
         )
         if other.empty:
             continue
         lo_idx, hi_idx = int(lo / step_m), int(hi / step_m)
         mine = df[(df["sample_idx"] >= lo_idx) & (df["sample_idx"] <= hi_idx)]
-        theirs = other[(other["sample_idx"] >= lo_idx) & (other["sample_idx"] <= hi_idx)]
+        theirs = other[
+            (other["sample_idx"] >= lo_idx) & (other["sample_idx"] <= hi_idx)
+        ]
         merged = mine[["sample_idx", "b_mid_nt"]].merge(
             theirs, on="sample_idx", suffixes=("_mine", "_theirs")
         )
@@ -218,7 +234,10 @@ def check_survey_overlap(
 
     if max_r > corr_threshold:
         return DQCheckResult(
-            "survey_overlap", gate, 1, {"correlation": max_r, "overlap_with": overlap_with}
+            "survey_overlap",
+            gate,
+            1,
+            {"correlation": max_r, "overlap_with": overlap_with},
         )
     return DQCheckResult("survey_overlap", "pass", 0, {"max_correlation": max_r})
 
@@ -238,18 +257,28 @@ def check_gps_jump(df: pd.DataFrame, max_jump_m: float, gate: str) -> DQCheckRes
     lat = np.radians(lat_all[locked])
     lon = np.radians(lon_all[locked])
     if len(lat) < 2:
-        return DQCheckResult("gps_jump", "pass", 0, {"reason": "fewer than 2 locked fixes"})
+        return DQCheckResult(
+            "gps_jump", "pass", 0, {"reason": "fewer than 2 locked fixes"}
+        )
     dlat = np.diff(lat)
     dlon = np.diff(lon)
-    a = np.sin(dlat / 2) ** 2 + np.cos(lat[:-1]) * np.cos(lat[1:]) * np.sin(dlon / 2) ** 2
+    a = (
+        np.sin(dlat / 2) ** 2
+        + np.cos(lat[:-1]) * np.cos(lat[1:]) * np.sin(dlon / 2) ** 2
+    )
     dist_m = 2 * 6_371_000.0 * np.arcsin(np.clip(np.sqrt(a), 0, 1))
     n = int((dist_m > max_jump_m).sum())
     return DQCheckResult(
-        "gps_jump", _gate_status(n > 0, gate), n, {"max_jump_m": float(dist_m.max()) if len(dist_m) else 0.0}
+        "gps_jump",
+        _gate_status(n > 0, gate),
+        n,
+        {"max_jump_m": float(dist_m.max()) if len(dist_m) else 0.0},
     )
 
 
-def check_gps_chainage_consistency(df: pd.DataFrame, step_m: float, gate: str) -> DQCheckResult:
+def check_gps_chainage_consistency(
+    df: pd.DataFrame, step_m: float, gate: str
+) -> DQCheckResult:
     """What this checks now: total GPS-derived path length over the LOCKED
     stretches, against `chainage_true_m`'s own span over those SAME rows.
 
@@ -270,13 +299,19 @@ def check_gps_chainage_consistency(df: pd.DataFrame, step_m: float, gate: str) -
     locked = ~(np.isnan(lat_all) | np.isnan(lon_all))
     if locked.sum() < 2:
         return DQCheckResult(
-            "gps_chainage_consistency", "pass", 0, {"reason": "fewer than 2 locked fixes"}
+            "gps_chainage_consistency",
+            "pass",
+            0,
+            {"reason": "fewer than 2 locked fixes"},
         )
     lat = np.radians(lat_all[locked])
     lon = np.radians(lon_all[locked])
     dlat = np.diff(lat)
     dlon = np.diff(lon)
-    a = np.sin(dlat / 2) ** 2 + np.cos(lat[:-1]) * np.cos(lat[1:]) * np.sin(dlon / 2) ** 2
+    a = (
+        np.sin(dlat / 2) ** 2
+        + np.cos(lat[:-1]) * np.cos(lat[1:]) * np.sin(dlon / 2) ** 2
+    )
     dist_m = 2 * 6_371_000.0 * np.arcsin(np.clip(np.sqrt(a), 0, 1))
     gps_length = float(dist_m.sum())
 
@@ -293,7 +328,9 @@ def check_gps_chainage_consistency(df: pd.DataFrame, step_m: float, gate: str) -
     )
 
 
-def check_noise_floor(df: pd.DataFrame, noise_range: tuple[float, float], gate: str) -> DQCheckResult:
+def check_noise_floor(
+    df: pd.DataFrame, noise_range: tuple[float, float], gate: str
+) -> DQCheckResult:
     """Coarse proxy: std of the first difference per HEAD, which suppresses slow
     drift and approximates the sensor noise floor without a real detrend (Stage 2).
     Rig-v2: three scalar heads (b_lo/mid/hi_nt), not three vector axes.
@@ -328,13 +365,18 @@ def check_background_regime(
     prior_ids = [r[0] for r in cur.fetchall()]
     if len(prior_ids) < 2:
         return DQCheckResult(
-            "background_regime", "pass", 0, {"reason": "insufficient history", "n_prior": len(prior_ids)}
+            "background_regime",
+            "pass",
+            0,
+            {"reason": "insufficient history", "n_prior": len(prior_ids)},
         )
     heads = ["b_lo_nt", "b_mid_nt", "b_hi_nt"]
     medians = []
     for pid in prior_ids:
         prior = pd.read_sql_query(
-            f"SELECT {', '.join(heads)} FROM reading WHERE survey_id=?", conn, params=(pid,)
+            f"SELECT {', '.join(heads)} FROM reading WHERE survey_id=?",
+            conn,
+            params=(pid,),
         )
         if not prior.empty:
             medians.append(prior[heads].median())
@@ -346,12 +388,16 @@ def check_background_regime(
     cur_median = df[heads].median()
     shift = background_regime_shift(cur_median, hist, z_threshold=3.0)
     return DQCheckResult(
-        "background_regime", _gate_status(shift["n_bad"] > 0, gate), shift["n_bad"],
+        "background_regime",
+        _gate_status(shift["n_bad"] > 0, gate),
+        shift["n_bad"],
         {"z_scores": shift["z_scores"]},
     )
 
 
-def check_interference_density(df: pd.DataFrame, gate: str, expected_frac: float = 0.05) -> DQCheckResult:
+def check_interference_density(
+    df: pd.DataFrame, gate: str, expected_frac: float = 0.05
+) -> DQCheckResult:
     """Coarse proxy: robust z-score of the raw MID-head magnitude vs the survey
     median; fraction of |z|>5 rows compared against an expected small
     baseline. Rig-v2: b_mid_nt is the natural single-column representative --
@@ -372,7 +418,9 @@ def check_interference_density(df: pd.DataFrame, gate: str, expected_frac: float
     )
 
 
-def check_coverage(df: pd.DataFrame, expected_length_m: float | None, step_m: float, gate: str) -> DQCheckResult:
+def check_coverage(
+    df: pd.DataFrame, expected_length_m: float | None, step_m: float, gate: str
+) -> DQCheckResult:
     """`step_m * len(df)` assumed a uniform distance grid -- wrong under
     Rig-v2's irregular walk (step_m is now a nominal MEAN, not exact, see
     DataConfig.step_m). `chainage_true_m`'s own extent is the honest
@@ -383,10 +431,21 @@ def check_coverage(df: pd.DataFrame, expected_length_m: float | None, step_m: fl
     itself, not an external/derived value.
     """
     if expected_length_m is None:
-        return DQCheckResult("coverage", "pass", 0, {"reason": "no expected length declared"})
-    actual = float(df["chainage_true_m"].max() - df["chainage_true_m"].min()) if len(df) else 0.0
+        return DQCheckResult(
+            "coverage", "pass", 0, {"reason": "no expected length declared"}
+        )
+    actual = (
+        float(df["chainage_true_m"].max() - df["chainage_true_m"].min())
+        if len(df)
+        else 0.0
+    )
     frac = actual / expected_length_m
-    return DQCheckResult("coverage", _gate_status(frac < 0.95, gate), int(frac < 0.95), {"coverage_frac": frac})
+    return DQCheckResult(
+        "coverage",
+        _gate_status(frac < 0.95, gate),
+        int(frac < 0.95),
+        {"coverage_frac": frac},
+    )
 
 
 # --------------------------------------------------------------------------
@@ -414,8 +473,14 @@ def run_checks(
         check_duplicate_sample_idx(df, g["duplicate_sample_idx"]),
         check_duplicate_content(conn, survey_id, content_hash, g["duplicate_content"]),
         check_survey_overlap(
-            conn, survey_id, line_id, chainage_start_m, chainage_end_m, df,
-            cfg.overlap_correlation_threshold, g["survey_overlap"],
+            conn,
+            survey_id,
+            line_id,
+            chainage_start_m,
+            chainage_end_m,
+            df,
+            cfg.overlap_correlation_threshold,
+            g["survey_overlap"],
         ),
         check_gps_jump(df, cfg.max_gps_jump_m, g["gps_jump"]),
         check_gps_chainage_consistency(df, step_m, g["gps_chainage_consistency"]),
@@ -445,8 +510,16 @@ def validate_raw_survey(
     Assumes `survey_id` already has a row in `survey` (register_survey ran first).
     """
     results = run_checks(
-        df, survey_id, line_id, step_m, chainage_start_m, chainage_end_m,
-        content_hash, cfg, conn, expected_length_m,
+        df,
+        survey_id,
+        line_id,
+        step_m,
+        chainage_start_m,
+        chainage_end_m,
+        content_hash,
+        cfg,
+        conn,
+        expected_length_m,
     )
     report = DQReport(
         survey_id=survey_id,
@@ -458,21 +531,38 @@ def validate_raw_survey(
         conn.execute(
             "INSERT INTO dq_report (survey_id, checked_at, check_name, status, n_affected, detail_json) "
             "VALUES (?, ?, ?, ?, ?, ?)",
-            (survey_id, report.checked_at, r.check_name, r.status, r.n_affected, str(r.detail)),
+            (
+                survey_id,
+                report.checked_at,
+                r.check_name,
+                r.status,
+                r.n_affected,
+                str(r.detail),
+            ),
         )
 
     if report.has_fail:
-        conn.execute("UPDATE survey SET status='quarantined' WHERE survey_id=?", (survey_id,))
-        log.info("survey quarantined", extra={"survey_id": survey_id, "status": "quarantined"})
+        conn.execute(
+            "UPDATE survey SET status='quarantined' WHERE survey_id=?", (survey_id,)
+        )
+        log.info(
+            "survey quarantined",
+            extra={"survey_id": survey_id, "status": "quarantined"},
+        )
         if quarantine_dir is not None and source_path is not None:
             quarantine_raw_file(survey_id, source_path, quarantine_dir, report)
     else:
-        log.info("survey validated clean", extra={"survey_id": survey_id, "status": "accepted"})
+        log.info(
+            "survey validated clean",
+            extra={"survey_id": survey_id, "status": "accepted"},
+        )
     conn.commit()
     return report
 
 
-def quarantine_raw_file(survey_id: str, source_uri, quarantine_dir: Path, report: DQReport) -> Path:
+def quarantine_raw_file(
+    survey_id: str, source_uri, quarantine_dir: Path, report: DQReport
+) -> Path:
     dest_dir = Path(quarantine_dir) / survey_id
     dest_dir.mkdir(parents=True, exist_ok=True)
     dest_file = dest_dir / "survey.parquet"
@@ -484,7 +574,12 @@ def quarantine_raw_file(survey_id: str, source_uri, quarantine_dir: Path, report
                 "survey_id": report.survey_id,
                 "checked_at": report.checked_at,
                 "results": [
-                    {"check_name": r.check_name, "status": r.status, "n_affected": r.n_affected, "detail": r.detail}
+                    {
+                        "check_name": r.check_name,
+                        "status": r.status,
+                        "n_affected": r.n_affected,
+                        "detail": r.detail,
+                    }
                     for r in report.results
                 ],
             },

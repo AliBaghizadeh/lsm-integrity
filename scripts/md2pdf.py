@@ -27,6 +27,7 @@ CSS = """
 </style>
 """
 
+
 def convert(md_path: str):
     src = pathlib.Path(md_path).resolve()
     html_body = markdown.markdown(
@@ -35,18 +36,27 @@ def convert(md_path: str):
     )
     html_path = src.with_suffix(".html")
     pdf_path = src.with_suffix(".pdf")
-    html_path.write_text(f"<!doctype html><html><head><meta charset='utf-8'>{CSS}</head>"
-                          f"<body>{html_body}</body></html>", encoding="utf-8")
+    html_path.write_text(
+        f"<!doctype html><html><head><meta charset='utf-8'>{CSS}</head>"
+        f"<body>{html_body}</body></html>",
+        encoding="utf-8",
+    )
 
-    subprocess.run([
-        CHROME, "--headless", "--disable-gpu",
-        f"--print-to-pdf={pdf_path}",
-        "--no-pdf-header-footer",
-        "--print-to-pdf-no-header",
-        str(html_path),
-    ], check=True)
+    subprocess.run(
+        [
+            CHROME,
+            "--headless",
+            "--disable-gpu",
+            f"--print-to-pdf={pdf_path}",
+            "--no-pdf-header-footer",
+            "--print-to-pdf-no-header",
+            str(html_path),
+        ],
+        check=True,
+    )
     html_path.unlink()
     print(f"wrote {pdf_path}")
+
 
 if __name__ == "__main__":
     for p in sys.argv[1:]:

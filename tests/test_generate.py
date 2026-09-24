@@ -54,7 +54,9 @@ def test_defect_signature_is_detectable_against_background(cfg, tmp_path):
     """
     cfg.base.data.n_lines = 1
     cfg.base.data.n_runs = 1
-    cfg.base.data.walk.sample_rate_hz = 20.0  # length_m/n_defects left at base.yaml's defaults
+    cfg.base.data.walk.sample_rate_hz = (
+        20.0  # length_m/n_defects left at base.yaml's defaults
+    )
     results = generate_all(cfg.base.data, tmp_path / "raw", seed=42)
     df = pd.read_parquet(results[0].path)
 
@@ -219,7 +221,9 @@ def test_moment_perpendicular_to_ambient_field_produces_near_null_anomaly():
     assert abs(np.dot(dB, b0hat)) < 1e-9  # exactly perpendicular by construction
 
     anomaly = float(np.linalg.norm(B0 + dB) - np.linalg.norm(B0))
-    assert abs(anomaly) < 0.01  # near-null total-field READING, not just a null projection
+    assert (
+        abs(anomaly) < 0.01
+    )  # near-null total-field READING, not just a null projection
 
     # Contrast: a generic (non-perpendicular) moment at a comparable distance
     # is clearly visible -- the null above is the geometry, not "everything
@@ -247,7 +251,9 @@ def test_second_difference_cancels_linear_gradient_first_difference_does_not():
     precision".
     """
     B0 = np.array([19000.0, 1000.0, 45000.0])
-    grad = np.array([0.02, -0.01, 10.0])  # nT/m, spanning the configured gradient scales
+    grad = np.array(
+        [0.02, -0.01, 10.0]
+    )  # nT/m, spanning the configured gradient scales
     spacing = 0.5
 
     def f(z: float) -> float:
@@ -257,7 +263,9 @@ def test_second_difference_cancels_linear_gradient_first_difference_does_not():
     g1 = (b_hi - b_lo) / (2 * spacing)
     g2 = (b_hi + b_lo - 2 * b_mid) / spacing**2
 
-    assert abs(g1 - float(np.dot(grad, unit(B0)))) < 1e-6  # g1 recovers the projected gradient
+    assert (
+        abs(g1 - float(np.dot(grad, unit(B0)))) < 1e-6
+    )  # g1 recovers the projected gradient
     assert abs(g2) < 1e-3
     assert abs(g1) > 1.0
     assert abs(g2) < 1e-4 * abs(g1)  # several orders of magnitude smaller
@@ -305,7 +313,9 @@ def test_weld_pitch_is_recoverable_by_autocorrelation(tiny_cfg, tmp_path):
     assert abs(peak_lag - cfg.base.data.weld.pitch_m) < 1.0
 
 
-def test_weld_disabled_removes_the_train_entirely_not_just_its_label(tiny_cfg, tmp_path):
+def test_weld_disabled_removes_the_train_entirely_not_just_its_label(
+    tiny_cfg, tmp_path
+):
     """`weld.enabled: false` is the clean-room counterfactual's isolated test
     spool (scripts/cleanroom_experiment.py) -- it must remove the welds'
     PHYSICS, not merely stop labelling them, or the "no construction features"
@@ -317,6 +327,7 @@ def test_weld_disabled_removes_the_train_entirely_not_just_its_label(tiny_cfg, t
     (compared against the same seed/config with welds on). Defects and
     interference are switched off so welds are the ONLY source of structure.
     """
+
     def _run(enabled: bool):
         cfg = tiny_cfg
         cfg.base.data.length_m = 500.0
@@ -324,7 +335,9 @@ def test_weld_disabled_removes_the_train_entirely_not_just_its_label(tiny_cfg, t
         cfg.base.data.n_interference = 0
         cfg.base.data.walk.sample_rate_hz = 20.0
         cfg.base.data.weld = cfg.base.data.weld.model_copy(update={"enabled": enabled})
-        results = generate_all(cfg.base.data, tmp_path / f"raw_{enabled}", seed=cfg.seed)
+        results = generate_all(
+            cfg.base.data, tmp_path / f"raw_{enabled}", seed=cfg.seed
+        )
         return pd.read_parquet(results[0].path)
 
     with_welds = _run(True)
@@ -371,7 +384,9 @@ def test_gain_mismatch_leaves_the_predicted_common_mode_residual():
                 return v
             return np.full(size, self._noise_val)
 
-    sensor = SensorConfig(gain_sigma=0.002, offset_nt=2.0, adc_bits=24, full_scale_ut=100.0, noise_nt=5.0)
+    sensor = SensorConfig(
+        gain_sigma=0.002, offset_nt=2.0, adc_bits=24, full_scale_ut=100.0, noise_nt=5.0
+    )
     n = 10
     b_true = np.full(n, 48_800.0)
 

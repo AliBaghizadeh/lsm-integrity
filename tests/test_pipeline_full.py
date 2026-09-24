@@ -19,7 +19,9 @@ def _trained_conn_and_a_fresh_unregistered_survey(tiny_cfg):
     is what "not yet registered" actually requires here).
     """
     tiny_cfg.base.data.n_lines = 2
-    results = generate_all(tiny_cfg.base.data, tiny_cfg.env.storage.raw_dir, seed=tiny_cfg.seed)
+    results = generate_all(
+        tiny_cfg.base.data, tiny_cfg.env.storage.raw_dir, seed=tiny_cfg.seed
+    )
     line0, line1 = results[0], results[1]
 
     conn = connect(tiny_cfg.env.storage.sqlite_path)
@@ -44,7 +46,9 @@ def test_run_full_pipeline_scores_a_clean_survey(tiny_cfg):
     assert n_rows == len(indications)
 
 
-def test_run_full_pipeline_refuses_a_corrupted_survey_without_raising(tiny_cfg, tmp_path):
+def test_run_full_pipeline_refuses_a_corrupted_survey_without_raising(
+    tiny_cfg, tmp_path
+):
     import pandas as pd
 
     from lsm.hashing import content_sha256, file_sha256
@@ -65,7 +69,9 @@ def test_run_full_pipeline_refuses_a_corrupted_survey_without_raising(tiny_cfg, 
     assert any(r.check_name == "range" and r.status == "fail" for r in report.results)
     # features must never have been computed for a quarantined survey.
     assert not (
-        conn.execute("SELECT 1 FROM reading WHERE survey_id=?", (sr.survey_id,)).fetchone()
+        conn.execute(
+            "SELECT 1 FROM reading WHERE survey_id=?", (sr.survey_id,)
+        ).fetchone()
     )
 
 

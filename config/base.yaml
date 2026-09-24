@@ -52,8 +52,7 @@ data:
   label_window_scale: 2.0
   n_runs: 3
   growth: 1.15
-  # Rig-v2 (schema_version 2 -> 3, 2026-08-06): a second-round interview with
-  # the LSM instrument's own developer revealed the real rig -- a rod with
+  # Rig-v2 (schema_version 2 -> 3): the revised instrument model uses a rod with
   # THREE magnetometers 50 cm apart (middle + two), each reporting only |B|,
   # carried by a WALKER at irregular speed with GPS that drops out, not the
   # single-vector-head-on-a-rail model this file described until now. `rig`
@@ -70,7 +69,7 @@ data:
   stress_polarity: random
   array:
     # The real rod: middle + two heads, 50 cm apart, vertical mast (one of the
-    # open confirm-with-ROSEN items -- see docs -- assumed vertical here).
+    # open instrument-specific items -- assumed vertical here).
     # n_heads is fixed at 3 for rig: scalar; the schema's b_lo/b_mid/b_hi
     # columns are hardcoded to match.
     n_heads: 3
@@ -92,7 +91,7 @@ data:
     # marked "plan" are from the approved Rig-v2 physics spec; the
     # *_correlation_s/_m values are this implementation's own reasoned choice
     # of time/length scale (see config.py's WalkConfig docstring) -- there is
-    # no equivalent ROSEN-supplied number for those yet.
+    # no equivalent field measurement is available for those yet.
     speed_m_per_s: 1.2
     speed_sigma_m_per_s: 0.15
     speed_correlation_s: 8.0
@@ -143,7 +142,7 @@ data:
     # tests/test_generate.py's gain-mismatch test).
     gain_sigma: 0.002
     offset_nt: 2.0
-    # 24-bit over +/-100 uT -> LSB ~0.012 nT. ROSEN open question: is 100 uT
+    # 24-bit over +/-100 uT -> LSB ~0.012 nT. Open question: is 100 uT
     # the actual full-scale range (assumed here -- Earth's field is ~50 uT,
     # so this is a standard fluxgate range) or a noise/resolution figure?
     adc_bits: 24

@@ -39,7 +39,9 @@ from map_utils import build_map
 from lsm.config import load_config
 from lsm.indications import block_risk_heatmap
 
-st.set_page_config(layout="wide", page_title="LSM demo -- Stage 4.5", initial_sidebar_state="collapsed")
+st.set_page_config(
+    layout="wide", page_title="LSM demo -- Stage 4.5", initial_sidebar_state="collapsed"
+)
 
 # A client-facing splash before the working app -- gated on session_state so a
 # widget interaction later in the session (which reruns this whole script,
@@ -53,7 +55,9 @@ if not st.session_state["entered"]:
     st.write("")
     _, hero_center, _ = st.columns([1, 2, 1])
     with hero_center:
-        st.markdown("<h1 style='text-align:center'>AI in Action</h1>", unsafe_allow_html=True)
+        st.markdown(
+            "<h1 style='text-align:center'>AI in Action</h1>", unsafe_allow_html=True
+        )
         st.markdown(
             "<h3 style='text-align:center;font-weight:400'>Inspecting pipelines before they fail</h3>",
             unsafe_allow_html=True,
@@ -63,7 +67,9 @@ if not st.session_state["entered"]:
             "~48,800 nT scalar magnetometer signal (3 heads on a walked rod) to a "
             "risk-ranked dig list, scored end to end by real, trained models."
         )
-        components_img = Path(__file__).resolve().parents[1] / "img" / "project-components.png"
+        components_img = (
+            Path(__file__).resolve().parents[1] / "img" / "project-components.png"
+        )
         if components_img.exists():
             st.image(str(components_img), width="stretch")
         _, button_center, _ = st.columns([1, 1, 1])
@@ -108,14 +114,21 @@ st.markdown(
 top = st.columns([1, 2])
 with top[0]:
     mode = st.segmented_control(
-        "Mode", ["demo", "live"], default=os.environ.get("APP_MODE", "demo"), key="app_mode",
+        "Mode",
+        ["demo", "live"],
+        default=os.environ.get("APP_MODE", "demo"),
+        key="app_mode",
         help="demo: precomputed results, zero compute. live: re-runs the real pipeline now, ~1s.",
         required=True,  # a segmented_control click can otherwise DESELECT and return None
     )
 with top[1]:
     labels = [s["label"] for s in scenarios]
     selected_label = st.segmented_control(
-        "Scenario", labels, default=labels[0], key="scenario_label", required=True,
+        "Scenario",
+        labels,
+        default=labels[0],
+        key="scenario_label",
+        required=True,
     )
 
 # Defensive even with required=True: st.segmented_control CAN return None if
@@ -125,7 +138,9 @@ with top[1]:
 # than ever hard-crash the whole app on a widget edge case.
 scenario = next((s for s in scenarios if s["label"] == selected_label), scenarios[0])
 survey_id = scenario["survey_id"]
-st.caption(f"Scenario: **{scenario['label']}** -- survey_id `{survey_id}`, mode `{mode}`")
+st.caption(
+    f"Scenario: **{scenario['label']}** -- survey_id `{survey_id}`, mode `{mode}`"
+)
 
 if mode == "demo":
     raw = _cached_demo_raw(survey_id)
@@ -164,10 +179,17 @@ else:
         else None
     )
 
-overview, performance, beat1, beat2, beat3, beat4, heatmap_tab = st.tabs([
-    "1. How it works", "2. Model performance", "3. Raw signal", "4. Detrend + gradient",
-    "5. Ranked indications", "6. Corrupted survey", "7. Risk heatmap",
-])
+overview, performance, beat1, beat2, beat3, beat4, heatmap_tab = st.tabs(
+    [
+        "1. How it works",
+        "2. Model performance",
+        "3. Raw signal",
+        "4. Detrend + gradient",
+        "5. Ranked indications",
+        "6. Corrupted survey",
+        "7. Risk heatmap",
+    ]
+)
 
 # Real module names and check names, not paraphrases -- this tab exists so an
 # LSM engineer can map what they're looking at straight back to the codebase,
@@ -176,49 +198,114 @@ overview, performance, beat1, beat2, beat3, beat4, heatmap_tab = st.tabs([
 # render for a missing system binary on demo day, same reasoning as the rest
 # of this app.
 _STAGES = [
-    ("1. Ingest", "lsm.ingest",
-     ("Raw survey Parquet -> SQLite, content-hashed. Same bytes twice is a no-op; a "
-     "changed hash under an existing (line_id, run_id) is an error, never a silent "
-     "overwrite.")),
-    ("2. Validate", "lsm.validate",
-     ("14 data-quality checks (below). A hard failure quarantines the survey and "
-     "stops the pipeline here -- see tab 6 for what that looks like for real.")),
-    ("3. Register", "lsm.registration",
-     ("GPS dead-reckoning + girth-weld-comb detection -> chainage_m. Raw no longer "
-     "carries a usable position column -- the walker's speed is irregular and GPS "
-     "drops out, so along-track position has to be reconstructed, not read off.")),
-    ("4. Features", "lsm.features",
-     ("Per-survey detrend, per-head first/second difference (g1/g2), stand-off "
-     "inversion, sliding-window stats, peak-shape descriptors (FWHM, asymmetry, "
-     "decay exponent).")),
+    (
+        "1. Ingest",
+        "lsm.ingest",
+        (
+            "Raw survey Parquet -> SQLite, content-hashed. Same bytes twice is a no-op; a "
+            "changed hash under an existing (line_id, run_id) is an error, never a silent "
+            "overwrite."
+        ),
+    ),
+    (
+        "2. Validate",
+        "lsm.validate",
+        (
+            "14 data-quality checks (below). A hard failure quarantines the survey and "
+            "stops the pipeline here -- see tab 6 for what that looks like for real."
+        ),
+    ),
+    (
+        "3. Register",
+        "lsm.registration",
+        (
+            "GPS dead-reckoning + girth-weld-comb detection -> chainage_m. Raw no longer "
+            "carries a usable position column -- the walker's speed is irregular and GPS "
+            "drops out, so along-track position has to be reconstructed, not read off."
+        ),
+    ),
+    (
+        "4. Features",
+        "lsm.features",
+        (
+            "Per-survey detrend, per-head first/second difference (g1/g2), stand-off "
+            "inversion, sliding-window stats, peak-shape descriptors (FWHM, asymmetry, "
+            "decay exponent)."
+        ),
+    ),
 ]
 _STAGES_2 = [
-    ("5. Detect", "lsm.models.anomaly / lsm.indications",
-     ("MAD baseline or IsolationForest scores every row; contiguous flagged rows "
-     "cluster into one indication.")),
-    ("6. Severity + Classify", "lsm.models.severity / lsm.models.classify",
-     ("Two independent models score the SAME indication in parallel: a calibrated "
-     "5/50/95% severity interval, and a defect-type class + confidence.")),
-    ("7. Risk rank", "lsm.indications.attach_classification",
-     ("risk_score = calibrated P(defect) x severity x a stated consequence proxy. "
-     "Tab 5's table is sorted by this.")),
+    (
+        "5. Detect",
+        "lsm.models.anomaly / lsm.indications",
+        (
+            "MAD baseline or IsolationForest scores every row; contiguous flagged rows "
+            "cluster into one indication."
+        ),
+    ),
+    (
+        "6. Severity + Classify",
+        "lsm.models.severity / lsm.models.classify",
+        (
+            "Two independent models score the SAME indication in parallel: a calibrated "
+            "5/50/95% severity interval, and a defect-type class + confidence."
+        ),
+    ),
+    (
+        "7. Risk rank",
+        "lsm.indications.attach_classification",
+        (
+            "risk_score = calibrated P(defect) x severity x a stated consequence proxy. "
+            "Tab 5's table is sorted by this."
+        ),
+    ),
 ]
 
 _DQ_CHECKS = [
-    ("schema", "Column presence/dtypes/units/enum values against the declared data contract."),
-    ("range", "b_lo/mid/hi (the rod's three scalar heads) each stay inside the sensor's physical field range."),
-    ("saturation", "No stuck sensor / ADC rail -- N+ consecutive identical raw values on any head."),
+    (
+        "schema",
+        "Column presence/dtypes/units/enum values against the declared data contract.",
+    ),
+    (
+        "range",
+        "b_lo/mid/hi (the rod's three scalar heads) each stay inside the sensor's physical field range.",
+    ),
+    (
+        "saturation",
+        "No stuck sensor / ADC rail -- N+ consecutive identical raw values on any head.",
+    ),
     ("sample_idx_monotonic", "sample_idx strictly increasing, no reordering."),
     ("sample_idx_gap", "No missing samples beyond the allowed spacing tolerance."),
     ("duplicate_sample_idx", "No repeated sample_idx within one survey."),
-    ("duplicate_content", "This survey's content hash doesn't already exist under a different run -- a re-export."),
-    ("survey_overlap", "Cross-correlation against other accepted runs of the same line -- an overlapping re-run neither hash catches."),
-    ("gps_jump", "No physically-impossible lat/lon jump between consecutive locked GPS fixes."),
-    ("gps_chainage_consistency", "GPS-derived path length over locked stretches agrees with the true along-track distance over those same rows."),
+    (
+        "duplicate_content",
+        "This survey's content hash doesn't already exist under a different run -- a re-export.",
+    ),
+    (
+        "survey_overlap",
+        "Cross-correlation against other accepted runs of the same line -- an overlapping re-run neither hash catches.",
+    ),
+    (
+        "gps_jump",
+        "No physically-impossible lat/lon jump between consecutive locked GPS fixes.",
+    ),
+    (
+        "gps_chainage_consistency",
+        "GPS-derived path length over locked stretches agrees with the true along-track distance over those same rows.",
+    ),
     ("noise_floor", "Raw-signal noise sits within the expected sensor-floor band."),
-    ("background_regime", "This run's background statistics haven't shifted from the line's prior accepted runs."),
-    ("interference_density", "The fraction of interference-like readings is within the expected range."),
-    ("coverage", "The survey covers its expected chainage length with no large unexplained gaps."),
+    (
+        "background_regime",
+        "This run's background statistics haven't shifted from the line's prior accepted runs.",
+    ),
+    (
+        "interference_density",
+        "The fraction of interference-like readings is within the expected range.",
+    ),
+    (
+        "coverage",
+        "The survey covers its expected chainage length with no large unexplained gaps.",
+    ),
 ]
 
 with overview:
@@ -315,11 +402,17 @@ with beat1:
     )
     st.altair_chart(chart_utils.raw_components_chart(raw), width="stretch")
 
-    st.markdown("**|B| deviation from its own median** -- the same signal, one transform closer to visible")
+    st.markdown(
+        "**|B| deviation from its own median** -- the same signal, one transform closer to visible"
+    )
     scale_choice = st.radio(
-        "Y-axis", ["Log", "Linear"], index=0, horizontal=True, key="beat1_scale",
+        "Y-axis",
+        ["Log", "Linear"],
+        index=0,
+        horizontal=True,
+        key="beat1_scale",
         help="Log scale is the direct answer to 'I need log scale to see anomalies' -- raw "
-             "bx/by/bz are signed and can't be log-scaled directly, but this deviation can.",
+        "bx/by/bz are signed and can't be log-scaled directly, but this deviation can.",
     )
     st.caption(
         "Some peaks here won't line up with a dashed marker -- expected, not a bug: this is "
@@ -328,37 +421,51 @@ with beat1:
         "median. Beat 2's detrended residual is the fair comparison."
     )
     st.altair_chart(
-        chart_utils.deviation_chart(raw, log_scale=(scale_choice == "Log")), width="stretch"
+        chart_utils.deviation_chart(raw, log_scale=(scale_choice == "Log")),
+        width="stretch",
     )
 
 with beat2:
     st.subheader("Background removed")
     if features is None:
-        st.warning("No features computed for this scenario -- it was refused at validation. See tab 6.")
+        st.warning(
+            "No features computed for this scenario -- it was refused at validation. See tab 6."
+        )
     else:
         st.caption(
             "Residual (and the along-track/vertical gradient, if a second sensor head is "
             "present) after detrending. Both true defects AND true interference sources "
             "appear now -- separating them is what Stage 3's model does."
         )
-        st.altair_chart(chart_utils.residual_gradient_chart(features, raw), width="stretch")
+        st.altair_chart(
+            chart_utils.residual_gradient_chart(features, raw), width="stretch"
+        )
 
 with beat3:
     st.subheader("Ranked indications, on a dig budget")
     if indications is None or not len(indications):
         st.info("No indications for this scenario.")
     else:
-        _chainage_col = "chainage_m" if "chainage_m" in raw.columns else "chainage_true_m"
+        _chainage_col = (
+            "chainage_m" if "chainage_m" in raw.columns else "chainage_true_m"
+        )
         length_km = max(float(raw[_chainage_col].max()) / 1000.0, 0.001)
         budget_choice = st.segmented_control(
-            "Dig budget (per km)", ["3", "5", "10"], default="5", key="dig_budget", required=True,
+            "Dig budget (per km)",
+            ["3", "5", "10"],
+            default="5",
+            key="dig_budget",
+            required=True,
         )
         budget_n = max(1, round(int(budget_choice or 5) * length_km))
         # risk_score (Stage 5: calibrated P(defect) x severity x consequence) is the
         # real dig-priority ranking once a classify model has been released; it's
         # NULL on every row until then (no severity model either), so fall back to
         # anomaly_score rather than silently dig-ranking by an all-NULL column.
-        if "risk_score" in indications.columns and indications["risk_score"].notna().any():
+        if (
+            "risk_score" in indications.columns
+            and indications["risk_score"].notna().any()
+        ):
             rank_col = "risk_score"
         else:
             rank_col = "anomaly_score"
@@ -373,7 +480,9 @@ with beat3:
             f"'recall @ dig budget' (tab 2) is measured against."
         )
 
-        show_heatmap = st.checkbox("Show risk heatmap on map", value=False, key="beat3_heatmap")
+        show_heatmap = st.checkbox(
+            "Show risk heatmap on map", value=False, key="beat3_heatmap"
+        )
         st.pydeck_chart(build_map(raw, dug, show_heatmap=show_heatmap))
         st.caption(
             "orange = true defect - grey = true interference (unlabelled to the model) - "
@@ -388,14 +497,28 @@ with beat3:
             "(with its 90% interval) and type -- the table's numbers, made visible."
         )
 
-        show_cols = [c for c in [
-            "chainage_peak_m", "anomaly_score", "p_defect_cal", "pred_type", "pred_type_conf",
-            "sev_pred", "sev_lo", "sev_hi", "risk_score", "dq_flag",
-        ] if c in dug.columns]
+        show_cols = [
+            c
+            for c in [
+                "chainage_peak_m",
+                "anomaly_score",
+                "p_defect_cal",
+                "pred_type",
+                "pred_type_conf",
+                "sev_pred",
+                "sev_lo",
+                "sev_hi",
+                "risk_score",
+                "dq_flag",
+            ]
+            if c in dug.columns
+        ]
         st.dataframe(dug[show_cols], width="stretch")
 
         st.altair_chart(chart_utils.indications_rank_chart(dug), width="stretch")
-        st.caption(f"The table above, ranked and labeled -- one bar per row, by **{rank_col}**.")
+        st.caption(
+            f"The table above, ranked and labeled -- one bar per row, by **{rank_col}**."
+        )
 
         st.markdown("**Risk by chainage block, this line**")
         st.caption(
@@ -409,7 +532,9 @@ with beat3:
         if line_blocks.empty:
             st.info("No indications above threshold for this scenario.")
         else:
-            st.altair_chart(chart_utils.block_heatmap_chart(line_blocks), width="content")
+            st.altair_chart(
+                chart_utils.block_heatmap_chart(line_blocks), width="content"
+            )
 
 with beat4:
     st.subheader("What happens when the data itself is bad")
@@ -417,16 +542,26 @@ with beat4:
         st.success("This scenario passed every DQ gate -- nothing to refuse.")
     else:
         failed = [r for r in dq_failure["results"] if r["status"] == "fail"]
-        st.error(f"Refused to score {dq_failure['survey_id']}: {len(failed)} DQ check(s) failed.")
+        st.error(
+            f"Refused to score {dq_failure['survey_id']}: {len(failed)} DQ check(s) failed."
+        )
         for r in failed:
             with st.container(border=True):
-                st.markdown(f"**{r['check_name']}** -- {r['n_affected']} row(s) affected")
+                st.markdown(
+                    f"**{r['check_name']}** -- {r['n_affected']} row(s) affected"
+                )
                 failures = r["detail"].get("failures") if r["detail"] else None
                 if failures:
                     for f in failures:
-                        where = f"row {f['row_index']}" if f["row_index"] is not None else "the whole survey"
+                        where = (
+                            f"row {f['row_index']}"
+                            if f["row_index"] is not None
+                            else "the whole survey"
+                        )
                         column = f"`{f['column']}`" if f["column"] else "a"
-                        st.markdown(f"- {column} at {where} failed `{f['check']}` (value: `{f['failure_case']}`)")
+                        st.markdown(
+                            f"- {column} at {where} failed `{f['check']}` (value: `{f['failure_case']}`)"
+                        )
                 elif r["detail"]:
                     st.json(r["detail"])
 
@@ -471,11 +606,17 @@ with heatmap_tab:
             st.info("No indications above threshold in any scenario yet.")
         else:
             st.altair_chart(chart_utils.block_heatmap_chart(blocks), width="content")
-            st.caption(f"{len(frames)} line(s), {len(all_indications)} indication(s) total.")
+            st.caption(
+                f"{len(frames)} line(s), {len(all_indications)} indication(s) total."
+            )
 
 st.divider()
 pr = manifest["pipeline_release"]
-anomaly_git_sha = next(iter(manifest["model_run"].values()))["git_sha"] if manifest["model_run"] else "unknown"
+anomaly_git_sha = (
+    next(iter(manifest["model_run"].values()))["git_sha"]
+    if manifest["model_run"]
+    else "unknown"
+)
 st.caption(
     f"pipeline_version={pr['pipeline_version']} | feature_version={manifest['feature_version']} | "
     f"schema_version={manifest['schema_version']} | config_sha256={manifest['config_sha256'][:12]}... | "

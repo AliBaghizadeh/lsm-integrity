@@ -43,7 +43,7 @@ class ArrayConfig(BaseModel):
     gradient rejection would be perfect by construction, which is not real.
     `orientation` records the Stage-A decision to model the rod as a vertical
     mast (Context, "Decisions taken") -- "horizontal" is one of the open
-    questions for ROSEN and is deliberately NOT implemented; picking it raises
+    unresolved instrument questions and is deliberately NOT implemented; picking it raises
     rather than silently running vertical-mast physics under a different label.
     """
 
@@ -148,7 +148,9 @@ class SensorConfig(BaseModel):
     gain_sigma: float = 0.002
     offset_nt: float = 2.0
     adc_bits: int = 24
-    full_scale_ut: float = 100.0  # ROSEN open question: full-scale range or noise floor? see docs.
+    full_scale_ut: float = (
+        100.0  # Open question: full-scale range or noise floor?
+    )
     noise_nt: float = 5.0
 
 

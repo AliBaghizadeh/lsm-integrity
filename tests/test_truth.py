@@ -83,8 +83,17 @@ def test_nearest_source_finds_closest_within_kind():
 
 
 def test_nearest_source_returns_none_on_empty_registry():
-    empty = pd.DataFrame(columns=["source_id", "line_id", "kind", "defect_type",
-                                   "chainage_m", "chainage_start_m", "chainage_end_m"])
+    empty = pd.DataFrame(
+        columns=[
+            "source_id",
+            "line_id",
+            "kind",
+            "defect_type",
+            "chainage_m",
+            "chainage_start_m",
+            "chainage_end_m",
+        ]
+    )
     source_id, dist = nearest_source(50.0, empty)
     assert source_id is None
     assert dist == float("inf")

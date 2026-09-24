@@ -2,7 +2,7 @@
 
 The proposal this measures: rather than only ever seeing real buried pipeline
 -- where a defect's anomaly arrives mixed with external interference and a
-girth weld every ~12 m -- ROSEN runs its own test spools. Isolated pipe,
+    girth weld every ~12 m -- the reference setup uses isolated test spools. Isolated pipe,
 known defects, no interference, no construction features, chainage from a
 tape measure rather than a dropping-out GPS. Does data like that actually
 help the model that has to work in the FIELD?
@@ -119,7 +119,9 @@ def _isolated_config(domain: str):
     cfg = load_config("dev")
     tmp = Path(tempfile.mkdtemp(prefix=f"lsm_cleanroom_{domain}_"))
     cfg.env.storage.raw_dir = str(tmp / "raw")
-    cfg.env.storage.sqlite_path = str(tmp / "lsm.db")  # unused (no ingest), set for hygiene only
+    cfg.env.storage.sqlite_path = str(
+        tmp / "lsm.db"
+    )  # unused (no ingest), set for hygiene only
     cfg.env.storage.feature_dir = str(tmp / "features")
     cfg.env.storage.model_dir = str(tmp / "models")
     cfg.env.storage.reports_dir = str(tmp / "reports")
@@ -135,10 +137,14 @@ def _truth_columns(df: pd.DataFrame) -> pd.DataFrame:
     """Truth labels straight off the raw survey's own columns -- no SQLite
     ingest (see module docstring's SAFETY note).
     """
-    return df[["sample_idx", "defect", "defect_type", "interference", "severity_smys"]].copy()
+    return df[
+        ["sample_idx", "defect", "defect_type", "interference", "severity_smys"]
+    ].copy()
 
 
-def _build_corpus(cfg, domain: str) -> tuple[pd.DataFrame, pd.DataFrame, dict, list[str]]:
+def _build_corpus(
+    cfg, domain: str
+) -> tuple[pd.DataFrame, pd.DataFrame, dict, list[str]]:
     """Generate one domain's corpus and compute the FULL fv=3 feature set.
 
     Chainage differs by domain, and deliberately so -- it is one of the three
@@ -166,25 +172,40 @@ def _build_corpus(cfg, domain: str) -> tuple[pd.DataFrame, pd.DataFrame, dict, l
             chainage_m = df["chainage_true_m"].to_numpy(dtype=float)
             dist_to_weld_m = np.full(len(df), np.nan)
         ctx = SurveyContext(
-            survey_id=sr.survey_id, line_id=sr.line_id, run_id=sr.run_id,
-            surveyed_at=sr.surveyed_at, standoff_m=sr.standoff_m,
+            survey_id=sr.survey_id,
+            line_id=sr.line_id,
+            run_id=sr.run_id,
+            surveyed_at=sr.surveyed_at,
+            standoff_m=sr.standoff_m,
             array_spacing_m=cfg.base.data.array.spacing_m,
         )
         feat = compute_survey_features(
-            df, ctx, cfg.base.features, chainage_m=chainage_m, dist_to_weld_m=dist_to_weld_m,
+            df,
+            ctx,
+            cfg.base.features,
+            chainage_m=chainage_m,
+            dist_to_weld_m=dist_to_weld_m,
         )
-        feat = feat.merge(_truth_columns(df), on="sample_idx", how="left", validate="one_to_one")
+        feat = feat.merge(
+            _truth_columns(df), on="sample_idx", how="left", validate="one_to_one"
+        )
         frames.append(feat)
     corpus = pd.concat(frames, ignore_index=True)
 
     registries = []
     for line_id in sorted(corpus["line_id"].unique()):
-        ref_survey_id = min(corpus.loc[corpus["line_id"] == line_id, "survey_id"].unique())
+        ref_survey_id = min(
+            corpus.loc[corpus["line_id"] == line_id, "survey_id"].unique()
+        )
         ref_rows = corpus[corpus["survey_id"] == ref_survey_id]
-        registries.append(build_truth_registry(ref_rows, line_id, ref_rows["chainage_m"].to_numpy()))
+        registries.append(
+            build_truth_registry(ref_rows, line_id, ref_rows["chainage_m"].to_numpy())
+        )
     registry = pd.concat(registries, ignore_index=True)
 
-    run_line_id = corpus.drop_duplicates("survey_id").set_index("survey_id")["line_id"].to_dict()
+    run_line_id = (
+        corpus.drop_duplicates("survey_id").set_index("survey_id")["line_id"].to_dict()
+    )
     return corpus, registry, run_line_id, sorted(run_line_id)
 
 
@@ -204,7 +225,11 @@ def _split_lines() -> tuple[list[str], list[str]]:
 
 
 def _cross_domain_severity(
-    train_frame: pd.DataFrame, test_frame: pd.DataFrame, feature_cols: list[str], cfg, seed: int
+    train_frame: pd.DataFrame,
+    test_frame: pd.DataFrame,
+    feature_cols: list[str],
+    cfg,
+    seed: int,
 ) -> tuple[dict, dict] | None:
     """Fit SeverityModel (+ its conformal margin) on `train_frame`, predict on
     `test_frame`. Same inner train/calibration split by DEFECT as
@@ -223,7 +248,9 @@ def _cross_domain_severity(
     defects = train_frame["matched_source_id"].unique()
     rng.shuffle(defects)
     n_calib = (
-        max(1, round(len(defects) * train_module.CONFORMAL_CALIB_FRACTION)) if len(defects) > 1 else 0
+        max(1, round(len(defects) * train_module.CONFORMAL_CALIB_FRACTION))
+        if len(defects) > 1
+        else 0
     )
     calib_ids = set(defects[:n_calib])
     train = train_frame[~train_frame["matched_source_id"].isin(calib_ids)]
@@ -232,8 +259,10 @@ def _cross_domain_severity(
         train, calib = train_frame, train_frame.iloc[0:0]
 
     model = SeverityModel(
-        feature_cols=feature_cols, quantiles=tuple(sev_cfg["quantiles"]),
-        conformal_alpha=sev_cfg["conformal_alpha"], seed=seed,
+        feature_cols=feature_cols,
+        quantiles=tuple(sev_cfg["quantiles"]),
+        conformal_alpha=sev_cfg["conformal_alpha"],
+        seed=seed,
         lgbm_cfg=cfg.base.model.lightgbm.model_dump(),
         min_child_samples=sev_cfg.get("min_child_samples", 3),
         n_estimators=sev_cfg.get("n_estimators", 50),
@@ -241,15 +270,19 @@ def _cross_domain_severity(
     ).fit(train, train["y_true"].to_numpy(), calib, calib["y_true"].to_numpy())
     med, lo, hi = model.predict(test_frame)
 
-    baseline = GlobalMeanSeverityBaseline(conformal_alpha=sev_cfg["conformal_alpha"]).fit(
-        train["y_true"].to_numpy(), calib["y_true"].to_numpy()
-    )
+    baseline = GlobalMeanSeverityBaseline(
+        conformal_alpha=sev_cfg["conformal_alpha"]
+    ).fit(train["y_true"].to_numpy(), calib["y_true"].to_numpy())
     bmed, blo, bhi = baseline.predict(len(test_frame))
 
     ids = test_frame["matched_source_id"].to_numpy()
     y_true = test_frame["y_true"].to_numpy()
-    oof_model = pd.DataFrame({"defect_id": ids, "y_true": y_true, "y_pred": med, "lo": lo, "hi": hi})
-    oof_base = pd.DataFrame({"defect_id": ids, "y_true": y_true, "y_pred": bmed, "lo": blo, "hi": bhi})
+    oof_model = pd.DataFrame(
+        {"defect_id": ids, "y_true": y_true, "y_pred": med, "lo": lo, "hi": hi}
+    )
+    oof_base = pd.DataFrame(
+        {"defect_id": ids, "y_true": y_true, "y_pred": bmed, "lo": blo, "hi": bhi}
+    )
     return (
         train_module._severity_bootstrap_metrics(oof_model, cfg, seed=seed + 20),
         train_module._severity_bootstrap_metrics(oof_base, cfg, seed=seed + 30),
@@ -257,7 +290,11 @@ def _cross_domain_severity(
 
 
 def _cross_domain_classify(
-    train_frame: pd.DataFrame, test_frame: pd.DataFrame, feature_cols: list[str], cfg, seed: int
+    train_frame: pd.DataFrame,
+    test_frame: pd.DataFrame,
+    feature_cols: list[str],
+    cfg,
+    seed: int,
 ) -> tuple[dict, dict] | None:
     """Fit ClassifyModel (+ isotonic calibration) on `train_frame`, predict on
     `test_frame`. Class-stratified defect-grouped calibration split, same as
@@ -270,7 +307,11 @@ def _cross_domain_classify(
     costs of the proposal, and it shows up honestly as interference recall and
     precision when such a model is evaluated on field data.
     """
-    if len(train_frame) < 8 or len(test_frame) == 0 or train_frame["defect_type"].nunique() < 2:
+    if (
+        len(train_frame) < 8
+        or len(test_frame) == 0
+        or train_frame["defect_type"].nunique() < 2
+    ):
         return None
     classify_cfg = cfg.base.model.classify
     lgbm_cfg = {
@@ -281,7 +322,11 @@ def _cross_domain_classify(
     rng = np.random.default_rng(seed)
 
     train_ids, calib_ids = train_module._stratified_defect_calib_split(
-        train_frame, "defect_type", "matched_source_id", train_module.CLASSIFY_CALIB_FRACTION, rng
+        train_frame,
+        "defect_type",
+        "matched_source_id",
+        train_module.CLASSIFY_CALIB_FRACTION,
+        rng,
     )
     train = train_frame[train_frame["matched_source_id"].isin(train_ids)]
     calib = train_frame[train_frame["matched_source_id"].isin(calib_ids)]
@@ -289,29 +334,41 @@ def _cross_domain_classify(
         train, calib = train_frame, train_frame.iloc[0:0]
 
     model = ClassifyModel(
-        feature_cols=feature_cols, classes=CLASSIFY_CLASSES, seed=seed, lgbm_cfg=lgbm_cfg,
+        feature_cols=feature_cols,
+        classes=CLASSIFY_CLASSES,
+        seed=seed,
+        lgbm_cfg=lgbm_cfg,
         class_weight=classify_cfg.get("class_weight", "balanced"),
         min_child_samples=classify_cfg.get("min_child_samples", 3),
-    ).fit(train, train["defect_type"].to_numpy(), calib, calib["defect_type"].to_numpy())
+    ).fit(
+        train, train["defect_type"].to_numpy(), calib, calib["defect_type"].to_numpy()
+    )
     proba = model.predict_proba(test_frame)
     pred_type, pred_conf = model.predict(test_frame)
 
-    baseline = MajorityClassBaseline(classes=CLASSIFY_CLASSES).fit(train["defect_type"].to_numpy())
+    baseline = MajorityClassBaseline(classes=CLASSIFY_CLASSES).fit(
+        train["defect_type"].to_numpy()
+    )
     base_proba = baseline.predict_proba(len(test_frame))
     base_pred_type, base_pred_conf = baseline.predict(len(test_frame))
 
     def _frame(pt, pc, pr) -> pd.DataFrame:
-        out = pd.DataFrame({
-            "defect_id": test_frame["matched_source_id"].to_numpy(),
-            "true_class": test_frame["defect_type"].to_numpy(),
-            "pred_type": np.asarray(pt), "pred_conf": np.asarray(pc),
-        })
+        out = pd.DataFrame(
+            {
+                "defect_id": test_frame["matched_source_id"].to_numpy(),
+                "true_class": test_frame["defect_type"].to_numpy(),
+                "pred_type": np.asarray(pt),
+                "pred_conf": np.asarray(pc),
+            }
+        )
         for c in CLASSIFY_CLASSES:
             out[c] = pr[c].to_numpy()
         return out
 
     return (
-        train_module._classify_bootstrap_metrics(_frame(pred_type, pred_conf, proba), cfg, seed=seed + 40),
+        train_module._classify_bootstrap_metrics(
+            _frame(pred_type, pred_conf, proba), cfg, seed=seed + 40
+        ),
         train_module._classify_bootstrap_metrics(
             _frame(base_pred_type, base_pred_conf, base_proba), cfg, seed=seed + 50
         ),
@@ -332,12 +389,18 @@ def _fmt_ci(triple) -> str:
 
 def main() -> None:
     if N_LINES < 4 or N_LINES % 2 != 0:
-        raise SystemExit(f"CLEANROOM_N_LINES must be even and >= 4 (got {N_LINES}) -- E2 splits lines in half.")
+        raise SystemExit(
+            f"CLEANROOM_N_LINES must be even and >= 4 (got {N_LINES}) -- E2 splits lines in half."
+        )
 
     train_lines, test_lines = _split_lines()
     lines: list[str] = []
-    lines.append(f"Clean-room experiment -- {N_LINES} lines/domain at production per-line density.")
-    lines.append(f"E2 line split: train {train_lines} / test {test_lines} (same ids in both domains).")
+    lines.append(
+        f"Clean-room experiment -- {N_LINES} lines/domain at production per-line density."
+    )
+    lines.append(
+        f"E2 line split: train {train_lines} / test {test_lines} (same ids in both domains)."
+    )
     print("\n".join(lines) + "\n")
 
     feature_cols: list[str] = []
@@ -350,24 +413,39 @@ def main() -> None:
         # a cross-domain model must never see a different feature list than it
         # was fitted on. See `_build_corpus` on why dist_to_weld_m is kept.
         feature_cols = feature_columns(cfg.base.features)
-        print(f"[{domain}] generating + featurising {N_LINES} lines x {cfg.base.data.n_runs} runs...")
+        print(
+            f"[{domain}] generating + featurising {N_LINES} lines x {cfg.base.data.n_runs} runs..."
+        )
         t_build = time.perf_counter()
         corpus, registry, run_line_id, survey_ids = _build_corpus(cfg, domain)
         print(f"[{domain}] built in {time.perf_counter() - t_build:.0f} s")
-        print(f"[{domain}] corpus: {len(corpus):,} rows, {len(survey_ids)} surveys, "
-              f"{len(registry)} truth sources "
-              f"({int((registry['kind'] == 'defect').sum())} defect, "
-              f"{int((registry['kind'] == 'interference').sum())} interference)")
+        print(
+            f"[{domain}] corpus: {len(corpus):,} rows, {len(survey_ids)} surveys, "
+            f"{len(registry)} truth sources "
+            f"({int((registry['kind'] == 'defect').sum())} defect, "
+            f"{int((registry['kind'] == 'interference').sum())} interference)"
+        )
 
         split_cfg = cfg.base.model.split
         corpus = add_fold_column(
-            corpus, "line_id", "chainage_m", block_m=split_cfg.fallback_block_m, n_folds=split_cfg.n_folds
+            corpus,
+            "line_id",
+            "chainage_m",
+            block_m=split_cfg.fallback_block_m,
+            n_folds=split_cfg.n_folds,
         )
         print(f"[{domain}] E1: Stage 3/4/5 within-domain evaluation...")
         t_eval = time.perf_counter()
-        corpus, result, severity_frame, classify_frame, _cal = train_module._evaluate_corpus(
-            corpus, feature_cols, cfg, seed=cfg.seed + 700, registry=registry,
-            run_line_id=run_line_id, survey_ids=survey_ids,
+        corpus, result, severity_frame, classify_frame, _cal = (
+            train_module._evaluate_corpus(
+                corpus,
+                feature_cols,
+                cfg,
+                seed=cfg.seed + 700,
+                registry=registry,
+                run_line_id=run_line_id,
+                survey_ids=survey_ids,
+            )
         )
         # line_id for the E2 split -- carried through attach_indication_features
         # from the corpus, but mapped defensively rather than assumed.
@@ -375,53 +453,94 @@ def main() -> None:
             if len(frame):
                 frame["line_id"] = frame["survey_id"].map(run_line_id)
         domain_data[domain] = {
-            "cfg": cfg, "result": result,
-            "severity_frame": severity_frame, "classify_frame": classify_frame,
+            "cfg": cfg,
+            "result": result,
+            "severity_frame": severity_frame,
+            "classify_frame": classify_frame,
             "n_rows": len(corpus),
         }
-        print(f"[{domain}] E1 done in {time.perf_counter() - t_eval:.0f} s -- "
-              f"IF recall {_fmt_ci(result['isolation_forest']['recall_at_budget'])}")
+        print(
+            f"[{domain}] E1 done in {time.perf_counter() - t_eval:.0f} s -- "
+            f"IF recall {_fmt_ci(result['isolation_forest']['recall_at_budget'])}"
+        )
 
     # -- E1 report ----------------------------------------------------------
-    out: list[str] = ["", "=" * 100,
-                      "E1 -- CEILING (within-domain, diagnostic only: NOT evidence for the campaign)",
-                      "=" * 100]
+    out: list[str] = [
+        "",
+        "=" * 100,
+        "E1 -- CEILING (within-domain, diagnostic only: NOT evidence for the campaign)",
+        "=" * 100,
+    ]
     for domain in DOMAINS:
         r = domain_data[domain]["result"]
-        out.append(f"\n[{domain}]  {domain_data[domain]['n_rows']:,} rows, "
-                   f"{r['n_defects']} physical defects, {r['n_surveys']} surveys")
+        out.append(
+            f"\n[{domain}]  {domain_data[domain]['n_rows']:,} rows, "
+            f"{r['n_defects']} physical defects, {r['n_surveys']} surveys"
+        )
         out.append("  Stage 3 detect")
-        out.append(f"    MAD  recall @ budget      {_fmt_ci(r['mad']['recall_at_budget'])}")
-        out.append(f"    IF   recall @ budget      {_fmt_ci(r['isolation_forest']['recall_at_budget'])}")
-        out.append(f"    recall gap (IF - MAD)     {_fmt_ci(r['recall_gap_if_minus_mad'])}"
-                   f"   gate(>=0.15 @ CI lo): {'PASS' if r['gate_passed'] else 'FAIL'}")
-        out.append(f"    IF   false-dig rate       {_fmt_ci(r['isolation_forest']['false_dig_rate'])}")
-        out.append(f"    IF   localisation (cm)    {_fmt_ci(r['isolation_forest']['localisation_error_cm'])}")
+        out.append(
+            f"    MAD  recall @ budget      {_fmt_ci(r['mad']['recall_at_budget'])}"
+        )
+        out.append(
+            f"    IF   recall @ budget      {_fmt_ci(r['isolation_forest']['recall_at_budget'])}"
+        )
+        out.append(
+            f"    recall gap (IF - MAD)     {_fmt_ci(r['recall_gap_if_minus_mad'])}"
+            f"   gate(>=0.15 @ CI lo): {'PASS' if r['gate_passed'] else 'FAIL'}"
+        )
+        out.append(
+            f"    IF   false-dig rate       {_fmt_ci(r['isolation_forest']['false_dig_rate'])}"
+        )
+        out.append(
+            f"    IF   localisation (cm)    {_fmt_ci(r['isolation_forest']['localisation_error_cm'])}"
+        )
         if "severity" in r:
             out.append("  Stage 4 severity")
-            out.append(f"    coverage                  {_fmt_ci(r['severity']['coverage'])}"
-                       f"   (baseline {_fmt_ci(r['severity_baseline']['coverage'])})"
-                       f"   gate[0.87,0.93]: {'PASS' if r.get('severity_gate_passed') else 'FAIL'}")
-            out.append(f"    MAE                       {_fmt_ci(r['severity']['mae'])}"
-                       f"   (baseline {_fmt_ci(r['severity_baseline']['mae'])})")
+            out.append(
+                f"    coverage                  {_fmt_ci(r['severity']['coverage'])}"
+                f"   (baseline {_fmt_ci(r['severity_baseline']['coverage'])})"
+                f"   gate[0.87,0.93]: {'PASS' if r.get('severity_gate_passed') else 'FAIL'}"
+            )
+            out.append(
+                f"    MAE                       {_fmt_ci(r['severity']['mae'])}"
+                f"   (baseline {_fmt_ci(r['severity_baseline']['mae'])})"
+            )
         else:
-            out.append("  Stage 4 severity            not evaluated (too few matched indications)")
+            out.append(
+                "  Stage 4 severity            not evaluated (too few matched indications)"
+            )
         if "classify" in r:
             out.append("  Stage 5 classify (per-class recall)")
             for c in CLASSIFY_CLASSES:
-                out.append(f"    {c:<14}            {_fmt_ci(r['classify']['per_class_recall'].get(c))}")
-            out.append(f"    interference precision    {_fmt_ci(r['classify']['interference_precision'])}")
+                out.append(
+                    f"    {c:<14}            {_fmt_ci(r['classify']['per_class_recall'].get(c))}"
+                )
+            out.append(
+                f"    interference precision    {_fmt_ci(r['classify']['interference_precision'])}"
+            )
         else:
-            out.append("  Stage 5 classify            not evaluated (too few matched indications)")
+            out.append(
+                "  Stage 5 classify            not evaluated (too few matched indications)"
+            )
 
-    out.append("\nNOTE: the two domains have DIFFERENT physical defect universes (different")
-    out.append("corpora, different RNG trajectories), so these are independent CIs -- read them")
-    out.append("via overlap, never as a paired delta. Same convention as ablation_ladder.py's")
+    out.append(
+        "\nNOTE: the two domains have DIFFERENT physical defect universes (different"
+    )
+    out.append(
+        "corpora, different RNG trajectories), so these are independent CIs -- read them"
+    )
+    out.append(
+        "via overlap, never as a paired delta. Same convention as ablation_ladder.py's"
+    )
     out.append("arm 5 -> 6 comparison.")
 
     # -- E2: the transfer matrix --------------------------------------------
-    out += ["", "=" * 100, "E2 -- TRANSFER (train on one domain, test on the other's held-out lines)",
-            "=" * 100]
+    out += [
+        "",
+        "=" * 100,
+        "E2 -- TRANSFER (train on one domain, test on the other's held-out lines)",
+        "=" * 100,
+    ]
 
     cfg_ref = domain_data["field"]["cfg"]
     sev_feature_cols = [*feature_cols, "extent_m"]
@@ -435,10 +554,27 @@ def main() -> None:
             sev_tgt = domain_data[tgt]["severity_frame"]
             cls_src = domain_data[src]["classify_frame"]
             cls_tgt = domain_data[tgt]["classify_frame"]
-            sev_tr = sev_src[sev_src["line_id"].isin(train_lines)] if len(sev_src) else sev_src
-            sev_te = sev_tgt[sev_tgt["line_id"].isin(test_lines)] if len(sev_tgt) else sev_tgt
-            cls_tr = cls_src[cls_src["line_id"].isin(train_lines)] if len(cls_src) else cls_src
-            cls_te = cls_tgt[cls_tgt["line_id"].isin(test_lines)] if len(cls_tgt) else cls_tgt
+            sev_tr = (
+                sev_src[sev_src["line_id"].isin(train_lines)]
+                if len(sev_src)
+                else sev_src
+            )
+            sev_te = (
+                sev_tgt[sev_tgt["line_id"].isin(test_lines)]
+                if len(sev_tgt)
+                else sev_tgt
+            )
+            cls_tr = (
+                cls_src[cls_src["line_id"].isin(train_lines)]
+                if len(cls_src)
+                else cls_src
+            )
+            cls_te = (
+                cls_tgt[cls_tgt["line_id"].isin(test_lines)]
+                if len(cls_tgt)
+                else cls_tgt
+            )
+
             # Distinct physical sources, not just indication rows -- the
             # bootstrap resamples by source, so THAT is what sets CI width.
             def _n_src(frame: pd.DataFrame) -> int:
@@ -457,18 +593,36 @@ def main() -> None:
                 cls_tr, cls_te, sev_feature_cols, cfg_ref, seed=cfg_ref.seed + 900
             )
 
-    out.append(f"\nIndication counts per cell (train lines {train_lines} / test lines {test_lines}):")
+    out.append(
+        f"\nIndication counts per cell (train lines {train_lines} / test lines {test_lines}):"
+    )
     out += counts
-    out.append("\nCAVEAT on the test sets: an indication only exists because the DETECTOR flagged")
-    out.append("it, and that detector was cross-validated within its own domain across all lines")
-    out.append("-- so a test-line indication was produced by a model that saw other folds of the")
-    out.append("same domain. That is common-mode across every cell sharing a test domain (the two")
-    out.append("`-> field` rows are scored on the identical indication set, likewise the two")
-    out.append("`-> cleanroom` rows), so it cannot favour one SOURCE domain over the other, which")
-    out.append("is the comparison being made. It does mean an absolute number here is not a")
+    out.append(
+        "\nCAVEAT on the test sets: an indication only exists because the DETECTOR flagged"
+    )
+    out.append(
+        "it, and that detector was cross-validated within its own domain across all lines"
+    )
+    out.append(
+        "-- so a test-line indication was produced by a model that saw other folds of the"
+    )
+    out.append(
+        "same domain. That is common-mode across every cell sharing a test domain (the two"
+    )
+    out.append(
+        "`-> field` rows are scored on the identical indication set, likewise the two"
+    )
+    out.append(
+        "`-> cleanroom` rows), so it cannot favour one SOURCE domain over the other, which"
+    )
+    out.append(
+        "is the comparison being made. It does mean an absolute number here is not a"
+    )
     out.append("deployment estimate.")
 
-    out.append("\n-- Stage 5 classify: per-class recall on the TEST domain's held-out lines --")
+    out.append(
+        "\n-- Stage 5 classify: per-class recall on the TEST domain's held-out lines --"
+    )
     header = f"  {'train -> test':<28}" + "".join(f"{c:>22}" for c in CLASSIFY_CLASSES)
     out.append(header)
     for src in DOMAINS:
@@ -480,7 +634,10 @@ def main() -> None:
                 continue
             metrics, _base = cell
             row = f"  {label:<28}"
-            row += "".join(f"{_fmt_ci(metrics['per_class_recall'].get(c)):>22}" for c in CLASSIFY_CLASSES)
+            row += "".join(
+                f"{_fmt_ci(metrics['per_class_recall'].get(c)):>22}"
+                for c in CLASSIFY_CLASSES
+            )
             out.append(row)
 
     out.append(f"\n  {'train -> test':<28}{'interference precision':>26}{'brier':>26}")
@@ -492,15 +649,21 @@ def main() -> None:
                 out.append(f"  {label:<28}{'n/a':>26}{'n/a':>26}")
                 continue
             metrics, _base = cell
-            out.append(f"  {label:<28}{_fmt_ci(metrics['interference_precision']):>26}"
-                       f"{_fmt_ci(metrics['brier']):>26}")
+            out.append(
+                f"  {label:<28}{_fmt_ci(metrics['interference_precision']):>26}"
+                f"{_fmt_ci(metrics['brier']):>26}"
+            )
 
-    out.append("\n-- Stage 4 severity: conformal coverage / MAE on the TEST domain's held-out lines --")
+    out.append(
+        "\n-- Stage 4 severity: conformal coverage / MAE on the TEST domain's held-out lines --"
+    )
     # interval_width is reported ALONGSIDE coverage deliberately: coverage on
     # its own is buyable by simply widening the interval, so a cell with high
     # coverage AND worse MAE is ambiguous (better-calibrated, or just vaguer?)
     # until the width is on the page next to it.
-    out.append(f"  {'train -> test':<28}{'coverage':>26}{'interval width':>26}{'MAE':>26}{'baseline MAE':>26}")
+    out.append(
+        f"  {'train -> test':<28}{'coverage':>26}{'interval width':>26}{'MAE':>26}{'baseline MAE':>26}"
+    )
     for src in DOMAINS:
         for tgt in DOMAINS:
             cell = sev_cells[(src, tgt)]
@@ -509,15 +672,25 @@ def main() -> None:
                 out.append(f"  {label:<28}" + f"{'n/a':>26}" * 4)
                 continue
             metrics, base = cell
-            out.append(f"  {label:<28}{_fmt_ci(metrics['coverage']):>26}"
-                       f"{_fmt_ci(metrics['interval_width']):>26}"
-                       f"{_fmt_ci(metrics['mae']):>26}{_fmt_ci(base['mae']):>26}")
+            out.append(
+                f"  {label:<28}{_fmt_ci(metrics['coverage']):>26}"
+                f"{_fmt_ci(metrics['interval_width']):>26}"
+                f"{_fmt_ci(metrics['mae']):>26}{_fmt_ci(base['mae']):>26}"
+            )
 
     out.append("")
-    out.append("HOW TO READ E2: the decisive comparison is the two rows ending in `-> field`.")
-    out.append("`cleanroom -> field` is what an in-house campaign actually buys; `field -> field`")
-    out.append("is today's status quo on the same held-out lines. If the clean-room-trained model")
-    out.append("does not at least match the field-trained one ON FIELD DATA, the campaign does not")
+    out.append(
+        "HOW TO READ E2: the decisive comparison is the two rows ending in `-> field`."
+    )
+    out.append(
+        "`cleanroom -> field` is what an in-house campaign actually buys; `field -> field`"
+    )
+    out.append(
+        "is today's status quo on the same held-out lines. If the clean-room-trained model"
+    )
+    out.append(
+        "does not at least match the field-trained one ON FIELD DATA, the campaign does not"
+    )
     out.append("pay for the model, whatever the `-> cleanroom` column says.")
 
     report = "\n".join(out)

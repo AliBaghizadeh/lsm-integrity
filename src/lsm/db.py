@@ -144,7 +144,9 @@ CREATE INDEX IF NOT EXISTS ix_dq_survey ON dq_report(survey_id, status);
 """
 
 
-def connect(sqlite_path: str | Path, check_same_thread: bool = True) -> sqlite3.Connection:
+def connect(
+    sqlite_path: str | Path, check_same_thread: bool = True
+) -> sqlite3.Connection:
     """`check_same_thread=False` is for callers that cache this connection
     across a threaded reuse they don't control -- Streamlit reruns a cached
     resource on whatever thread its runtime picks, and sqlite3 refuses cross-

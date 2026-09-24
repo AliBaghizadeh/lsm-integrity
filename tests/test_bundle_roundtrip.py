@@ -98,7 +98,11 @@ def test_load_bundle_refuses_a_library_version_mismatch(tmp_path):
 
 def test_load_bundle_raises_file_not_found_with_a_helpful_message(tmp_path):
     with pytest.raises(FileNotFoundError):
-        load_bundle(tmp_path / "does_not_exist.joblib", expected_feature_version=1, expected_schema_version=2)
+        load_bundle(
+            tmp_path / "does_not_exist.joblib",
+            expected_feature_version=1,
+            expected_schema_version=2,
+        )
 
 
 def test_training_feature_summary_reports_mean_std_min_max():
@@ -137,7 +141,10 @@ def test_training_prediction_reference_reports_rate_and_bounded_sample():
     from lsm.bundle import training_prediction_reference
 
     ref = training_prediction_reference(
-        indications_per_km=4.2, p_defect_cal_sample=np.linspace(0, 1, 50), seed=0, sample_size=10,
+        indications_per_km=4.2,
+        p_defect_cal_sample=np.linspace(0, 1, 50),
+        seed=0,
+        sample_size=10,
     )
     assert ref["indications_per_km"] == 4.2
     assert len(ref["p_defect_cal_sample"]) == 10
@@ -156,9 +163,14 @@ def _fitted_classify_bundle() -> dict:
     X_calib, y_calib = X.iloc[40:], y[40:]
 
     model = ClassifyModel(
-        feature_cols=["a", "b"], classes=CLASSIFY_CLASSES, seed=0, lgbm_cfg=_LGBM_CFG,
+        feature_cols=["a", "b"],
+        classes=CLASSIFY_CLASSES,
+        seed=0,
+        lgbm_cfg=_LGBM_CFG,
     ).fit(X_train, y_train, X_calib, y_calib)
-    defect_calibrator = IsotonicRegression(out_of_bounds="clip").fit([0.0, 5.0, 10.0], [0.0, 0.5, 1.0])
+    defect_calibrator = IsotonicRegression(out_of_bounds="clip").fit(
+        [0.0, 5.0, 10.0], [0.0, 0.5, 1.0]
+    )
 
     return {
         "task": "classify",

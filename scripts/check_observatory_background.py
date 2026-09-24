@@ -43,8 +43,13 @@ def run(cfg, label: str) -> None:
         result = generate_all(cfg.base.data, Path(tmp), seed=cfg.base.seed)[0]
         raw = pd.read_parquet(result.path)
         ctx = SurveyContext(
-            result.survey_id, result.line_id, result.run_id, result.step_m,
-            result.standoff_m, result.surveyed_at, cfg.base.data.gradiometer.baseline_m,
+            result.survey_id,
+            result.line_id,
+            result.run_id,
+            result.step_m,
+            result.standoff_m,
+            result.surveyed_at,
+            cfg.base.data.gradiometer.baseline_m,
         )
         feats = compute_survey_features(raw, ctx, cfg.base.features)
 
@@ -55,11 +60,15 @@ def run(cfg, label: str) -> None:
     noise_floor = cfg.base.data.noise_nT
 
     print(f"\n=== {label} ===")
-    print(f"  background residual |r|  median={bg.median():7.2f} nT   p95={bg.quantile(0.95):7.2f} nT")
+    print(
+        f"  background residual |r|  median={bg.median():7.2f} nT   p95={bg.quantile(0.95):7.2f} nT"
+    )
     print(f"  defect     residual |r|  median={d.median():7.2f} nT")
     print(f"  sensor noise floor                {noise_floor:7.2f} nT")
-    print(f"  detect contrast (defect / background median): {d.median() / bg.median():5.2f}x "
-          f"{'-- Stage 2 gate (>3x) HOLDS' if d.median() / bg.median() > 3.0 else '-- Stage 2 gate BREAKS'}")
+    print(
+        f"  detect contrast (defect / background median): {d.median() / bg.median():5.2f}x "
+        f"{'-- Stage 2 gate (>3x) HOLDS' if d.median() / bg.median() > 3.0 else '-- Stage 2 gate BREAKS'}"
+    )
 
 
 def main() -> None:
@@ -68,8 +77,14 @@ def main() -> None:
     run(cfg, "Synthetic background (drift + one sinusoid) -- the current default")
 
     for csv_name, label in [
-        ("geomag_bou_2024-03-15_quiet.csv", "Real trace: BOU, 2024-03-15 (geomagnetically quiet day)"),
-        ("geomag_bou_2024-05-10_storm.csv", "Real trace: BOU, 2024-05-10 (G5 'Mother's Day' storm)"),
+        (
+            "geomag_bou_2024-03-15_quiet.csv",
+            "Real trace: BOU, 2024-03-15 (geomagnetically quiet day)",
+        ),
+        (
+            "geomag_bou_2024-05-10_storm.csv",
+            "Real trace: BOU, 2024-05-10 (G5 'Mother's Day' storm)",
+        ),
     ]:
         obs_cfg = copy.deepcopy(cfg)
         obs_cfg.base.data.observatory_background.enabled = True

@@ -70,8 +70,12 @@ def test_calibrated_threshold_is_the_upper_quantile():
 def test_emphasis_repeats_widens_the_fitted_matrix():
     X = pd.DataFrame({"a": np.arange(50.0), "b": np.arange(50.0) * 2})
     model = IsolationForestAnomalyModel(
-        feature_cols=["a", "b"], contamination=0.1, n_estimators=10, seed=0,
-        emphasize_features=["a"], emphasis_repeats=4,
+        feature_cols=["a", "b"],
+        contamination=0.1,
+        n_estimators=10,
+        seed=0,
+        emphasize_features=["a"],
+        emphasis_repeats=4,
     )
     matrix = model._matrix(X)
     assert matrix.shape == (50, 2 + 3)  # base (a, b) + 3 extra copies of a
@@ -80,11 +84,18 @@ def test_emphasis_repeats_widens_the_fitted_matrix():
 def test_emphasis_repeats_of_one_is_a_no_op():
     X = pd.DataFrame({"a": np.arange(10.0), "b": np.arange(10.0) * 2})
     plain = IsolationForestAnomalyModel(
-        feature_cols=["a", "b"], contamination=0.1, n_estimators=10, seed=0,
+        feature_cols=["a", "b"],
+        contamination=0.1,
+        n_estimators=10,
+        seed=0,
     )
     emphasised = IsolationForestAnomalyModel(
-        feature_cols=["a", "b"], contamination=0.1, n_estimators=10, seed=0,
-        emphasize_features=["a"], emphasis_repeats=1,
+        feature_cols=["a", "b"],
+        contamination=0.1,
+        n_estimators=10,
+        seed=0,
+        emphasize_features=["a"],
+        emphasis_repeats=1,
     )
     np.testing.assert_array_equal(plain._matrix(X), emphasised._matrix(X))
 
@@ -92,8 +103,12 @@ def test_emphasis_repeats_of_one_is_a_no_op():
 def test_emphasize_features_must_be_a_subset_of_feature_cols():
     try:
         IsolationForestAnomalyModel(
-            feature_cols=["a", "b"], contamination=0.1, n_estimators=10, seed=0,
-            emphasize_features=["c"], emphasis_repeats=3,
+            feature_cols=["a", "b"],
+            contamination=0.1,
+            n_estimators=10,
+            seed=0,
+            emphasize_features=["c"],
+            emphasis_repeats=3,
         )
         assert False, "expected ValueError"
     except ValueError:

@@ -73,10 +73,13 @@ def truth_rule_layer(raw: pd.DataFrame) -> alt.Chart:
     layered under a signal chart so it's visible whether or not the raw trace
     itself shows anything there. That's the whole point of Beat 1: the rules
     are there, the signal isn't (visibly)."""
-    rows = (
-        [{"chainage_m": c, "kind": "true defect"} for c in contiguous_midpoints(raw, "defect")]
-        + [{"chainage_m": c, "kind": "true interference"} for c in contiguous_midpoints(raw, "interference")]
-    )
+    rows = [
+        {"chainage_m": c, "kind": "true defect"}
+        for c in contiguous_midpoints(raw, "defect")
+    ] + [
+        {"chainage_m": c, "kind": "true interference"}
+        for c in contiguous_midpoints(raw, "interference")
+    ]
     df = pd.DataFrame(rows, columns=["chainage_m", "kind"])
     return (
         alt.Chart(df)
@@ -102,10 +105,16 @@ def raw_components_chart(raw: pd.DataFrame) -> alt.Chart:
     three lines are the rod's three total-field HEADS, not vector axes --
     there is no x/y/z under the scalar rig (generate.py's module docstring)."""
     chainage_col = _raw_chainage_col(raw)
-    long_df = _thin(raw).melt(
-        id_vars=[chainage_col], value_vars=["b_lo_nt", "b_mid_nt", "b_hi_nt"],
-        var_name="head", value_name="field_nT",
-    ).rename(columns={chainage_col: "chainage_m"})
+    long_df = (
+        _thin(raw)
+        .melt(
+            id_vars=[chainage_col],
+            value_vars=["b_lo_nt", "b_mid_nt", "b_hi_nt"],
+            var_name="head",
+            value_name="field_nT",
+        )
+        .rename(columns={chainage_col: "chainage_m"})
+    )
     lines = (
         alt.Chart(long_df)
         .mark_line()
@@ -133,7 +142,9 @@ def deviation_chart(raw: pd.DataFrame, log_scale: bool = True) -> alt.Chart:
     median = raw["b_mid_nt"].median()
     thin = _thin(raw)
     dev = (thin["b_mid_nt"] - median).abs().clip(lower=1e-3)
-    df = pd.DataFrame({"chainage_m": thin[_raw_chainage_col(thin)], "deviation_nT": dev})
+    df = pd.DataFrame(
+        {"chainage_m": thin[_raw_chainage_col(thin)], "deviation_nT": dev}
+    )
     scale = alt.Scale(type="log") if log_scale else alt.Scale(type="linear")
     y_title = "|deviation| from median |B| (nT" + (", log scale)" if log_scale else ")")
     line = (
@@ -156,23 +167,38 @@ def residual_gradient_chart(features: pd.DataFrame, raw: pd.DataFrame) -> alt.Ch
     (first difference across heads) are their direct successors, see
     features.py's feature_columns() docstring."""
     features = _thin(features)
-    resid_df = pd.DataFrame({"chainage_m": features["chainage_m"], "residual_nT": features["r_mid_nt"]})
+    resid_df = pd.DataFrame(
+        {"chainage_m": features["chainage_m"], "residual_nT": features["r_mid_nt"]}
+    )
     residual = (
         alt.Chart(resid_df)
         .mark_line(color=TRUE_DEFECT_COLOR)
-        .encode(x=alt.X("chainage_m:Q", title="chainage (m)"), y=alt.Y("residual_nT:Q", title="residual r_mid (nT)"))
+        .encode(
+            x=alt.X("chainage_m:Q", title="chainage (m)"),
+            y=alt.Y("residual_nT:Q", title="residual r_mid (nT)"),
+        )
     )
     if "g1_nt_per_m" in features.columns:
-        grad_df = pd.DataFrame({"chainage_m": features["chainage_m"], "gradient_nT_per_m": features["g1_nt_per_m"]})
+        grad_df = pd.DataFrame(
+            {
+                "chainage_m": features["chainage_m"],
+                "gradient_nT_per_m": features["g1_nt_per_m"],
+            }
+        )
         gradient = (
             alt.Chart(grad_df)
             .mark_line(color="#2878dc")
-            .encode(x="chainage_m:Q", y=alt.Y("gradient_nT_per_m:Q", title="gradient (nT/m)"))
+            .encode(
+                x="chainage_m:Q",
+                y=alt.Y("gradient_nT_per_m:Q", title="gradient (nT/m)"),
+            )
         )
         combined = alt.layer(residual, gradient).resolve_scale(y="independent")
     else:
         combined = residual
-    return alt.layer(combined, truth_rule_layer(raw)).properties(height=320).interactive()
+    return (
+        alt.layer(combined, truth_rule_layer(raw)).properties(height=320).interactive()
+    )
 
 
 def indications_chart(dug: pd.DataFrame, raw: pd.DataFrame) -> alt.Chart:
@@ -195,10 +221,17 @@ def indications_chart(dug: pd.DataFrame, raw: pd.DataFrame) -> alt.Chart:
         else alt.value("#2878dc")
     )
     tooltip = [
-        c for c in [
-            "chainage_peak_m", "pred_type", "pred_type_conf", "sev_pred",
-            "risk_score", "anomaly_score", "p_defect_cal",
-        ] if c in df.columns
+        c
+        for c in [
+            "chainage_peak_m",
+            "pred_type",
+            "pred_type_conf",
+            "sev_pred",
+            "risk_score",
+            "anomaly_score",
+            "p_defect_cal",
+        ]
+        if c in df.columns
     ]
 
     points = (
@@ -216,7 +249,12 @@ def indications_chart(dug: pd.DataFrame, raw: pd.DataFrame) -> alt.Chart:
         layers.append(
             alt.Chart(df)
             .mark_errorbar()
-            .encode(x="chainage_peak_m:Q", y=alt.Y("sev_lo:Q", title=y_title), y2="sev_hi:Q", color=color)
+            .encode(
+                x="chainage_peak_m:Q",
+                y=alt.Y("sev_lo:Q", title=y_title),
+                y2="sev_hi:Q",
+                color=color,
+            )
         )
     layers.append(truth_rule_layer(raw))
     return alt.layer(*layers).properties(height=320).interactive()
@@ -245,10 +283,17 @@ def indications_rank_chart(dug: pd.DataFrame) -> alt.Chart:
         else alt.value("#2878dc")
     )
     tooltip = [
-        c for c in [
-            "chainage_peak_m", "pred_type", "pred_type_conf", "sev_pred",
-            "risk_score", "anomaly_score", "p_defect_cal",
-        ] if c in df.columns
+        c
+        for c in [
+            "chainage_peak_m",
+            "pred_type",
+            "pred_type_conf",
+            "sev_pred",
+            "risk_score",
+            "anomaly_score",
+            "p_defect_cal",
+        ]
+        if c in df.columns
     ]
 
     bars = (
@@ -280,7 +325,11 @@ def block_heatmap_chart(blocks: pd.DataFrame) -> alt.Chart:
     rainbow, matching this app's other "hotter = more concerning" cues
     (the pydeck heatmap layer, `TRUE_DEFECT_COLOR`'s orange-red family)."""
     if blocks.empty:
-        return alt.Chart(pd.DataFrame({"msg": ["no indications yet"]})).mark_text().encode(text="msg:N")
+        return (
+            alt.Chart(pd.DataFrame({"msg": ["no indications yet"]}))
+            .mark_text()
+            .encode(text="msg:N")
+        )
 
     metric = blocks["metric"].iloc[0]
     value_title = "risk score" if metric == "risk_score" else "anomaly score"
@@ -301,9 +350,12 @@ def block_heatmap_chart(blocks: pd.DataFrame) -> alt.Chart:
         .encode(
             x=alt.X("block_start_m:O", title="chainage block (100 m)"),
             y=alt.Y("line_id:N", title="line"),
-            color=alt.Color("value:Q", title=value_title, scale=alt.Scale(scheme="oranges")),
+            color=alt.Color(
+                "value:Q", title=value_title, scale=alt.Scale(scheme="oranges")
+            ),
             tooltip=[
-                "line_id", "block_start_m",
+                "line_id",
+                "block_start_m",
                 alt.Tooltip("value:Q", title=value_title, format=".3f"),
                 alt.Tooltip("n_indications:Q", title="indications in block"),
             ],

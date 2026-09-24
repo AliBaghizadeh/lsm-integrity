@@ -101,8 +101,13 @@ HEADS = ("lo", "mid", "hi")
 # turns "features.py must never read these" from a comment into something that
 # fails loudly if a future edit reaches for one.
 TRUTH_DENYLIST = [
-    "chainage_true_m", "chainage_provisional_m", "girth_weld",
-    "defect", "defect_type", "severity_smys", "interference",
+    "chainage_true_m",
+    "chainage_provisional_m",
+    "girth_weld",
+    "defect",
+    "defect_type",
+    "severity_smys",
+    "interference",
 ]
 
 
@@ -222,7 +227,9 @@ class RobustFeatureScaler(FittedTransform):
         self.scale_: pd.Series | None = None
 
     def _fit(self, X: pd.DataFrame) -> None:
-        cols = self.columns or [c for c in X.columns if pd.api.types.is_numeric_dtype(X[c])]
+        cols = self.columns or [
+            c for c in X.columns if pd.api.types.is_numeric_dtype(X[c])
+        ]
         self.columns = cols
         block = X[cols].astype("float64")
         q1, q3 = block.quantile(0.25), block.quantile(0.75)
@@ -447,7 +454,13 @@ def _peak_shape(
     n = len(r)
     out = {
         k: np.full(n, np.nan)
-        for k in ("fwhm_m", "peak_asymmetry", "decay_exponent", "peak_prominence_nt", "peak_distance_m")
+        for k in (
+            "fwhm_m",
+            "peak_asymmetry",
+            "decay_exponent",
+            "peak_prominence_nt",
+            "peak_distance_m",
+        )
     }
     med = np.median(r)
     mad = np.median(np.abs(r - med))
@@ -477,8 +490,15 @@ def _peak_shape(
 
     decay = np.array(
         [
-            _decay_exponent(r, p, widths[i], cfg.peak.flank_fit_span, step_m,
-                            bounds_lo[i], bounds_hi[i])
+            _decay_exponent(
+                r,
+                p,
+                widths[i],
+                cfg.peak.flank_fit_span,
+                step_m,
+                bounds_lo[i],
+                bounds_hi[i],
+            )
             for i, p in enumerate(peaks)
         ]
     )
@@ -596,15 +616,34 @@ def feature_columns(cfg: FeaturesConfig) -> list[str]:
     data-quality companion) are new and last: registration/data-quality
     companions, not physics derived from the field readings themselves.
     """
-    cols = ["r_lo_nt", "r_mid_nt", "r_hi_nt",
-            "dr_ds_nt_per_m", "d2r_ds2_nt_per_m2",
-            "g1_nt_per_m", "g2_nt_per_m2", "standoff_est_m"]
+    cols = [
+        "r_lo_nt",
+        "r_mid_nt",
+        "r_hi_nt",
+        "dr_ds_nt_per_m",
+        "d2r_ds2_nt_per_m2",
+        "g1_nt_per_m",
+        "g2_nt_per_m2",
+        "standoff_est_m",
+    ]
     for w in cfg.windows_m:
         p = window_name(w)
-        cols += [f"{p}_mean_nt", f"{p}_std_nt", f"{p}_max_nt", f"{p}_ptp_nt",
-                 f"{p}_kurt", f"{p}_zcr", f"{p}_energy_nt2"]
-    cols += ["fwhm_m", "peak_asymmetry", "decay_exponent",
-             "peak_prominence_nt", "peak_distance_m"]
+        cols += [
+            f"{p}_mean_nt",
+            f"{p}_std_nt",
+            f"{p}_max_nt",
+            f"{p}_ptp_nt",
+            f"{p}_kurt",
+            f"{p}_zcr",
+            f"{p}_energy_nt2",
+        ]
+    cols += [
+        "fwhm_m",
+        "peak_asymmetry",
+        "decay_exponent",
+        "peak_prominence_nt",
+        "peak_distance_m",
+    ]
     cols += ["r_mag_norm_nt_m3", "peak_prominence_norm_nt_m3"]
     cols += ["dist_to_weld_m", "gps_locked"]
     _assert_no_truth_leakage(cols)
@@ -680,7 +719,9 @@ def compute_survey_features(
     s_grad = s_m + np.arange(n) * 5e-9
 
     out: dict[str, np.ndarray] = {
-        "r_lo_nt": r_lo, "r_mid_nt": r_mid, "r_hi_nt": r_hi,
+        "r_lo_nt": r_lo,
+        "r_mid_nt": r_mid,
+        "r_hi_nt": r_hi,
         # np.gradient uses central differences inside and one-sided at the ends,
         # so the derivative has no NaN of its own -- the window stats below own
         # the edge story, and having one owner for it keeps the flag honest.
@@ -700,7 +741,9 @@ def compute_survey_features(
     # -- tests/test_features.py::test_zcr_on_r_mid_is_not_trivially_zero.
     sign_change = np.zeros(n, dtype=np.float64)
     if n > 1:
-        sign_change[1:] = (np.signbit(r_mid[1:]) != np.signbit(r_mid[:-1])).astype(np.float64)
+        sign_change[1:] = (np.signbit(r_mid[1:]) != np.signbit(r_mid[:-1])).astype(
+            np.float64
+        )
     zc_series = pd.Series(sign_change)
     energy_series = pd.Series(r_mid**2)
 
@@ -716,7 +759,9 @@ def compute_survey_features(
         out[f"{p}_ptp_nt"] = (roll.max() - roll.min()).to_numpy()
         # rolling.kurt() needs 4 points; a 3-sample window legitimately yields NaN.
         out[f"{p}_kurt"] = roll.kurt().to_numpy() if win >= 4 else np.full(n, np.nan)
-        out[f"{p}_zcr"] = zc_series.rolling(win, center=True, min_periods=win).mean().to_numpy()
+        out[f"{p}_zcr"] = (
+            zc_series.rolling(win, center=True, min_periods=win).mean().to_numpy()
+        )
         out[f"{p}_energy_nt2"] = (
             energy_series.rolling(win, center=True, min_periods=win).sum().to_numpy()
         )
@@ -733,7 +778,9 @@ def compute_survey_features(
     # one global depth_m, so these are no longer guaranteed exact duplicates
     # of their un-normalised counterparts.
     out["r_mag_norm_nt_m3"] = r_mid * standoff_est**3
-    out["peak_prominence_norm_nt_m3"] = peak_shape["peak_prominence_nt"] * standoff_est**3
+    out["peak_prominence_norm_nt_m3"] = (
+        peak_shape["peak_prominence_nt"] * standoff_est**3
+    )
 
     # -- registration / data-quality companions ------------------------------
     out["dist_to_weld_m"] = dist_to_weld_m
@@ -762,7 +809,7 @@ def compute_survey_features(
     dq_flag = np.full(n, "clean", dtype=object)
     if edge > 0 and n > 0:
         dq_flag[:edge] = "edge"
-        dq_flag[max(0, n - edge):] = "edge"
+        dq_flag[max(0, n - edge) :] = "edge"
 
     keys = pd.DataFrame(
         {
@@ -775,8 +822,14 @@ def compute_survey_features(
         index=df.index,
     )
     result = pd.concat(
-        [keys, pd.DataFrame({"feature_version": np.int64(cfg.version), "dq_flag": dq_flag},
-                            index=df.index), feat],
+        [
+            keys,
+            pd.DataFrame(
+                {"feature_version": np.int64(cfg.version), "dq_flag": dq_flag},
+                index=df.index,
+            ),
+            feat,
+        ],
         axis=1,
     )
 
@@ -802,14 +855,21 @@ def compute_survey_features(
 # ---------------------------------------------------------------------------
 
 
-def feature_store_dir(feature_dir: str | Path, feature_version: int, line_id: str, run_id: int) -> Path:
+def feature_store_dir(
+    feature_dir: str | Path, feature_version: int, line_id: str, run_id: int
+) -> Path:
     """features/fv=<n>/line_id=.../run_id=... -- feature_version is IN THE PATH.
 
     Not a column, not a convention: a directory. Two feature versions coexist on
     disk, an old bundle keeps reading the features it was trained against, and a
     bumped version cannot silently overwrite them.
     """
-    return Path(feature_dir) / f"fv={feature_version}" / f"line_id={line_id}" / f"run_id={run_id}"
+    return (
+        Path(feature_dir)
+        / f"fv={feature_version}"
+        / f"line_id={line_id}"
+        / f"run_id={run_id}"
+    )
 
 
 def read_feature_meta(dir_path: Path) -> dict | None:
@@ -849,7 +909,9 @@ def write_features(
     dir_path = Path(dir_path)
     dir_path.mkdir(parents=True, exist_ok=True)
     out_path = dir_path / "features.parquet"
-    features.sort_values("sample_idx").to_parquet(out_path, index=False, compression="zstd")
+    features.sort_values("sample_idx").to_parquet(
+        out_path, index=False, compression="zstd"
+    )
     (dir_path / "meta.json").write_text(
         json.dumps(
             {

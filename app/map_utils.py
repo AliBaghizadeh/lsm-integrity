@@ -44,19 +44,35 @@ def build_map(
             get_color=[120, 120, 120],
         ),
         pdk.Layer(
-            "ScatterplotLayer", data=defects, get_position=["lon", "lat"],
-            get_color=[220, 80, 40], get_radius=3, radius_min_pixels=5, pickable=True,
+            "ScatterplotLayer",
+            data=defects,
+            get_position=["lon", "lat"],
+            get_color=[220, 80, 40],
+            get_radius=3,
+            radius_min_pixels=5,
+            pickable=True,
         ),
         pdk.Layer(
-            "ScatterplotLayer", data=interference, get_position=["lon", "lat"],
-            get_color=[130, 130, 130], get_radius=3, radius_min_pixels=5, pickable=True,
+            "ScatterplotLayer",
+            data=interference,
+            get_position=["lon", "lat"],
+            get_color=[130, 130, 130],
+            get_radius=3,
+            radius_min_pixels=5,
+            pickable=True,
         ),
     ]
-    if indications is not None and len(indications) and "lat" in indications and "lon" in indications:
+    if (
+        indications is not None
+        and len(indications)
+        and "lat" in indications
+        and "lon" in indications
+    ):
         if show_heatmap:
             weight_col = (
                 "risk_score"
-                if "risk_score" in indications.columns and indications["risk_score"].notna().any()
+                if "risk_score" in indications.columns
+                and indications["risk_score"].notna().any()
                 else "anomaly_score"
             )
             heat = indications[["lat", "lon", weight_col]].dropna()
@@ -77,8 +93,13 @@ def build_map(
         else:
             layers.append(
                 pdk.Layer(
-                    "ScatterplotLayer", data=indications, get_position=["lon", "lat"],
-                    get_color=[40, 120, 220], get_radius=4, radius_min_pixels=6, pickable=True,
+                    "ScatterplotLayer",
+                    data=indications,
+                    get_position=["lon", "lat"],
+                    get_color=[40, 120, 220],
+                    get_radius=4,
+                    radius_min_pixels=6,
+                    pickable=True,
                 )
             )
 

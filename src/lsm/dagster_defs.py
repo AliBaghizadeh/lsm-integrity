@@ -54,15 +54,21 @@ class LsmResource(dg.ConfigurableResource):
     config_dir: str | None = None
 
     def load(self):
-        return load_config(self.env_name, config_dir=Path(self.config_dir) if self.config_dir else None)
+        return load_config(
+            self.env_name, config_dir=Path(self.config_dir) if self.config_dir else None
+        )
 
 
 @dg.asset(
     partitions_def=survey_partitions,
-    retry_policy=dg.RetryPolicy(max_retries=3, delay=0.2, backoff=dg.Backoff.EXPONENTIAL),
+    retry_policy=dg.RetryPolicy(
+        max_retries=3, delay=0.2, backoff=dg.Backoff.EXPONENTIAL
+    ),
     group_name="lsm",
 )
-def registered_survey(context: AssetExecutionContext, lsm: LsmResource) -> dg.Output[str]:
+def registered_survey(
+    context: AssetExecutionContext, lsm: LsmResource
+) -> dg.Output[str]:
     """raw parquet -> `survey` registry row. Idempotent: re-materializing an
     already-registered partition is a no-op, which is what makes a backfill
     resumable without reprocessing or duplicating rows.
@@ -103,7 +109,14 @@ def dq_report(context: AssetExecutionContext, lsm: LsmResource) -> dg.Output[str
         line_id, step_m, c_start, c_end, content_hash, source_uri = row
         df = pd.read_parquet(source_uri)
         report = validate_raw_survey(
-            conn, survey_id, line_id, step_m, c_start, c_end, content_hash, df,
+            conn,
+            survey_id,
+            line_id,
+            step_m,
+            c_start,
+            c_end,
+            content_hash,
+            df,
             cfg.base.validate,
             quarantine_dir=Path(cfg.env.storage.quarantine_dir),
             source_path=Path(source_uri),
@@ -154,7 +167,9 @@ def survey_features(context: AssetExecutionContext, lsm: LsmResource) -> dg.Outp
             outcome, dir_path = run_feature_pipeline(conn, survey_id, cfg)
         except SurveyNotFeaturisableError as exc:
             context.log.info(f"skipped {survey_id}: {exc}")
-            return dg.Output(survey_id, metadata={"outcome": "skipped", "reason": str(exc)})
+            return dg.Output(
+                survey_id, metadata={"outcome": "skipped", "reason": str(exc)}
+            )
     finally:
         conn.close()
     context.log.info(f"features {survey_id}: {outcome} -> {dir_path}")

@@ -49,23 +49,32 @@ def load_corpus(cfg) -> pd.DataFrame:
         feat_path = (
             feature_store_dir(
                 PROJECT_ROOT / cfg.env.storage.feature_dir,
-                cfg.base.features.version, line_id, run_id,
+                cfg.base.features.version,
+                line_id,
+                run_id,
             )
             / "features.parquet"
         )
         if not feat_path.exists():
             continue
         feat = pd.read_parquet(feat_path)
-        merged = feat.merge(raw[["sample_idx", "defect", "interference"]], on="sample_idx")
+        merged = feat.merge(
+            raw[["sample_idx", "defect", "interference"]], on="sample_idx"
+        )
         merged = merged[merged["dq_flag"] == "clean"]
         merged["line_id"] = line_id
         merged["run_id"] = run_id
         frames.append(merged)
     if not frames:
-        raise SystemExit("no feature store found -- run: lsm generate && lsm ingest && lsm features")
+        raise SystemExit(
+            "no feature store found -- run: lsm generate && lsm ingest && lsm features"
+        )
     df = pd.concat(frames, ignore_index=True)
-    df["klass"] = np.where(df["defect"] == 1, "defect",
-                            np.where(df["interference"] == 1, "interference", "background"))
+    df["klass"] = np.where(
+        df["defect"] == 1,
+        "defect",
+        np.where(df["interference"] == 1, "interference", "background"),
+    )
     return df
 
 
@@ -85,11 +94,17 @@ def feature_summary_stats(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
             vals = df.loc[df["klass"] == k, c].dropna()
             if len(vals) == 0:
                 continue
-            rows.append({
-                "feature": c, "klass": k, "n": len(vals),
-                "mean": vals.mean(), "std": vals.std(),
-                "skew": vals.skew(), "median": vals.median(),
-            })
+            rows.append(
+                {
+                    "feature": c,
+                    "klass": k,
+                    "n": len(vals),
+                    "mean": vals.mean(),
+                    "std": vals.std(),
+                    "skew": vals.skew(),
+                    "median": vals.median(),
+                }
+            )
     return pd.DataFrame(rows)
 
 
@@ -124,14 +139,20 @@ def separability_table(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
     rows = []
     for c in cols:
         vals = df[c].to_numpy(dtype=np.float64)
-        rows.append({
-            "feature": c,
-            "defect_vs_background": _pr_auc_either_direction(is_defect[def_bg], vals[def_bg]),
-            "interference_vs_background": _pr_auc_either_direction(
-                is_interference[int_bg], vals[int_bg]
-            ),
-            "defect_vs_interference": _pr_auc_either_direction(is_defect[def_int], vals[def_int]),
-        })
+        rows.append(
+            {
+                "feature": c,
+                "defect_vs_background": _pr_auc_either_direction(
+                    is_defect[def_bg], vals[def_bg]
+                ),
+                "interference_vs_background": _pr_auc_either_direction(
+                    is_interference[int_bg], vals[int_bg]
+                ),
+                "defect_vs_interference": _pr_auc_either_direction(
+                    is_defect[def_int], vals[def_int]
+                ),
+            }
+        )
     out = pd.DataFrame(rows).set_index("feature")
     out["base_rate_defect_vs_background"] = is_defect[def_bg].mean()
     out["base_rate_interference_vs_background"] = is_interference[int_bg].mean()
@@ -139,11 +160,13 @@ def separability_table(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
     return out
 
 
-def redundant_pairs(corr: pd.DataFrame, threshold: float) -> list[tuple[str, str, float]]:
+def redundant_pairs(
+    corr: pd.DataFrame, threshold: float
+) -> list[tuple[str, str, float]]:
     pairs = []
     cols = corr.columns
     for i, a in enumerate(cols):
-        for b in cols[i + 1:]:
+        for b in cols[i + 1 :]:
             r = corr.loc[a, b]
             if abs(r) >= threshold:
                 pairs.append((a, b, float(r)))
@@ -165,7 +188,9 @@ def plot_correlation_heatmap(corr: pd.DataFrame, save_path: Path) -> None:
     plt.close(fig)
 
 
-def plot_top_distributions(df: pd.DataFrame, ranked_features: list[str], save_path: Path) -> None:
+def plot_top_distributions(
+    df: pd.DataFrame, ranked_features: list[str], save_path: Path
+) -> None:
     n = len(ranked_features)
     ncols = 4
     nrows = int(np.ceil(n / ncols))
@@ -190,7 +215,9 @@ def plot_top_distributions(df: pd.DataFrame, ranked_features: list[str], save_pa
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--save-dir", default="docs/img")
-    parser.add_argument("--top-n", type=int, default=8, help="features to plot per rank tier")
+    parser.add_argument(
+        "--top-n", type=int, default=8, help="features to plot per rank tier"
+    )
     parser.add_argument("--redundancy-threshold", type=float, default=0.9)
     args = parser.parse_args()
 
@@ -210,7 +237,9 @@ def main() -> None:
     corr = df[cols].corr(method="pearson")
     plot_correlation_heatmap(corr, save_dir / "eda_feature_correlation.png")
     redundant = redundant_pairs(corr, args.redundancy_threshold)
-    print(f"\n=== Redundant feature pairs (|r| >= {args.redundancy_threshold}), {len(redundant)} found ===")
+    print(
+        f"\n=== Redundant feature pairs (|r| >= {args.redundancy_threshold}), {len(redundant)} found ==="
+    )
     for a, b, r in redundant[:30]:
         print(f"  {a:28s} {b:28s} r={r:+.3f}")
     if len(redundant) > 30:
@@ -218,12 +247,21 @@ def main() -> None:
 
     sep = separability_table(df, cols)
     print("\n=== Per-feature PR-AUC (diagnostic; 0.5 = uninformative) ===")
-    print(sep[["defect_vs_background", "interference_vs_background", "defect_vs_interference"]]
-          .sort_values("defect_vs_background", ascending=False).to_string())
+    print(
+        sep[
+            [
+                "defect_vs_background",
+                "interference_vs_background",
+                "defect_vs_interference",
+            ]
+        ]
+        .sort_values("defect_vs_background", ascending=False)
+        .to_string()
+    )
 
     ranked = sep.sort_values("defect_vs_background", ascending=False).index.tolist()
     top = ranked[: args.top_n]
-    bottom = ranked[-args.top_n:]
+    bottom = ranked[-args.top_n :]
     plot_top_distributions(df, top, save_dir / "eda_top_separating_features.png")
     plot_top_distributions(df, bottom, save_dir / "eda_bottom_separating_features.png")
 

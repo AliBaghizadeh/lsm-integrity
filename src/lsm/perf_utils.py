@@ -40,14 +40,18 @@ class PerfResult:
 
 
 @contextmanager
-def measure(label: str, n_rows: int | None = None, poll_interval_s: float = 0.05) -> Iterator[PerfResult]:
+def measure(
+    label: str, n_rows: int | None = None, poll_interval_s: float = 0.05
+) -> Iterator[PerfResult]:
     """Yields a `PerfResult` that is mutated in place -- read its fields AFTER
     the `with` block exits, not inside it (wall_seconds/peak_rss_bytes are 0
     until __exit__ has run).
     """
     process = psutil.Process()
     start_rss = process.memory_info().rss
-    result = PerfResult(label=label, n_rows=n_rows, start_rss_bytes=start_rss, peak_rss_bytes=start_rss)
+    result = PerfResult(
+        label=label, n_rows=n_rows, start_rss_bytes=start_rss, peak_rss_bytes=start_rss
+    )
 
     stop_event = threading.Event()
     peak = [start_rss]
@@ -79,5 +83,7 @@ def format_perf_table(results: list[PerfResult]) -> str:
     for r in results:
         rows_str = f"{r.n_rows:,}" if r.n_rows is not None else "-"
         rate_str = f"{r.rows_per_sec:,.0f}" if r.rows_per_sec is not None else "-"
-        lines.append(f"| {r.label} | {rows_str} | {r.wall_seconds:.2f} | {rate_str} | {r.peak_rss_mb:,.1f} |")
+        lines.append(
+            f"| {r.label} | {rows_str} | {r.wall_seconds:.2f} | {rate_str} | {r.peak_rss_mb:,.1f} |"
+        )
     return "\n".join(lines)

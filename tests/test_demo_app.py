@@ -30,7 +30,9 @@ def test_landing_page_shows_with_no_exception_and_gates_the_app():
     at = AppTest.from_file(APP_PATH, default_timeout=60)
     at.run()
     assert not at.exception
-    assert len(at.tabs) == 0  # gated behind st.stop() until "Launch the demo" is clicked
+    assert (
+        len(at.tabs) == 0
+    )  # gated behind st.stop() until "Launch the demo" is clicked
     assert len(at.button) == 1
 
 
@@ -80,7 +82,9 @@ def test_model_performance_tab_renders_the_real_model_card():
     rendered = "\n".join(m.value for m in at.markdown)
     # spot-check a real Stage 3 number from the baked model card actually
     # made it into the page, not just that SOME markdown rendered.
-    first_metric_line = next(line for line in card_text.splitlines() if "recall @ dig budget" in line)
+    first_metric_line = next(
+        line for line in card_text.splitlines() if "recall @ dig budget" in line
+    )
     assert first_metric_line in rendered
 
 
@@ -122,7 +126,9 @@ def test_live_mode_does_not_rerun_the_pipeline_for_an_unrelated_widget_change():
     at.segmented_control(key="app_mode").set_value("live").run()
     scenario_label = at.session_state["scenario_label"]
     survey_id = next(
-        s["survey_id"] for s in demo_lib.demo_scenarios() if s["label"] == scenario_label
+        s["survey_id"]
+        for s in demo_lib.demo_scenarios()
+        if s["label"] == scenario_label
     )
     cached_before = dict(at.session_state["live_results"])
     assert survey_id in cached_before

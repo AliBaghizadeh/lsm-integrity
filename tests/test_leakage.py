@@ -56,7 +56,9 @@ def test_no_group_crosses_folds_across_three_synthetic_survey_runs():
 
     # Every group_key must map to exactly one fold, regardless of run_id.
     fold_per_group = out.groupby("group_key")["fold"].nunique()
-    assert (fold_per_group == 1).all(), "a (line_id, block) group was split across folds"
+    assert (fold_per_group == 1).all(), (
+        "a (line_id, block) group was split across folds"
+    )
 
     # The same block across different runs must carry the same group_key (and
     # therefore the same fold) -- check this explicitly, not just derived.
@@ -64,7 +66,9 @@ def test_no_group_crosses_folds_across_three_synthetic_survey_runs():
         index="group_key", columns="run_id", values="fold"
     )
     for _, row in pivot.iterrows():
-        assert row.nunique() == 1, "the same block landed in different folds across runs"
+        assert row.nunique() == 1, (
+            "the same block landed in different folds across runs"
+        )
 
     # Sanity: with 20 blocks and 5 folds, more than one fold should actually be used.
     assert out["fold"].nunique() > 1
@@ -103,7 +107,9 @@ def test_add_fold_column_by_line_ignores_chainage_and_run_id():
     rows = []
     for run_id in range(3):
         for chainage_m in (0.0, 500.0, 1999.5):
-            rows.append({"line_id": "LINE000", "run_id": run_id, "chainage_m": chainage_m})
+            rows.append(
+                {"line_id": "LINE000", "run_id": run_id, "chainage_m": chainage_m}
+            )
     df = pd.DataFrame(rows)
 
     out = add_fold_column_by_line(df, "line_id", n_folds=5)
@@ -116,7 +122,9 @@ def test_whole_line_never_split_across_folds():
     for line_id in line_ids:
         for run_id in range(3):
             for chainage_m in (0.0, 100.0, 200.0, 300.0):
-                rows.append({"line_id": line_id, "run_id": run_id, "chainage_m": chainage_m})
+                rows.append(
+                    {"line_id": line_id, "run_id": run_id, "chainage_m": chainage_m}
+                )
     df = pd.DataFrame(rows)
 
     out = add_fold_column_by_line(df, "line_id", n_folds=5)

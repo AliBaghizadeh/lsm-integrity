@@ -62,7 +62,9 @@ def run_survey_pipeline(
     return register_status, report
 
 
-def survey_context(conn: sqlite3.Connection, survey_id: str, cfg: Config) -> SurveyContext:
+def survey_context(
+    conn: sqlite3.Connection, survey_id: str, cfg: Config
+) -> SurveyContext:
     """Build a SurveyContext from the registry. `standoff_m` comes from the
     `survey` row rather than from config, because on real data it is a
     property of the acquisition, not of our code -- `step_m` no longer does

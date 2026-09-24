@@ -1,7 +1,7 @@
 """
 Stage D headline: the ablation ladder.
 
-The question ROSEN is actually hiring against: "can data scientists get more
+The engineering question this experiment addresses is: "can data scientists get more
 out of the EXISTING 3-head scalar rod, or do you need new hardware?" Six
 arms, isolating one algorithmic capability at a time, evaluated with the
 SAME machinery (`evaluate.bootstrap_ci` / `evaluate.paired_bootstrap_ci`) so
@@ -98,7 +98,9 @@ def _isolated_config(rig: str):
     cfg = load_config("dev")
     tmp = Path(tempfile.mkdtemp(prefix=f"lsm_ablation_{rig}_"))
     cfg.env.storage.raw_dir = str(tmp / "raw")
-    cfg.env.storage.sqlite_path = str(tmp / "lsm.db")  # unused (no ingest), set for hygiene only
+    cfg.env.storage.sqlite_path = str(
+        tmp / "lsm.db"
+    )  # unused (no ingest), set for hygiene only
     cfg.env.storage.feature_dir = str(tmp / "features")
     cfg.env.storage.model_dir = str(tmp / "models")
     cfg.env.storage.reports_dir = str(tmp / "reports")
@@ -113,7 +115,9 @@ def _truth_columns(df: pd.DataFrame) -> pd.DataFrame:
     note: `reading`/`survey` tables are production-DB concerns this script
     deliberately never touches).
     """
-    return df[["sample_idx", "defect", "defect_type", "interference", "severity_smys"]].copy()
+    return df[
+        ["sample_idx", "defect", "defect_type", "interference", "severity_smys"]
+    ].copy()
 
 
 # ---------------------------------------------------------------------------
@@ -122,8 +126,22 @@ def _truth_columns(df: pd.DataFrame) -> pd.DataFrame:
 
 # Column groups, in the ladder's own order -- see feature_columns()'s
 # docstring in features.py for what each one physically is.
-_WINDOW_STAT_SUFFIXES = ("_mean_nt", "_std_nt", "_max_nt", "_ptp_nt", "_kurt", "_zcr", "_energy_nt2")
-_PEAK_SHAPE_COLS = ["fwhm_m", "peak_asymmetry", "decay_exponent", "peak_prominence_nt", "peak_distance_m"]
+_WINDOW_STAT_SUFFIXES = (
+    "_mean_nt",
+    "_std_nt",
+    "_max_nt",
+    "_ptp_nt",
+    "_kurt",
+    "_zcr",
+    "_energy_nt2",
+)
+_PEAK_SHAPE_COLS = [
+    "fwhm_m",
+    "peak_asymmetry",
+    "decay_exponent",
+    "peak_prominence_nt",
+    "peak_distance_m",
+]
 
 
 def _mid_only_cols(cfg) -> list[str]:
@@ -150,21 +168,34 @@ def _scalar_corpus_with_gps_chainage(cfg) -> tuple[pd.DataFrame, list, dict]:
         df = pd.read_parquet(sr.path)
         n = len(df)
         dr_chainage, _locked_frac, _max_gap = _dead_reckon_chainage(
-            df["t_s"].to_numpy(dtype=float), df["lat"].to_numpy(dtype=float),
-            df["lon"].to_numpy(dtype=float), cfg.base.data,
+            df["t_s"].to_numpy(dtype=float),
+            df["lat"].to_numpy(dtype=float),
+            df["lon"].to_numpy(dtype=float),
+            cfg.base.data,
         )
         ctx = SurveyContext(
-            survey_id=sr.survey_id, line_id=sr.line_id, run_id=sr.run_id,
-            surveyed_at=sr.surveyed_at, standoff_m=sr.standoff_m,
+            survey_id=sr.survey_id,
+            line_id=sr.line_id,
+            run_id=sr.run_id,
+            surveyed_at=sr.surveyed_at,
+            standoff_m=sr.standoff_m,
             array_spacing_m=cfg.base.data.array.spacing_m,
         )
         feat = compute_survey_features(
-            df, ctx, cfg.base.features, chainage_m=dr_chainage, dist_to_weld_m=np.full(n, np.nan),
+            df,
+            ctx,
+            cfg.base.features,
+            chainage_m=dr_chainage,
+            dist_to_weld_m=np.full(n, np.nan),
         )
-        feat = feat.merge(_truth_columns(df), on="sample_idx", how="left", validate="one_to_one")
+        feat = feat.merge(
+            _truth_columns(df), on="sample_idx", how="left", validate="one_to_one"
+        )
         frames.append(feat)
     corpus = pd.concat(frames, ignore_index=True)
-    run_line_id = corpus.drop_duplicates("survey_id").set_index("survey_id")["line_id"].to_dict()
+    run_line_id = (
+        corpus.drop_duplicates("survey_id").set_index("survey_id")["line_id"].to_dict()
+    )
     return corpus, results, run_line_id
 
 
@@ -179,14 +210,23 @@ def _scalar_corpus_with_registration(cfg, results) -> pd.DataFrame:
         df = pd.read_parquet(sr.path)
         reg = register_survey(df, cfg.base.data)
         ctx = SurveyContext(
-            survey_id=sr.survey_id, line_id=sr.line_id, run_id=sr.run_id,
-            surveyed_at=sr.surveyed_at, standoff_m=sr.standoff_m,
+            survey_id=sr.survey_id,
+            line_id=sr.line_id,
+            run_id=sr.run_id,
+            surveyed_at=sr.surveyed_at,
+            standoff_m=sr.standoff_m,
             array_spacing_m=cfg.base.data.array.spacing_m,
         )
         feat = compute_survey_features(
-            df, ctx, cfg.base.features, chainage_m=reg.chainage_m, dist_to_weld_m=reg.dist_to_weld_m,
+            df,
+            ctx,
+            cfg.base.features,
+            chainage_m=reg.chainage_m,
+            dist_to_weld_m=reg.dist_to_weld_m,
         )
-        feat = feat.merge(_truth_columns(df), on="sample_idx", how="left", validate="one_to_one")
+        feat = feat.merge(
+            _truth_columns(df), on="sample_idx", how="left", validate="one_to_one"
+        )
         frames.append(feat)
     return pd.concat(frames, ignore_index=True)
 
@@ -233,22 +273,33 @@ def _vector_corpus(cfg) -> tuple[pd.DataFrame, dict]:
         # Direction of the residual vector -- information a scalar total-
         # field rig structurally cannot produce (module docstring point 2).
         with np.errstate(invalid="ignore", divide="ignore"):
-            r_incl_deg = np.degrees(np.arcsin(np.clip(rz / np.where(r_mag > 0, r_mag, np.nan), -1.0, 1.0)))
+            r_incl_deg = np.degrees(
+                np.arcsin(np.clip(rz / np.where(r_mag > 0, r_mag, np.nan), -1.0, 1.0))
+            )
         r_decl_deg = np.degrees(np.arctan2(ry, rx))
 
-        s_grad = s_m + np.arange(n) * 5e-9  # tie-break only, same convention as features.py
+        s_grad = (
+            s_m + np.arange(n) * 5e-9
+        )  # tie-break only, same convention as features.py
         dr_ds = np.gradient(r_mag, s_grad)
         d2r_ds2 = np.gradient(dr_ds, s_grad)
 
         out: dict[str, np.ndarray] = {
-            "rx_nt": rx, "ry_nt": ry, "rz_nt": rz, "r_mag_nt": r_mag,
-            "r_incl_deg": np.nan_to_num(r_incl_deg, nan=0.0), "r_decl_deg": r_decl_deg,
-            "dr_ds_nt_per_m": dr_ds, "d2r_ds2_nt_per_m2": d2r_ds2,
+            "rx_nt": rx,
+            "ry_nt": ry,
+            "rz_nt": rz,
+            "r_mag_nt": r_mag,
+            "r_incl_deg": np.nan_to_num(r_incl_deg, nan=0.0),
+            "r_decl_deg": r_decl_deg,
+            "dr_ds_nt_per_m": dr_ds,
+            "d2r_ds2_nt_per_m2": d2r_ds2,
         }
         r_series = pd.Series(r_mag)
         sign_change = np.zeros(n, dtype=np.float64)
         if n > 1:
-            sign_change[1:] = (np.signbit(rz[1:]) != np.signbit(rz[:-1])).astype(np.float64)
+            sign_change[1:] = (np.signbit(rz[1:]) != np.signbit(rz[:-1])).astype(
+                np.float64
+            )
         zc_series = pd.Series(sign_change)
         energy_series = pd.Series(r_mag**2)
         for w in cfg.base.features.windows_m:
@@ -259,9 +310,17 @@ def _vector_corpus(cfg) -> tuple[pd.DataFrame, dict]:
             out[f"{p}_std_nt"] = roll.std().to_numpy()
             out[f"{p}_max_nt"] = roll.max().to_numpy()
             out[f"{p}_ptp_nt"] = (roll.max() - roll.min()).to_numpy()
-            out[f"{p}_kurt"] = roll.kurt().to_numpy() if win >= 4 else np.full(n, np.nan)
-            out[f"{p}_zcr"] = zc_series.rolling(win, center=True, min_periods=win).mean().to_numpy()
-            out[f"{p}_energy_nt2"] = energy_series.rolling(win, center=True, min_periods=win).sum().to_numpy()
+            out[f"{p}_kurt"] = (
+                roll.kurt().to_numpy() if win >= 4 else np.full(n, np.nan)
+            )
+            out[f"{p}_zcr"] = (
+                zc_series.rolling(win, center=True, min_periods=win).mean().to_numpy()
+            )
+            out[f"{p}_energy_nt2"] = (
+                energy_series.rolling(win, center=True, min_periods=win)
+                .sum()
+                .to_numpy()
+            )
 
         out |= _peak_shape(r_mag, step_m, cfg.base.features)
 
@@ -274,18 +333,24 @@ def _vector_corpus(cfg) -> tuple[pd.DataFrame, dict]:
         # dq_flag: edge rows only (same detrend-window logic as features.py),
         # a data-quality companion, not a physics feature.
         detrend_win = _odd_window(cfg.base.features.detrend.window_m, step_m, minimum=3)
-        max_win = max(_odd_window(w, step_m, minimum=3) for w in cfg.base.features.windows_m)
+        max_win = max(
+            _odd_window(w, step_m, minimum=3) for w in cfg.base.features.windows_m
+        )
         edge = max(max_win, detrend_win) // 2
         dq_flag = np.full(n, "clean", dtype=object)
         if edge > 0:
             dq_flag[:edge] = "edge"
-            dq_flag[max(0, n - edge):] = "edge"
+            dq_flag[max(0, n - edge) :] = "edge"
         feat["dq_flag"] = dq_flag
-        feat = feat.merge(_truth_columns(df), on="sample_idx", how="left", validate="one_to_one")
+        feat = feat.merge(
+            _truth_columns(df), on="sample_idx", how="left", validate="one_to_one"
+        )
         frames.append(feat)
 
     corpus = pd.concat(frames, ignore_index=True)
-    run_line_id = corpus.drop_duplicates("survey_id").set_index("survey_id")["line_id"].to_dict()
+    run_line_id = (
+        corpus.drop_duplicates("survey_id").set_index("survey_id")["line_id"].to_dict()
+    )
     return corpus, run_line_id
 
 
@@ -295,8 +360,16 @@ def _vector_feature_cols(cfg) -> list[str]:
     peak-shape shape features every scalar arm gets, computed over the
     vector rig's own r_mag_nt -- see `_vector_corpus`'s docstring.
     """
-    cols = ["rx_nt", "ry_nt", "rz_nt", "r_mag_nt", "r_incl_deg", "r_decl_deg",
-            "dr_ds_nt_per_m", "d2r_ds2_nt_per_m2"]
+    cols = [
+        "rx_nt",
+        "ry_nt",
+        "rz_nt",
+        "r_mag_nt",
+        "r_incl_deg",
+        "r_decl_deg",
+        "dr_ds_nt_per_m",
+        "d2r_ds2_nt_per_m2",
+    ]
     for w in cfg.base.features.windows_m:
         p = window_name(w)
         cols += [f"{p}{suffix}" for suffix in _WINDOW_STAT_SUFFIXES]
@@ -310,8 +383,13 @@ def _vector_feature_cols(cfg) -> list[str]:
 
 
 def _evaluate_arm(
-    corpus: pd.DataFrame, feature_cols: list[str], cfg, registry: pd.DataFrame,
-    run_line_id: dict, seed: int, mad_residual_col: str = "r_mid_nt",
+    corpus: pd.DataFrame,
+    feature_cols: list[str],
+    cfg,
+    registry: pd.DataFrame,
+    run_line_id: dict,
+    seed: int,
+    mad_residual_col: str = "r_mid_nt",
 ) -> dict:
     """One arm's IsolationForest recall@budget / false-dig-rate /
     localisation-error-cm, with bootstrap CIs, plus the raw per-defect hit
@@ -321,7 +399,11 @@ def _evaluate_arm(
     """
     split_cfg = cfg.base.model.split
     corpus = add_fold_column(
-        corpus, "line_id", "chainage_m", block_m=split_cfg.fallback_block_m, n_folds=split_cfg.n_folds
+        corpus,
+        "line_id",
+        "chainage_m",
+        block_m=split_cfg.fallback_block_m,
+        n_folds=split_cfg.n_folds,
     )
     # _run_grouped_cv hardcodes MADBaseline(residual_col="r_mid_nt") -- alias
     # the vector rig's own r_mag_nt onto that name so the SAME shared helper
@@ -343,7 +425,9 @@ def _fmt_ci(triple: tuple[float, float, float]) -> str:
     return f"{point:.3f} [{lo:.3f}, {hi:.3f}]"
 
 
-def _paired_delta(arm_a: dict, arm_b: dict, boot_cfg, seed: int) -> tuple[float, float, float] | None:
+def _paired_delta(
+    arm_a: dict, arm_b: dict, boot_cfg, seed: int
+) -> tuple[float, float, float] | None:
     """recall(b) - recall(a), paired over the SAME defect set -- only valid
     when both arms share the same physical-defect universe (arms 1-5, all
     scored against the same scalar-rig corpus's registry). Returns None if
@@ -354,50 +438,93 @@ def _paired_delta(arm_a: dict, arm_b: dict, boot_cfg, seed: int) -> tuple[float,
         return None
     ids = sorted(ids_a)
     return paired_bootstrap_ci(
-        [arm_b["hit_rates"][d] for d in ids], [arm_a["hit_rates"][d] for d in ids],
-        boot_cfg.n_resamples, boot_cfg.level, seed,
+        [arm_b["hit_rates"][d] for d in ids],
+        [arm_a["hit_rates"][d] for d in ids],
+        boot_cfg.n_resamples,
+        boot_cfg.level,
+        seed,
     )
 
 
 def main() -> None:
-    print(f"Ablation ladder -- {ABLATION_N_LINES} lines x production per-line density "
-          "(see module docstring's SCALE note for why not the full 5-line default).\n")
+    print(
+        f"Ablation ladder -- {ABLATION_N_LINES} lines x production per-line density "
+        "(see module docstring's SCALE note for why not the full 5-line default).\n"
+    )
 
     # -- Arms 1-4: one scalar-rig corpus, GPS-only chainage -----------------
     cfg_scalar = _isolated_config("scalar")
     boot_cfg = cfg_scalar.base.model.bootstrap
     corpus_gps, results, run_line_id = _scalar_corpus_with_gps_chainage(cfg_scalar)
-    print(f"Scalar-rig corpus (arms 1-4, GPS-only chainage): {len(corpus_gps):,} rows, "
-          f"{len(results)} surveys.")
+    print(
+        f"Scalar-rig corpus (arms 1-4, GPS-only chainage): {len(corpus_gps):,} rows, "
+        f"{len(results)} surveys."
+    )
 
     line_ids = sorted(corpus_gps["line_id"].unique())
     registries_gps = []
     for line_id in line_ids:
-        ref_survey_id = min(corpus_gps.loc[corpus_gps["line_id"] == line_id, "survey_id"].unique())
+        ref_survey_id = min(
+            corpus_gps.loc[corpus_gps["line_id"] == line_id, "survey_id"].unique()
+        )
         ref_rows = corpus_gps[corpus_gps["survey_id"] == ref_survey_id]
-        registries_gps.append(build_truth_registry(ref_rows, line_id, ref_rows["chainage_m"].to_numpy()))
+        registries_gps.append(
+            build_truth_registry(ref_rows, line_id, ref_rows["chainage_m"].to_numpy())
+        )
     registry_gps = pd.concat(registries_gps, ignore_index=True)
 
     mid_cols = _mid_only_cols(cfg_scalar)
     arm1_cols = mid_cols
     arm2_cols = mid_cols + ["g1_nt_per_m"]
     arm3_cols = arm2_cols + ["g2_nt_per_m2"]
-    arm4_cols = arm3_cols + ["standoff_est_m", "r_mag_norm_nt_m3", "peak_prominence_norm_nt_m3"]
+    arm4_cols = arm3_cols + [
+        "standoff_est_m",
+        "r_mag_norm_nt_m3",
+        "peak_prominence_norm_nt_m3",
+    ]
 
     print("Arm 1 (mid-head only, GPS chainage)...")
-    arm1 = _evaluate_arm(corpus_gps, arm1_cols, cfg_scalar, registry_gps, run_line_id, seed=cfg_scalar.seed + 100)
+    arm1 = _evaluate_arm(
+        corpus_gps,
+        arm1_cols,
+        cfg_scalar,
+        registry_gps,
+        run_line_id,
+        seed=cfg_scalar.seed + 100,
+    )
     print("  " + _fmt_ci(arm1["metrics"]["recall_at_budget"]))
 
     print("Arm 2 (+ g1, GPS chainage)...")
-    arm2 = _evaluate_arm(corpus_gps, arm2_cols, cfg_scalar, registry_gps, run_line_id, seed=cfg_scalar.seed + 200)
+    arm2 = _evaluate_arm(
+        corpus_gps,
+        arm2_cols,
+        cfg_scalar,
+        registry_gps,
+        run_line_id,
+        seed=cfg_scalar.seed + 200,
+    )
     print("  " + _fmt_ci(arm2["metrics"]["recall_at_budget"]))
 
     print("Arm 3 (+ g2, GPS chainage)...")
-    arm3 = _evaluate_arm(corpus_gps, arm3_cols, cfg_scalar, registry_gps, run_line_id, seed=cfg_scalar.seed + 300)
+    arm3 = _evaluate_arm(
+        corpus_gps,
+        arm3_cols,
+        cfg_scalar,
+        registry_gps,
+        run_line_id,
+        seed=cfg_scalar.seed + 300,
+    )
     print("  " + _fmt_ci(arm3["metrics"]["recall_at_budget"]))
 
     print("Arm 4 (+ stand-off inversion/normalisation, GPS chainage)...")
-    arm4 = _evaluate_arm(corpus_gps, arm4_cols, cfg_scalar, registry_gps, run_line_id, seed=cfg_scalar.seed + 400)
+    arm4 = _evaluate_arm(
+        corpus_gps,
+        arm4_cols,
+        cfg_scalar,
+        registry_gps,
+        run_line_id,
+        seed=cfg_scalar.seed + 400,
+    )
     print("  " + _fmt_ci(arm4["metrics"]["recall_at_budget"]))
 
     # -- Arm 5: SAME feature set as arm 4, real weld-comb registration ------
@@ -405,13 +532,24 @@ def main() -> None:
     corpus_reg = _scalar_corpus_with_registration(cfg_scalar, results)
     registries_reg = []
     for line_id in line_ids:
-        ref_survey_id = min(corpus_reg.loc[corpus_reg["line_id"] == line_id, "survey_id"].unique())
+        ref_survey_id = min(
+            corpus_reg.loc[corpus_reg["line_id"] == line_id, "survey_id"].unique()
+        )
         ref_rows = corpus_reg[corpus_reg["survey_id"] == ref_survey_id]
-        registries_reg.append(build_truth_registry(ref_rows, line_id, ref_rows["chainage_m"].to_numpy()))
+        registries_reg.append(
+            build_truth_registry(ref_rows, line_id, ref_rows["chainage_m"].to_numpy())
+        )
     registry_reg = pd.concat(registries_reg, ignore_index=True)
     arm5_cols = arm4_cols + ["dist_to_weld_m"]
     print("Arm 5 (+ weld-comb registration)...")
-    arm5 = _evaluate_arm(corpus_reg, arm5_cols, cfg_scalar, registry_reg, run_line_id, seed=cfg_scalar.seed + 500)
+    arm5 = _evaluate_arm(
+        corpus_reg,
+        arm5_cols,
+        cfg_scalar,
+        registry_reg,
+        run_line_id,
+        seed=cfg_scalar.seed + 500,
+    )
     print("  " + _fmt_ci(arm5["metrics"]["recall_at_budget"]))
 
     # -- Arm 6: the preserved vector rig, its own corpus/registry -----------
@@ -422,14 +560,23 @@ def main() -> None:
     line_ids_vec = sorted(corpus_vec["line_id"].unique())
     registries_vec = []
     for line_id in line_ids_vec:
-        ref_survey_id = min(corpus_vec.loc[corpus_vec["line_id"] == line_id, "survey_id"].unique())
+        ref_survey_id = min(
+            corpus_vec.loc[corpus_vec["line_id"] == line_id, "survey_id"].unique()
+        )
         ref_rows = corpus_vec[corpus_vec["survey_id"] == ref_survey_id]
-        registries_vec.append(build_truth_registry(ref_rows, line_id, ref_rows["chainage_m"].to_numpy()))
+        registries_vec.append(
+            build_truth_registry(ref_rows, line_id, ref_rows["chainage_m"].to_numpy())
+        )
     registry_vec = pd.concat(registries_vec, ignore_index=True)
     print("Arm 6 (full 3-axis vector output)...")
     arm6 = _evaluate_arm(
-        corpus_vec, _vector_feature_cols(cfg_vector), cfg_vector, registry_vec, run_line_id_vec,
-        seed=cfg_vector.seed + 600, mad_residual_col="r_mag_nt",
+        corpus_vec,
+        _vector_feature_cols(cfg_vector),
+        cfg_vector,
+        registry_vec,
+        run_line_id_vec,
+        seed=cfg_vector.seed + 600,
+        mad_residual_col="r_mag_nt",
     )
     print("  " + _fmt_ci(arm6["metrics"]["recall_at_budget"]))
 
@@ -443,20 +590,34 @@ def main() -> None:
         ("6. full 3-axis vector output (hardware)", arm6),
     ]
 
-    lines = ["", "=" * 100, "ABLATION LADDER -- IsolationForest, grouped CV, out-of-fold", "=" * 100]
+    lines = [
+        "",
+        "=" * 100,
+        "ABLATION LADDER -- IsolationForest, grouped CV, out-of-fold",
+        "=" * 100,
+    ]
     for name, arm in arms:
         m = arm["metrics"]
         lines.append(f"\n{name}")
         lines.append(f"  recall @ dig budget      {_fmt_ci(m['recall_at_budget'])}")
         lines.append(f"  false-dig rate           {_fmt_ci(m['false_dig_rate'])}")
-        lines.append(f"  localisation error (cm)  {_fmt_ci(m['localisation_error_cm'])}")
+        lines.append(
+            f"  localisation error (cm)  {_fmt_ci(m['localisation_error_cm'])}"
+        )
 
     lines.append("\n" + "-" * 100)
-    lines.append("Arm-to-arm recall deltas (paired bootstrap where the defect universe is shared; "
-                  "arm 5->6 is NOT paired -- rig:vector is a structurally different corpus/generator, "
-                  "compare via CI overlap only, not a paired delta):")
-    pairs = [("1->2", arm1, arm2), ("2->3", arm2, arm3), ("3->4", arm3, arm4),
-             ("4->5", arm4, arm5), ("1->5 (software total)", arm1, arm5)]
+    lines.append(
+        "Arm-to-arm recall deltas (paired bootstrap where the defect universe is shared; "
+        "arm 5->6 is NOT paired -- rig:vector is a structurally different corpus/generator, "
+        "compare via CI overlap only, not a paired delta):"
+    )
+    pairs = [
+        ("1->2", arm1, arm2),
+        ("2->3", arm2, arm3),
+        ("3->4", arm3, arm4),
+        ("4->5", arm4, arm5),
+        ("1->5 (software total)", arm1, arm5),
+    ]
     for label, a, b in pairs:
         delta = _paired_delta(a, b, boot_cfg, seed=9001)
         if delta is not None:
@@ -466,9 +627,11 @@ def main() -> None:
 
     r5 = arm5["metrics"]["recall_at_budget"]
     r6 = arm6["metrics"]["recall_at_budget"]
-    lines.append(f"\n  5->6 (hardware headline)     software {_fmt_ci(r5)} vs hardware {_fmt_ci(r6)}"
-                 f" -- independent CIs, point gap {r6[0] - r5[0]:+.3f} "
-                 f"(NOT a paired delta -- see note above)")
+    lines.append(
+        f"\n  5->6 (hardware headline)     software {_fmt_ci(r5)} vs hardware {_fmt_ci(r6)}"
+        f" -- independent CIs, point gap {r6[0] - r5[0]:+.3f} "
+        f"(NOT a paired delta -- see note above)"
+    )
 
     report = "\n".join(lines)
     print(report)

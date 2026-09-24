@@ -37,8 +37,14 @@ def _seed_pipeline_release(conn, pipeline_version="P1"):
 
 
 def _seed_indication(
-    conn, indication_id, survey_id, pipeline_version, chainage_peak_m, created_at,
-    sev_lo=None, sev_hi=None,
+    conn,
+    indication_id,
+    survey_id,
+    pipeline_version,
+    chainage_peak_m,
+    created_at,
+    sev_lo=None,
+    sev_hi=None,
 ):
     conn.execute(
         "INSERT INTO indication (indication_id, survey_id, pipeline_version, is_shadow, "
@@ -47,8 +53,15 @@ def _seed_indication(
         "risk_score, dq_flag, created_at) "
         "VALUES (?,?,?,0,?,?,?,NULL,NULL,1.0,0.5,NULL,NULL,NULL,?,?,NULL,NULL,'clean',?)",
         (
-            indication_id, survey_id, pipeline_version, chainage_peak_m,
-            chainage_peak_m - 1.0, chainage_peak_m + 1.0, sev_lo, sev_hi, created_at,
+            indication_id,
+            survey_id,
+            pipeline_version,
+            chainage_peak_m,
+            chainage_peak_m - 1.0,
+            chainage_peak_m + 1.0,
+            sev_lo,
+            sev_hi,
+            created_at,
         ),
     )
     conn.commit()
@@ -58,20 +71,33 @@ def test_record_excavation_creates_a_new_defect_when_unmatched(tmp_path):
     conn = connect(tmp_path / "t.db")
     _seed_survey(conn)
     _seed_pipeline_release(conn)
-    _seed_indication(conn, "I1", "S1", "P1", chainage_peak_m=100.0, created_at="2026-01-01T00:00:00+00:00")
+    _seed_indication(
+        conn,
+        "I1",
+        "S1",
+        "P1",
+        chainage_peak_m=100.0,
+        created_at="2026-01-01T00:00:00+00:00",
+    )
 
-    defect_id = record_excavation(conn, "I1", verified_severity_smys=55.0, verified_at="2026-02-01T00:00:00+00:00")
+    defect_id = record_excavation(
+        conn, "I1", verified_severity_smys=55.0, verified_at="2026-02-01T00:00:00+00:00"
+    )
 
-    defect_row = conn.execute("SELECT line_id FROM defect WHERE defect_id=?", (defect_id,)).fetchone()
+    defect_row = conn.execute(
+        "SELECT line_id FROM defect WHERE defect_id=?", (defect_id,)
+    ).fetchone()
     assert defect_row is not None and defect_row[0] == "LINE000"
 
     truth_row = conn.execute(
-        "SELECT revision, source, valid_to FROM truth_defect WHERE defect_id=?", (defect_id,)
+        "SELECT revision, source, valid_to FROM truth_defect WHERE defect_id=?",
+        (defect_id,),
     ).fetchone()
     assert truth_row == (0, "excavation", None)
 
     obs_row = conn.execute(
-        "SELECT severity_smys FROM truth_observation WHERE defect_id=? AND survey_id='S1'", (defect_id,)
+        "SELECT severity_smys FROM truth_observation WHERE defect_id=? AND survey_id='S1'",
+        (defect_id,),
     ).fetchone()
     assert obs_row == (55.0,)
 
@@ -80,7 +106,14 @@ def test_record_excavation_matches_an_existing_defect_and_revises(tmp_path):
     conn = connect(tmp_path / "t.db")
     _seed_survey(conn)
     _seed_pipeline_release(conn)
-    _seed_indication(conn, "I1", "S1", "P1", chainage_peak_m=100.0, created_at="2026-01-01T00:00:00+00:00")
+    _seed_indication(
+        conn,
+        "I1",
+        "S1",
+        "P1",
+        chainage_peak_m=100.0,
+        created_at="2026-01-01T00:00:00+00:00",
+    )
 
     # Manually seed a prior defect + revision 0 near the indication's chainage
     # -- ingest.py doesn't populate these yet, so this mirrors the only way
@@ -93,7 +126,9 @@ def test_record_excavation_matches_an_existing_defect_and_revises(tmp_path):
     )
     conn.commit()
 
-    defect_id = record_excavation(conn, "I1", verified_severity_smys=60.0, verified_at="2026-02-01T00:00:00+00:00")
+    defect_id = record_excavation(
+        conn, "I1", verified_severity_smys=60.0, verified_at="2026-02-01T00:00:00+00:00"
+    )
 
     assert defect_id == "D1"
     revisions = conn.execute(
@@ -118,9 +153,30 @@ def test_median_days_to_verification_matches_hand_computed_value(tmp_path):
     conn = connect(tmp_path / "t.db")
     _seed_survey(conn)
     _seed_pipeline_release(conn)
-    _seed_indication(conn, "I1", "S1", "P1", chainage_peak_m=100.0, created_at="2026-01-01T00:00:00+00:00")
-    _seed_indication(conn, "I2", "S1", "P1", chainage_peak_m=200.0, created_at="2026-01-01T00:00:00+00:00")
-    _seed_indication(conn, "I3", "S1", "P1", chainage_peak_m=300.0, created_at="2026-01-01T00:00:00+00:00")
+    _seed_indication(
+        conn,
+        "I1",
+        "S1",
+        "P1",
+        chainage_peak_m=100.0,
+        created_at="2026-01-01T00:00:00+00:00",
+    )
+    _seed_indication(
+        conn,
+        "I2",
+        "S1",
+        "P1",
+        chainage_peak_m=200.0,
+        created_at="2026-01-01T00:00:00+00:00",
+    )
+    _seed_indication(
+        conn,
+        "I3",
+        "S1",
+        "P1",
+        chainage_peak_m=300.0,
+        created_at="2026-01-01T00:00:00+00:00",
+    )
 
     # 10, 20, 30 days to verification -- median 20.
     record_excavation(conn, "I1", 50.0, verified_at="2026-01-11T00:00:00+00:00")
@@ -139,11 +195,33 @@ def test_recompute_coverage_from_verifications_matches_expectation(tmp_path):
     conn = connect(tmp_path / "t.db")
     _seed_survey(conn)
     _seed_pipeline_release(conn, "P1")
-    _seed_indication(conn, "I1", "S1", "P1", chainage_peak_m=100.0, created_at="2026-01-01T00:00:00+00:00", sev_lo=40.0, sev_hi=60.0)
-    _seed_indication(conn, "I2", "S1", "P1", chainage_peak_m=200.0, created_at="2026-01-01T00:00:00+00:00", sev_lo=40.0, sev_hi=60.0)
+    _seed_indication(
+        conn,
+        "I1",
+        "S1",
+        "P1",
+        chainage_peak_m=100.0,
+        created_at="2026-01-01T00:00:00+00:00",
+        sev_lo=40.0,
+        sev_hi=60.0,
+    )
+    _seed_indication(
+        conn,
+        "I2",
+        "S1",
+        "P1",
+        chainage_peak_m=200.0,
+        created_at="2026-01-01T00:00:00+00:00",
+        sev_lo=40.0,
+        sev_hi=60.0,
+    )
 
-    record_excavation(conn, "I1", verified_severity_smys=50.0, verified_at="2026-02-01T00:00:00+00:00")  # inside [40,60]
-    record_excavation(conn, "I2", verified_severity_smys=90.0, verified_at="2026-02-01T00:00:00+00:00")  # outside [40,60]
+    record_excavation(
+        conn, "I1", verified_severity_smys=50.0, verified_at="2026-02-01T00:00:00+00:00"
+    )  # inside [40,60]
+    record_excavation(
+        conn, "I2", verified_severity_smys=90.0, verified_at="2026-02-01T00:00:00+00:00"
+    )  # outside [40,60]
 
     result = recompute_coverage_from_verifications(conn, "P1", nominal=0.9)
     assert result["n"] == 2
@@ -157,11 +235,33 @@ def test_recompute_coverage_from_verifications_filters_by_pipeline_version(tmp_p
     _seed_survey(conn, "S2", line_id="LINE001")
     _seed_pipeline_release(conn, "P1")
     _seed_pipeline_release(conn, "P2")
-    _seed_indication(conn, "I1", "S1", "P1", chainage_peak_m=100.0, created_at="2026-01-01T00:00:00+00:00", sev_lo=40.0, sev_hi=60.0)
-    _seed_indication(conn, "I2", "S2", "P2", chainage_peak_m=100.0, created_at="2026-01-01T00:00:00+00:00", sev_lo=0.0, sev_hi=1.0)
+    _seed_indication(
+        conn,
+        "I1",
+        "S1",
+        "P1",
+        chainage_peak_m=100.0,
+        created_at="2026-01-01T00:00:00+00:00",
+        sev_lo=40.0,
+        sev_hi=60.0,
+    )
+    _seed_indication(
+        conn,
+        "I2",
+        "S2",
+        "P2",
+        chainage_peak_m=100.0,
+        created_at="2026-01-01T00:00:00+00:00",
+        sev_lo=0.0,
+        sev_hi=1.0,
+    )
 
-    record_excavation(conn, "I1", verified_severity_smys=50.0, verified_at="2026-02-01T00:00:00+00:00")
-    record_excavation(conn, "I2", verified_severity_smys=50.0, verified_at="2026-02-01T00:00:00+00:00")
+    record_excavation(
+        conn, "I1", verified_severity_smys=50.0, verified_at="2026-02-01T00:00:00+00:00"
+    )
+    record_excavation(
+        conn, "I2", verified_severity_smys=50.0, verified_at="2026-02-01T00:00:00+00:00"
+    )
 
     result_p1 = recompute_coverage_from_verifications(conn, "P1", nominal=0.9)
     assert result_p1["n"] == 1

@@ -14,14 +14,16 @@ def _toy_raw(n=200):
     defect[100:108] = 1  # a second contiguous run
     interference = np.zeros(n, dtype=int)
     interference[60:65] = 1
-    return pd.DataFrame({
-        "chainage_m": chainage,
-        "b_lo_nt": np.random.default_rng(0).normal(45000, 5, n),
-        "b_mid_nt": np.random.default_rng(1).normal(45000, 5, n),
-        "b_hi_nt": np.random.default_rng(2).normal(45000, 5, n),
-        "defect": defect,
-        "interference": interference,
-    })
+    return pd.DataFrame(
+        {
+            "chainage_m": chainage,
+            "b_lo_nt": np.random.default_rng(0).normal(45000, 5, n),
+            "b_mid_nt": np.random.default_rng(1).normal(45000, 5, n),
+            "b_hi_nt": np.random.default_rng(2).normal(45000, 5, n),
+            "defect": defect,
+            "interference": interference,
+        }
+    )
 
 
 def test_contiguous_midpoints_finds_one_marker_per_run():
@@ -68,7 +70,12 @@ def test_deviation_chart_switches_between_log_and_linear_scale():
 
 def test_residual_gradient_chart_with_and_without_gradient_column():
     raw = _toy_raw()
-    features = pd.DataFrame({"chainage_m": raw["chainage_m"], "r_mid_nt": np.random.default_rng(3).normal(0, 2, len(raw))})
+    features = pd.DataFrame(
+        {
+            "chainage_m": raw["chainage_m"],
+            "r_mid_nt": np.random.default_rng(3).normal(0, 2, len(raw)),
+        }
+    )
 
     chart_no_grad = chart_utils.residual_gradient_chart(features, raw)
     assert chart_no_grad is not None
@@ -79,23 +86,29 @@ def test_residual_gradient_chart_with_and_without_gradient_column():
 
 
 def _toy_dug():
-    return pd.DataFrame({
-        "chainage_peak_m": [10.0, 52.0],
-        "anomaly_score": [0.8, 0.6],
-        "p_defect_cal": [0.9, 0.4],
-        "pred_type": ["scc", "interference"],
-        "pred_type_conf": [0.7, 0.95],
-        "sev_pred": [55.0, np.nan],
-        "sev_lo": [40.0, np.nan],
-        "sev_hi": [70.0, np.nan],
-        "risk_score": [0.5, 0.0],
-    })
+    return pd.DataFrame(
+        {
+            "chainage_peak_m": [10.0, 52.0],
+            "anomaly_score": [0.8, 0.6],
+            "p_defect_cal": [0.9, 0.4],
+            "pred_type": ["scc", "interference"],
+            "pred_type_conf": [0.7, 0.95],
+            "sev_pred": [55.0, np.nan],
+            "sev_lo": [40.0, np.nan],
+            "sev_hi": [70.0, np.nan],
+            "risk_score": [0.5, 0.0],
+        }
+    )
 
 
 def test_indications_chart_plots_severity_with_interval_when_present():
     chart = chart_utils.indications_chart(_toy_dug(), _toy_raw())
     spec = chart.to_dict()
-    y_fields = {layer["encoding"]["y"]["field"] for layer in spec["layer"] if "y" in layer.get("encoding", {})}
+    y_fields = {
+        layer["encoding"]["y"]["field"]
+        for layer in spec["layer"]
+        if "y" in layer.get("encoding", {})
+    }
     assert "sev_pred" in y_fields
     assert "sev_lo" in y_fields  # the error-bar layer
 
@@ -107,7 +120,11 @@ def test_indications_chart_falls_back_to_anomaly_score_when_severity_is_all_null
     dug["sev_hi"] = np.nan
     chart = chart_utils.indications_chart(dug, _toy_raw())
     spec = chart.to_dict()
-    y_fields = {layer["encoding"]["y"]["field"] for layer in spec["layer"] if "y" in layer.get("encoding", {})}
+    y_fields = {
+        layer["encoding"]["y"]["field"]
+        for layer in spec["layer"]
+        if "y" in layer.get("encoding", {})
+    }
     assert y_fields == {"anomaly_score"}  # no error-bar layer, no sev_pred
 
 
@@ -135,13 +152,15 @@ def test_indications_rank_chart_one_bar_per_row():
 
 
 def _toy_blocks():
-    return pd.DataFrame({
-        "line_id": ["L1", "L1", "L2"],
-        "block_start_m": [0.0, 200.0, 0.0],
-        "value": [0.9, 0.4, 0.6],
-        "n_indications": [2, 1, 1],
-        "metric": ["risk_score", "risk_score", "risk_score"],
-    })
+    return pd.DataFrame(
+        {
+            "line_id": ["L1", "L1", "L2"],
+            "block_start_m": [0.0, 200.0, 0.0],
+            "value": [0.9, 0.4, 0.6],
+            "n_indications": [2, 1, 1],
+            "metric": ["risk_score", "risk_score", "risk_score"],
+        }
+    )
 
 
 def test_block_heatmap_chart_builds_one_rect_per_cell():
@@ -171,6 +190,8 @@ def test_block_heatmap_chart_titles_by_metric():
 
 
 def test_block_heatmap_chart_on_empty_blocks_does_not_raise():
-    empty = pd.DataFrame(columns=["line_id", "block_start_m", "value", "n_indications", "metric"])
+    empty = pd.DataFrame(
+        columns=["line_id", "block_start_m", "value", "n_indications", "metric"]
+    )
     chart = chart_utils.block_heatmap_chart(empty)
     assert chart.to_dict() is not None

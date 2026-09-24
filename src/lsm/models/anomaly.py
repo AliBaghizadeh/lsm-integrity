@@ -96,7 +96,9 @@ class IsolationForestAnomalyModel:
         self.emphasis_repeats = emphasis_repeats
         unknown = set(self.emphasize_features) - set(feature_cols)
         if unknown:
-            raise ValueError(f"emphasize_features not in feature_cols: {sorted(unknown)}")
+            raise ValueError(
+                f"emphasize_features not in feature_cols: {sorted(unknown)}"
+            )
         self.model = IsolationForest(
             contamination=contamination,
             n_estimators=n_estimators,

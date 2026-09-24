@@ -100,8 +100,11 @@ def make_survey(
     df = pd.DataFrame(
         {
             "sample_idx": sample_idx,
-            "b_lo_nt": b_lo, "b_mid_nt": b_mid, "b_hi_nt": b_hi,
-            "lat": np.full(n, np.nan), "lon": np.full(n, np.nan),
+            "b_lo_nt": b_lo,
+            "b_mid_nt": b_mid,
+            "b_hi_nt": b_hi,
+            "lat": np.full(n, np.nan),
+            "lon": np.full(n, np.nan),
         }
     )
     chainage_m = s.astype(np.float64)
@@ -111,9 +114,12 @@ def make_survey(
 
 def ctx_for(standoff_m: float = 1.5, spacing_m: float | None = 0.5) -> SurveyContext:
     return SurveyContext(
-        survey_id="LINE000_R0", line_id="LINE000", run_id=0,
+        survey_id="LINE000_R0",
+        line_id="LINE000",
+        run_id=0,
         surveyed_at="2026-01-01T00:00:00+00:00",
-        standoff_m=standoff_m, array_spacing_m=spacing_m,
+        standoff_m=standoff_m,
+        array_spacing_m=spacing_m,
     )
 
 
@@ -143,7 +149,8 @@ def test_detrend_returns_near_zero_on_pure_drift(cfg):
 @given(
     coefs=st.lists(
         st.floats(min_value=-1e4, max_value=1e4, allow_nan=False, allow_infinity=False),
-        min_size=4, max_size=4,
+        min_size=4,
+        max_size=4,
     )
 )
 def test_detrend_removes_any_polynomial_of_degree_three(coefs):
@@ -159,7 +166,9 @@ def test_detrend_removes_any_polynomial_of_degree_three(coefs):
     fcfg = FeaturesConfig(
         version=1,
         detrend=DetrendConfig(method="robust_poly", degree=3, window_m=0.0),
-        windows_m=[5.0], peak=PeakConfig(), edge_policy="flag",
+        windows_m=[5.0],
+        peak=PeakConfig(),
+        edge_policy="flag",
     )
     s = np.arange(400) * 0.5
     y = np.polyval(coefs, (s - s.mean()) / max(1.0, s.std()))
@@ -200,7 +209,9 @@ def test_anomaly_width_scales_with_standoff(cfg):
 
     width_ratio = _at_abs_peak(deep, "fwhm_m") / _at_abs_peak(shallow, "fwhm_m")
     amp_ratio = shallow["r_mid_nt"].abs().max() / deep["r_mid_nt"].abs().max()
-    assert 1.6 < width_ratio < 2.5, f"width should roughly double, got {width_ratio:.2f}x"
+    assert 1.6 < width_ratio < 2.5, (
+        f"width should roughly double, got {width_ratio:.2f}x"
+    )
     assert 6.0 < amp_ratio < 10.0, f"amplitude should fall ~8x, got {amp_ratio:.2f}x"
 
 
@@ -213,7 +224,9 @@ def test_off_pipe_interference_is_broader_than_an_on_pipe_defect(cfg):
     # 5.5 m lateral, moment scaled by the 1/r^3 ratio so the PEAKS match and only
     # the shape can distinguish them.
     off_df, s2, w2 = make_survey(
-        depth_m=1.5, y_off_m=5.5, severity=60.0 * (np.hypot(5.5, 1.5) / 1.5) ** 3,
+        depth_m=1.5,
+        y_off_m=5.5,
+        severity=60.0 * (np.hypot(5.5, 1.5) / 1.5) ** 3,
         standoff_m=0.0,
     )
     on_pipe = compute_survey_features(on_df, ctx_for(), cfg.base.features, s1, w1)
@@ -221,7 +234,9 @@ def test_off_pipe_interference_is_broader_than_an_on_pipe_defect(cfg):
 
     amp_ratio = off_pipe["r_mid_nt"].abs().max() / on_pipe["r_mid_nt"].abs().max()
     width_ratio = _at_abs_peak(off_pipe, "fwhm_m") / _at_abs_peak(on_pipe, "fwhm_m")
-    assert 0.5 < amp_ratio < 2.0, "the test is only meaningful if the amplitudes are comparable"
+    assert 0.5 < amp_ratio < 2.0, (
+        "the test is only meaningful if the amplitudes are comparable"
+    )
     assert width_ratio > 2.0, f"off-pipe should be much broader, got {width_ratio:.2f}x"
 
 
@@ -235,7 +250,9 @@ def test_g1_recovers_an_injected_linear_gradient_g2_does_not():
     from lsm.features import _first_second_difference
 
     B0 = np.array([19000.0, 1000.0, 45000.0])
-    grad = np.array([0.02, -0.01, 10.0])  # nT/m, spanning the configured gradient scales
+    grad = np.array(
+        [0.02, -0.01, 10.0]
+    )  # nT/m, spanning the configured gradient scales
     spacing = 0.5
 
     def f(z: float) -> float:
@@ -246,7 +263,9 @@ def test_g1_recovers_an_injected_linear_gradient_g2_does_not():
     r_hi = np.array([f(spacing)])
     g1, g2 = _first_second_difference(r_lo, r_mid, r_hi, spacing)
 
-    assert abs(g1[0] - float(np.dot(grad, unit(B0)))) < 1e-6  # g1 recovers the projected gradient
+    assert (
+        abs(g1[0] - float(np.dot(grad, unit(B0)))) < 1e-6
+    )  # g1 recovers the projected gradient
     assert abs(g2[0]) < 1e-3
     assert abs(g1[0]) > 1.0
     assert abs(g2[0]) < 1e-4 * abs(g1[0])  # several orders of magnitude smaller
@@ -281,11 +300,17 @@ def test_standoff_est_recovers_a_clean_dipoles_true_distance(cfg):
     """
     standoff_m, depth_m = 1.5, 1.5
     true_r = standoff_m + depth_m
-    df, s, w = make_survey(depth_m=depth_m, standoff_m=standoff_m, noise_nt=0.0, drift_nt=0.0)
-    feats = compute_survey_features(df, ctx_for(standoff_m=standoff_m), cfg.base.features, s, w)
+    df, s, w = make_survey(
+        depth_m=depth_m, standoff_m=standoff_m, noise_nt=0.0, drift_nt=0.0
+    )
+    feats = compute_survey_features(
+        df, ctx_for(standoff_m=standoff_m), cfg.base.features, s, w
+    )
     est = _at_abs_peak(feats, "standoff_est_m")
     rel_err = abs(est - true_r) / true_r
-    assert rel_err < 0.5, f"standoff_est_m={est:.2f} m vs true {true_r:.2f} m ({rel_err:.0%} off)"
+    assert rel_err < 0.5, (
+        f"standoff_est_m={est:.2f} m vs true {true_r:.2f} m ({rel_err:.0%} off)"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -301,7 +326,7 @@ def test_feature_frame_matches_the_pinned_ordered_column_list(cfg):
     df, s, w = make_survey()
     feats = compute_survey_features(df, ctx_for(), cfg.base.features, s, w)
     expected = feature_columns(cfg.base.features)
-    assert list(feats.columns[-len(expected):]) == expected
+    assert list(feats.columns[-len(expected) :]) == expected
 
 
 def test_features_are_float32_in_storage_and_keys_keep_their_dtypes(cfg):
@@ -387,7 +412,9 @@ def test_fitted_transform_refuses_to_be_refit():
     on the incoming survey at inference is silently wrong: no exception, no DQ
     warning, just different predictions.
     """
-    X = pd.DataFrame({"a": np.arange(100.0), "b": np.random.default_rng(0).normal(size=100)})
+    X = pd.DataFrame(
+        {"a": np.arange(100.0), "b": np.random.default_rng(0).normal(size=100)}
+    )
     scaler = RobustFeatureScaler().fit(X)
     with pytest.raises(AlreadyFittedError, match="skew"):
         scaler.fit(X)
@@ -432,9 +459,14 @@ def test_feature_cache_hits_on_identical_content_and_version(cfg, tmp_path):
     df, s, w = make_survey()
     ctx = ctx_for()
     args = {
-        "raw_df": df, "ctx": ctx, "cfg": cfg.base.features, "feature_dir": tmp_path,
-        "content_sha256": "abc123", "config_sha256": cfg.config_sha256,
-        "chainage_m": s, "dist_to_weld_m": w,
+        "raw_df": df,
+        "ctx": ctx,
+        "cfg": cfg.base.features,
+        "feature_dir": tmp_path,
+        "content_sha256": "abc123",
+        "config_sha256": cfg.config_sha256,
+        "chainage_m": s,
+        "dist_to_weld_m": w,
     }
     assert compute_and_store(**args)[0] == "computed"
     assert compute_and_store(**args)[0] == "hit"
@@ -445,15 +477,21 @@ def test_changed_content_invalidates_the_cache(cfg, tmp_path):
     ctx = ctx_for()
     df, s, w = make_survey()
     base = {
-        "raw_df": df, "ctx": ctx, "cfg": cfg.base.features,
-        "feature_dir": tmp_path, "config_sha256": cfg.config_sha256,
-        "chainage_m": s, "dist_to_weld_m": w,
+        "raw_df": df,
+        "ctx": ctx,
+        "cfg": cfg.base.features,
+        "feature_dir": tmp_path,
+        "config_sha256": cfg.config_sha256,
+        "chainage_m": s,
+        "dist_to_weld_m": w,
     }
     assert compute_and_store(**base, content_sha256="hash_one")[0] == "computed"
     assert compute_and_store(**base, content_sha256="hash_two")[0] == "computed"
 
 
-def test_feature_version_bump_invalidates_the_cache_and_isolates_the_store(cfg, tmp_path):
+def test_feature_version_bump_invalidates_the_cache_and_isolates_the_store(
+    cfg, tmp_path
+):
     """THE Stage 2 failure mode: edit features.py, forget the version bump, and
     every stored feature is silently stale. The data is unchanged, so no data
     check can see it -- only the version in the cache key and in the path can.
@@ -472,7 +510,9 @@ def test_feature_version_bump_invalidates_the_cache_and_isolates_the_store(cfg, 
 
     assert outcome_v1 == "computed" and outcome_v2 == "computed"
     assert dir_v1 != dir_v2, "each feature_version gets its own directory"
-    assert dir_v1.exists() and dir_v2.exists(), "a bump must not overwrite the old features"
+    assert dir_v1.exists() and dir_v2.exists(), (
+        "a bump must not overwrite the old features"
+    )
     assert f"fv={v1.version}" in str(dir_v1) and f"fv={v2.version}" in str(dir_v2)
 
 
@@ -489,12 +529,24 @@ def test_corpus_loader_applies_the_as_of_cut(cfg, tmp_path):
     for run_id, when in [(0, "2026-01-01"), (1, "2026-04-01"), (2, "2026-07-01")]:
         ctx = SurveyContext(f"LINE000_R{run_id}", "LINE000", run_id, when, 1.5, 0.5)
         df, s, w = make_survey(n=300, seed=run_id)
-        compute_and_store(df, ctx, cfg.base.features, tmp_path, f"content_{run_id}",
-                          cfg.config_sha256, s, w)
+        compute_and_store(
+            df,
+            ctx,
+            cfg.base.features,
+            tmp_path,
+            f"content_{run_id}",
+            cfg.config_sha256,
+            s,
+            w,
+        )
 
-    corpus = load_feature_corpus(tmp_path, cfg.base.features.version, as_of="2026-04-01")
+    corpus = load_feature_corpus(
+        tmp_path, cfg.base.features.version, as_of="2026-04-01"
+    )
     assert set(corpus["run_id"].unique()) == {0, 1}
-    assert load_feature_corpus(tmp_path, cfg.base.features.version, as_of="2025-01-01").empty
+    assert load_feature_corpus(
+        tmp_path, cfg.base.features.version, as_of="2025-01-01"
+    ).empty
 
 
 # ---------------------------------------------------------------------------
@@ -512,7 +564,9 @@ def test_pipeline_refuses_to_featurise_a_quarantined_survey(tiny_cfg, tmp_path):
     from lsm.pipeline import SurveyNotFeaturisableError, run_feature_pipeline
 
     def corrupt(df):
-        df.loc[50:60, "b_mid_nt"] = 48000.0  # stuck channel -> saturation gate (hard fail)
+        df.loc[50:60, "b_mid_nt"] = (
+            48000.0  # stuck channel -> saturation gate (hard fail)
+        )
         return df
 
     sr = generate_one_survey(tiny_cfg, tmp_path, mutate=corrupt)
@@ -566,14 +620,22 @@ def _one_generated_survey(cfg, tmp_path, **data_overrides):
     raw = pd.read_parquet(result.path)
     reg = register_chainage(raw, cfg.base.data)
     ctx = SurveyContext(
-        result.survey_id, result.line_id, result.run_id, result.surveyed_at,
-        cfg.base.data.walk.standoff_m, cfg.base.data.array.spacing_m,
+        result.survey_id,
+        result.line_id,
+        result.run_id,
+        result.surveyed_at,
+        cfg.base.data.walk.standoff_m,
+        cfg.base.data.array.spacing_m,
     )
-    feats = compute_survey_features(raw, ctx, cfg.base.features, reg.chainage_m, reg.dist_to_weld_m)
+    feats = compute_survey_features(
+        raw, ctx, cfg.base.features, reg.chainage_m, reg.dist_to_weld_m
+    )
     return raw, feats
 
 
-def _defect_peak_sigmas(raw: pd.DataFrame, feats: pd.DataFrame) -> tuple[np.ndarray, float, pd.Series]:
+def _defect_peak_sigmas(
+    raw: pd.DataFrame, feats: pd.DataFrame
+) -> tuple[np.ndarray, float, pd.Series]:
     """Per-defect peak |r_mid_nt|, in units of the background's own robust
     sigma (MAD*1.4826, the same convention _peak_shape's own peak detector
     uses) -- and the row-level defect/background series for the raw-field-
@@ -591,15 +653,24 @@ def _defect_peak_sigmas(raw: pd.DataFrame, feats: pd.DataFrame) -> tuple[np.ndar
     the whole window dilutes the one thing that actually matters physically,
     whether the anomaly clears the background floor SOMEWHERE inside it.
     """
-    m = feats.merge(raw[["sample_idx", "defect", "interference", "girth_weld"]], on="sample_idx")
+    m = feats.merge(
+        raw[["sample_idx", "defect", "interference", "girth_weld"]], on="sample_idx"
+    )
     m = m[m["dq_flag"] == "clean"]
     defect_rows = m[m["defect"] == 1]["r_mid_nt"].abs()
-    background = m[(m["defect"] == 0) & (m["interference"] == 0) & (m["girth_weld"] == 0)]["r_mid_nt"]
-    med, mad = float(background.median()), float((background - background.median()).abs().median())
+    background = m[
+        (m["defect"] == 0) & (m["interference"] == 0) & (m["girth_weld"] == 0)
+    ]["r_mid_nt"]
+    med, mad = (
+        float(background.median()),
+        float((background - background.median()).abs().median()),
+    )
     sigma = 1.4826 * mad
 
     grp = (m["defect"].diff() != 0).cumsum()
-    peaks = np.array([sub["r_mid_nt"].abs().max() for _, sub in m[m["defect"] == 1].groupby(grp)])
+    peaks = np.array(
+        [sub["r_mid_nt"].abs().max() for _, sub in m[m["defect"] == 1].groupby(grp)]
+    )
     return (peaks - med) / sigma, sigma, defect_rows
 
 
@@ -622,9 +693,13 @@ def test_stage2_gate_defect_stands_out_after_background_removal(cfg, tmp_path):
     sigmas, _, defect_rows = _defect_peak_sigmas(raw, feats)
 
     assert len(sigmas) >= 4, "need several defect peaks for a median to mean anything"
-    assert np.median(sigmas) > 2.0, f"median defect-peak significance {np.median(sigmas):.2f} sigma"
+    assert np.median(sigmas) > 2.0, (
+        f"median defect-peak significance {np.median(sigmas):.2f} sigma"
+    )
     raw_field = float(raw["b_mid_nt"].mean())
-    assert defect_rows.median() / raw_field < 0.001, "the defect must stay a ~0.05% perturbation"
+    assert defect_rows.median() / raw_field < 0.001, (
+        "the defect must stay a ~0.05% perturbation"
+    )
 
 
 def test_observatory_background_is_not_polynomial_like_the_synthetic_one(cfg):
@@ -639,7 +714,9 @@ def test_observatory_background_is_not_polynomial_like_the_synthetic_one(cfg):
     """
     from lsm.generate import _load_observatory_background
 
-    cfg.base.data.observatory_background.csv_path = "data/reference/geomag_bou_2024-05-10_storm.csv"
+    cfg.base.data.observatory_background.csv_path = (
+        "data/reference/geomag_bou_2024-05-10_storm.csv"
+    )
     s = np.arange(4000) * cfg.base.data.step_m
     background = _load_observatory_background(cfg.base.data.observatory_background, s)
 
@@ -659,17 +736,23 @@ def test_stage2_gate_holds_with_a_real_observatory_background(cfg, tmp_path):
     not only against the synthetic sinusoid it was written next to.
     """
     cfg.base.data.observatory_background.enabled = True
-    cfg.base.data.observatory_background.csv_path = "data/reference/geomag_bou_2024-05-10_storm.csv"
+    cfg.base.data.observatory_background.csv_path = (
+        "data/reference/geomag_bou_2024-05-10_storm.csv"
+    )
     raw, feats = _one_generated_survey(cfg, tmp_path)
     sigmas, _, _ = _defect_peak_sigmas(raw, feats)
 
     # See test_stage2_gate_defect_stands_out_after_background_removal's comment
     # on the peak-vs-background-sigma measure and its measured range.
     assert len(sigmas) >= 4
-    assert np.median(sigmas) > 2.0, f"median defect-peak significance {np.median(sigmas):.2f} sigma"
+    assert np.median(sigmas) > 2.0, (
+        f"median defect-peak significance {np.median(sigmas):.2f} sigma"
+    )
 
 
-def test_r_mag_norm_is_not_an_exact_duplicate_of_r_mid_when_standoff_varies(cfg, tmp_path):
+def test_r_mag_norm_is_not_an_exact_duplicate_of_r_mid_when_standoff_varies(
+    cfg, tmp_path
+):
     """The fv=1->2 deletion rationale (feature_columns()'s docstring): with a
     single global depth_m, r_mag_norm_nt_m3 was an EXACT duplicate (r=1.000)
     of r_mag_nt, a constant scalar multiply within any one survey. Now that
@@ -697,22 +780,32 @@ def test_r_mag_norm_is_not_an_exact_duplicate_of_r_mid_when_standoff_varies(cfg,
         raw = pd.read_parquet(result.path)
         reg = register_chainage(raw, cfg.base.data)
         ctx = SurveyContext(
-            result.survey_id, result.line_id, result.run_id, result.surveyed_at,
-            cfg.base.data.walk.standoff_m, cfg.base.data.array.spacing_m,
+            result.survey_id,
+            result.line_id,
+            result.run_id,
+            result.surveyed_at,
+            cfg.base.data.walk.standoff_m,
+            cfg.base.data.array.spacing_m,
         )
-        feats = compute_survey_features(raw, ctx, cfg.base.features, reg.chainage_m, reg.dist_to_weld_m)
+        feats = compute_survey_features(
+            raw, ctx, cfg.base.features, reg.chainage_m, reg.dist_to_weld_m
+        )
         m = feats.merge(raw[["sample_idx", "defect"]], on="sample_idx")
         for _, run in m[m["defect"] == 1].groupby((m["defect"].diff() != 0).cumsum()):
             idx = run["r_mid_nt"].abs().idxmax()
             peak_r_mid.append(float(run.loc[idx, "r_mid_nt"]))
             peak_norm.append(float(run.loc[idx, "r_mag_norm_nt_m3"]))
 
-    assert len(peak_r_mid) >= 6, "need several defect peaks to measure a correlation at all"
+    assert len(peak_r_mid) >= 6, (
+        "need several defect peaks to measure a correlation at all"
+    )
     corr = float(np.corrcoef(peak_r_mid, peak_norm)[0, 1])
     # Reported honestly either way (see this test's docstring) -- the fv=1->2
     # deletion measured r=1.000 exactly; anything measurably below that here
     # is the claimed effect.
-    assert abs(corr) < 0.999, f"r_mag_norm_nt_m3 measured r={corr:.4f} against r_mid_nt -- still an exact duplicate"
+    assert abs(corr) < 0.999, (
+        f"r_mag_norm_nt_m3 measured r={corr:.4f} against r_mid_nt -- still an exact duplicate"
+    )
 
 
 def test_sign_agnostic_detection_separability(cfg, tmp_path):
@@ -750,23 +843,44 @@ def test_sign_agnostic_detection_separability(cfg, tmp_path):
         cfg.base.data.stress_polarity = polarity
 
         rows = []
-        for result in generate_all(cfg.base.data, tmp_path / f"raw_{polarity}", seed=11):
+        for result in generate_all(
+            cfg.base.data, tmp_path / f"raw_{polarity}", seed=11
+        ):
             raw = pd.read_parquet(result.path)
             reg = register_chainage(raw, cfg.base.data)
             ctx = SurveyContext(
-                result.survey_id, result.line_id, result.run_id, result.surveyed_at,
-                cfg.base.data.walk.standoff_m, cfg.base.data.array.spacing_m,
+                result.survey_id,
+                result.line_id,
+                result.run_id,
+                result.surveyed_at,
+                cfg.base.data.walk.standoff_m,
+                cfg.base.data.array.spacing_m,
             )
-            feats = compute_survey_features(raw, ctx, cfg.base.features, reg.chainage_m, reg.dist_to_weld_m)
-            m = feats.merge(raw[["sample_idx", "defect", "interference", "girth_weld"]], on="sample_idx")
-            rows.append(m[(m["dq_flag"] == "clean") & (m["interference"] == 0) & (m["girth_weld"] == 0)])
+            feats = compute_survey_features(
+                raw, ctx, cfg.base.features, reg.chainage_m, reg.dist_to_weld_m
+            )
+            m = feats.merge(
+                raw[["sample_idx", "defect", "interference", "girth_weld"]],
+                on="sample_idx",
+            )
+            rows.append(
+                m[
+                    (m["dq_flag"] == "clean")
+                    & (m["interference"] == 0)
+                    & (m["girth_weld"] == 0)
+                ]
+            )
         return pd.concat(rows, ignore_index=True)
 
     random_df = _measure("random")
     positive_df = _measure("positive")
 
     def ap(df: pd.DataFrame, col: str) -> float:
-        return float(average_precision_score(df["defect"].to_numpy(), df[col].fillna(0).to_numpy()))
+        return float(
+            average_precision_score(
+                df["defect"].to_numpy(), df[col].fillna(0).to_numpy()
+            )
+        )
 
     ap_naive_positive = ap(positive_df, "w2m_mean_nt")
     ap_naive_random = ap(random_df, "w2m_mean_nt")

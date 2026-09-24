@@ -44,7 +44,10 @@ def _get_conn_and_cfg(env: str):
 
 conn, cfg = _get_conn_and_cfg("dev")
 
-survey_ids = [r[0] for r in conn.execute("SELECT survey_id FROM survey ORDER BY survey_id").fetchall()]
+survey_ids = [
+    r[0]
+    for r in conn.execute("SELECT survey_id FROM survey ORDER BY survey_id").fetchall()
+]
 if not survey_ids:
     st.error("No surveys registered. Run `lsm generate && lsm ingest` first.")
     st.stop()
@@ -77,7 +80,9 @@ if pipeline_version:
         f"· config_sha256={cfg.config_sha256[:12]}..."
     )
 else:
-    st.warning("No trained pipeline yet -- run `lsm train` first. Showing ground truth only.")
+    st.warning(
+        "No trained pipeline yet -- run `lsm train` first. Showing ground truth only."
+    )
 
 show_heatmap = st.checkbox("Show risk heatmap on map", value=False)
 st.pydeck_chart(build_map(raw, indications, show_heatmap=show_heatmap))
@@ -90,11 +95,20 @@ st.caption(
 st.subheader("Ranked indications")
 if len(indications):
     ranked = indications.sort_values("anomaly_score", ascending=False)[
-        ["chainage_peak_m", "anomaly_score", "p_defect_cal", "dq_flag", "chainage_start_m", "chainage_end_m"]
+        [
+            "chainage_peak_m",
+            "anomaly_score",
+            "p_defect_cal",
+            "dq_flag",
+            "chainage_start_m",
+            "chainage_end_m",
+        ]
     ]
     st.dataframe(ranked, width="stretch")
 else:
-    st.info("No indications for this survey yet -- run `lsm predict <survey_id>` first.")
+    st.info(
+        "No indications for this survey yet -- run `lsm predict <survey_id>` first."
+    )
 
 st.subheader("Risk heatmap across all lines")
 st.caption(

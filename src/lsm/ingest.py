@@ -34,7 +34,9 @@ class IngestConflictError(Exception):
     """A survey with this (line_id, run_id) already exists with different content."""
 
 
-def register_survey(conn: sqlite3.Connection, sr: SurveyResult, schema_version: int) -> str:
+def register_survey(
+    conn: sqlite3.Connection, sr: SurveyResult, schema_version: int
+) -> str:
     """Insert the `survey` row. Returns 'accepted', 'noop' (idempotent re-register),
     or raises IngestConflictError. Never touches `reading` -- safe to call on data
     of unknown quality.
@@ -108,8 +110,17 @@ def load_readings(conn: sqlite3.Connection, survey_id: str, df: pd.DataFrame) ->
     axes) -- b_lo/mid/hi_nt, girth_weld and chainage_true_m are all NOT NULL
     per RawReadingSchema, so only lat/lon need the NaN->None conversion.
     """
-    cols = ["sample_idx", "t_s", "lat", "lon", "b_lo_nt", "b_mid_nt", "b_hi_nt",
-            "girth_weld", "chainage_true_m"]
+    cols = [
+        "sample_idx",
+        "t_s",
+        "lat",
+        "lon",
+        "b_lo_nt",
+        "b_mid_nt",
+        "b_hi_nt",
+        "girth_weld",
+        "chainage_true_m",
+    ]
     nullable_cols = ["lat", "lon"]
     prepared = df[cols].copy()
     # numpy.int64 is not a Python `int` subclass (unlike numpy.float64/`float`),
@@ -117,8 +128,10 @@ def load_readings(conn: sqlite3.Connection, survey_id: str, df: pd.DataFrame) ->
     # rejects it silently-wrong otherwise on some driver/dtype combinations.
     prepared["sample_idx"] = prepared["sample_idx"].astype(int)
     prepared["girth_weld"] = prepared["girth_weld"].astype(int)
-    prepared[nullable_cols] = prepared[nullable_cols].astype(object).where(
-        prepared[nullable_cols].notna(), None
+    prepared[nullable_cols] = (
+        prepared[nullable_cols]
+        .astype(object)
+        .where(prepared[nullable_cols].notna(), None)
     )
     rows = [(survey_id, *row) for row in prepared.to_numpy(dtype=object).tolist()]
 

@@ -114,7 +114,9 @@ def test_backfill_kill_and_resume_no_duplication(backfill_setup):
     n_after = conn.execute(
         "SELECT COUNT(*) FROM reading WHERE survey_id=?", (already_done,)
     ).fetchone()[0]
-    assert n_after == backfill_setup["n_samples_by_survey"][already_done]  # unchanged, not doubled
+    assert (
+        n_after == backfill_setup["n_samples_by_survey"][already_done]
+    )  # unchanged, not doubled
 
     conn.close()
 
@@ -149,13 +151,17 @@ def test_features_materialise_for_clean_partitions_only(backfill_setup, cfg, tmp
     corrupt_id = backfill_setup["corrupt_survey_id"]
     for sid in backfill_setup["survey_ids"]:
         line_id, run_id = sid.rsplit("_R", 1)
-        path = feature_store_dir(tmp_path / "features", fv, line_id, int(run_id)) / "features.parquet"
+        path = (
+            feature_store_dir(tmp_path / "features", fv, line_id, int(run_id))
+            / "features.parquet"
+        )
         assert path.exists() is (sid != corrupt_id), sid
 
     clean_id = next(s for s in backfill_setup["survey_ids"] if s != corrupt_id)
     line_id, run_id = clean_id.rsplit("_R", 1)
     feats = pd.read_parquet(
-        feature_store_dir(tmp_path / "features", fv, line_id, int(run_id)) / "features.parquet"
+        feature_store_dir(tmp_path / "features", fv, line_id, int(run_id))
+        / "features.parquet"
     )
     assert len(feats) == backfill_setup["n_samples_by_survey"][clean_id]
     assert (feats["feature_version"] == fv).all()

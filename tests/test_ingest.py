@@ -58,17 +58,19 @@ def _make_frame(n=20, seed=0, with_gps_dropout=False):
     (Rig-v2's actual failure mode -- GpsConfig -- not an all-or-nothing head).
     """
     rng = np.random.default_rng(seed)
-    df = pd.DataFrame({
-        "sample_idx": np.arange(n),
-        "t_s": np.arange(n, dtype=np.float64) * 0.5,
-        "lat": 46.0 + rng.normal(size=n) * 1e-5,
-        "lon": 8.0 + rng.normal(size=n) * 1e-5,
-        "b_lo_nt": rng.normal(19000.0, 5.0, size=n),
-        "b_mid_nt": rng.normal(45000.0, 5.0, size=n),
-        "b_hi_nt": rng.normal(19000.0, 5.0, size=n),
-        "girth_weld": np.zeros(n, dtype=np.int64),
-        "chainage_true_m": np.arange(n, dtype=np.float64) * 0.6,
-    })
+    df = pd.DataFrame(
+        {
+            "sample_idx": np.arange(n),
+            "t_s": np.arange(n, dtype=np.float64) * 0.5,
+            "lat": 46.0 + rng.normal(size=n) * 1e-5,
+            "lon": 8.0 + rng.normal(size=n) * 1e-5,
+            "b_lo_nt": rng.normal(19000.0, 5.0, size=n),
+            "b_mid_nt": rng.normal(45000.0, 5.0, size=n),
+            "b_hi_nt": rng.normal(19000.0, 5.0, size=n),
+            "girth_weld": np.zeros(n, dtype=np.int64),
+            "chainage_true_m": np.arange(n, dtype=np.float64) * 0.6,
+        }
+    )
     if with_gps_dropout:
         # A real dropout is a RUN of consecutive NaN rows (Markov good/bad
         # lock state, generate.py::_gps_track), not scattered singletons --
@@ -106,10 +108,22 @@ def test_load_readings_round_trip(tmp_path):
         "FROM reading WHERE survey_id='S1' ORDER BY sample_idx",
         conn,
     )
-    cols = ["sample_idx", "t_s", "lat", "lon", "b_lo_nt", "b_mid_nt", "b_hi_nt", "girth_weld", "chainage_true_m"]
+    cols = [
+        "sample_idx",
+        "t_s",
+        "lat",
+        "lon",
+        "b_lo_nt",
+        "b_mid_nt",
+        "b_hi_nt",
+        "girth_weld",
+        "chainage_true_m",
+    ]
     assert len(fetched) == 20
     for col in cols:
-        np.testing.assert_allclose(fetched[col].to_numpy(dtype=float), df[col].to_numpy(dtype=float))
+        np.testing.assert_allclose(
+            fetched[col].to_numpy(dtype=float), df[col].to_numpy(dtype=float)
+        )
 
 
 def test_load_readings_sample_idx_stored_as_correct_type(tmp_path):
@@ -128,7 +142,8 @@ def test_load_readings_sample_idx_stored_as_correct_type(tmp_path):
     load_readings(conn, "S1", df)  # must not raise
 
     fetched = pd.read_sql_query(
-        "SELECT sample_idx, girth_weld FROM reading WHERE survey_id='S1' ORDER BY sample_idx", conn
+        "SELECT sample_idx, girth_weld FROM reading WHERE survey_id='S1' ORDER BY sample_idx",
+        conn,
     )
     assert list(fetched["sample_idx"]) == list(range(5))
     assert list(fetched["girth_weld"]) == [0, 0, 1, 0, 0]
@@ -150,12 +165,15 @@ def test_load_readings_nulls_lat_lon_through_gps_dropout(tmp_path):
     df = _make_frame(n=12, with_gps_dropout=True)
     dropped_rows = df.index[df["lat"].isna()]
     locked_rows = df.index[df["lat"].notna()]
-    assert len(dropped_rows) > 0 and len(locked_rows) > 0  # fixture actually exercises both
+    assert (
+        len(dropped_rows) > 0 and len(locked_rows) > 0
+    )  # fixture actually exercises both
 
     load_readings(conn, "S1", df)
 
     fetched = pd.read_sql_query(
-        "SELECT sample_idx, lat, lon FROM reading WHERE survey_id='S1' ORDER BY sample_idx", conn
+        "SELECT sample_idx, lat, lon FROM reading WHERE survey_id='S1' ORDER BY sample_idx",
+        conn,
     )
     assert fetched.loc[fetched["sample_idx"].isin(dropped_rows), "lat"].isna().all()
     assert fetched.loc[fetched["sample_idx"].isin(dropped_rows), "lon"].isna().all()
@@ -171,7 +189,9 @@ def test_load_readings_nulls_lat_lon_through_gps_dropout(tmp_path):
 
 
 @pytest.mark.parametrize("with_gps_dropout", [True, False])
-def test_load_readings_matches_naive_reference_implementation(tmp_path, with_gps_dropout):
+def test_load_readings_matches_naive_reference_implementation(
+    tmp_path, with_gps_dropout
+):
     df = _make_frame(n=30, seed=1, with_gps_dropout=with_gps_dropout)
 
     conn_fast = connect(tmp_path / "fast.db")
@@ -183,6 +203,10 @@ def test_load_readings_matches_naive_reference_implementation(tmp_path, with_gps
     _naive_load_readings(conn_naive, "S1", df)
 
     cols = "sample_idx, t_s, lat, lon, b_lo_nt, b_mid_nt, b_hi_nt, girth_weld, chainage_true_m"
-    fast_rows = pd.read_sql_query(f"SELECT {cols} FROM reading ORDER BY sample_idx", conn_fast)
-    naive_rows = pd.read_sql_query(f"SELECT {cols} FROM reading ORDER BY sample_idx", conn_naive)
+    fast_rows = pd.read_sql_query(
+        f"SELECT {cols} FROM reading ORDER BY sample_idx", conn_fast
+    )
+    naive_rows = pd.read_sql_query(
+        f"SELECT {cols} FROM reading ORDER BY sample_idx", conn_naive
+    )
     pd.testing.assert_frame_equal(fast_rows, naive_rows)

@@ -35,7 +35,9 @@ _LGBM_CFG = {"deterministic": True, "force_row_wise": True, "num_threads": 1}
 
 
 def test_train_runs_end_to_end_on_a_tiny_survey(tiny_cfg, tmp_path):
-    results = generate_all(tiny_cfg.base.data, tiny_cfg.env.storage.raw_dir, seed=tiny_cfg.seed)
+    results = generate_all(
+        tiny_cfg.base.data, tiny_cfg.env.storage.raw_dir, seed=tiny_cfg.seed
+    )
 
     conn = connect(tiny_cfg.env.storage.sqlite_path)
     for sr in results:
@@ -50,9 +52,16 @@ def test_train_runs_end_to_end_on_a_tiny_survey(tiny_cfg, tmp_path):
 
     for model_name in ("mad", "isolation_forest"):
         m = result[model_name]
-        for metric in ("recall_at_budget", "false_dig_rate", "interference_dig_fraction", "localisation_error_m"):
+        for metric in (
+            "recall_at_budget",
+            "false_dig_rate",
+            "interference_dig_fraction",
+            "localisation_error_m",
+        ):
             point, _lo, _hi = m[metric]
-            assert 0.0 <= point or np.isnan(point)  # allow nan for localisation error if no hits
+            assert 0.0 <= point or np.isnan(
+                point
+            )  # allow nan for localisation error if no hits
         assert isinstance(m["pr_auc"], float)
 
     # model_run rows exist for both models.
@@ -139,7 +148,8 @@ def test_train_exercises_the_severity_cv_path(cfg, tmp_path):
     assert len(severity_rows) == 2  # lightgbm CQR + global-mean baseline
     lgbm_row = next(r for r in severity_rows if "lgbm" in r[0])
     bundle = load_bundle(
-        lgbm_row[1], expected_feature_version=cfg.base.features.version,
+        lgbm_row[1],
+        expected_feature_version=cfg.base.features.version,
         expected_schema_version=cfg.base.schema_version,
     )
     assert bundle["task"] == "severity"
@@ -151,7 +161,9 @@ def test_train_exercises_the_severity_cv_path(cfg, tmp_path):
 
     # the model card (keyed by pipeline_version, not any one model_version)
     # mentions severity when severity actually ran.
-    model_card_path = Path(cfg.env.storage.model_dir) / pipeline_version / "model_card.md"
+    model_card_path = (
+        Path(cfg.env.storage.model_dir) / pipeline_version / "model_card.md"
+    )
     card_text = model_card_path.read_text(encoding="utf-8")
     assert "## Severity" in card_text
 
@@ -186,15 +198,23 @@ def test_train_exercises_the_severity_cv_path(cfg, tmp_path):
     assert len(classify_rows) == 2  # lightgbm multiclass + majority-class baseline
     classify_lgbm_row = next(r for r in classify_rows if "lgbm" in r[0])
     classify_bundle = load_bundle(
-        classify_lgbm_row[1], expected_feature_version=cfg.base.features.version,
+        classify_lgbm_row[1],
+        expected_feature_version=cfg.base.features.version,
         expected_schema_version=cfg.base.schema_version,
     )
     assert classify_bundle["task"] == "classify"
     assert classify_bundle["defect_calibrator"] is not None
-    assert classify_bundle["classify_classes"] == ["scc", "weld", "dent", "corrosion", "interference"]
+    assert classify_bundle["classify_classes"] == [
+        "scc",
+        "weld",
+        "dent",
+        "corrosion",
+        "interference",
+    ]
 
     release_classify_version = conn.execute(
-        "SELECT classify_version FROM pipeline_release WHERE pipeline_version=?", (pipeline_version,)
+        "SELECT classify_version FROM pipeline_release WHERE pipeline_version=?",
+        (pipeline_version,),
     ).fetchone()[0]
     assert release_classify_version == classify_lgbm_row[0]
 
@@ -211,22 +231,26 @@ def test_build_severity_training_frame_drops_rows_with_nan_severity_smys(capsys)
     calibration used to silently NaN the whole fold's conformal margin,
     collapsing pooled OOF coverage to 0%. Must be dropped upstream, loudly.
     """
-    corpus = pd.DataFrame({
-        "survey_id": ["S1", "S1", "S1"],
-        "chainage_m": [10.0, 20.0, 30.0],
-        "severity_smys": [50.0, np.nan, 60.0],
-        "fold": [0, 0, 1],
-        "feat_a": [1.0, 2.0, 3.0],
-    })
-    matched = pd.DataFrame({
-        "indication_id": ["I1", "I2"],
-        "survey_id": ["S1", "S1"],
-        "chainage_peak_m": [10.0, 20.0],
-        "chainage_start_m": [9.0, 19.0],
-        "chainage_end_m": [11.0, 21.0],
-        "matched_kind": ["defect", "defect"],
-        "matched_source_id": ["D1", "D2"],
-    })
+    corpus = pd.DataFrame(
+        {
+            "survey_id": ["S1", "S1", "S1"],
+            "chainage_m": [10.0, 20.0, 30.0],
+            "severity_smys": [50.0, np.nan, 60.0],
+            "fold": [0, 0, 1],
+            "feat_a": [1.0, 2.0, 3.0],
+        }
+    )
+    matched = pd.DataFrame(
+        {
+            "indication_id": ["I1", "I2"],
+            "survey_id": ["S1", "S1"],
+            "chainage_peak_m": [10.0, 20.0],
+            "chainage_start_m": [9.0, 19.0],
+            "chainage_end_m": [11.0, 21.0],
+            "matched_kind": ["defect", "defect"],
+            "matched_source_id": ["D1", "D2"],
+        }
+    )
 
     result = _build_severity_training_frame(matched, corpus, ["feat_a"])
 
@@ -251,11 +275,13 @@ def test_fit_final_classify_model_respects_configured_capacity(cfg):
     n = 60
     a = rng.uniform(-1, 1, size=n)
     defect_type = np.select([a > 0.3, a < -0.3], ["scc", "weld"], default="corrosion")
-    classify_frame = pd.DataFrame({
-        "matched_source_id": [f"D{i}" for i in range(n)],
-        "defect_type": defect_type,
-        "a": a,
-    })
+    classify_frame = pd.DataFrame(
+        {
+            "matched_source_id": [f"D{i}" for i in range(n)],
+            "defect_type": defect_type,
+            "a": a,
+        }
+    )
 
     model, _baseline = _fit_final_classify_model(classify_frame, ["a"], cfg, seed=0)
 
@@ -277,18 +303,24 @@ def test_shap_check_catches_a_deliberately_leaky_chainage_feature():
     rng = np.random.default_rng(0)
     n = 200
     chainage = rng.uniform(0, 2000, size=n)
-    y = np.where(chainage < 1000, "scc", "weld")  # perfectly predictable from chainage alone
-    X = pd.DataFrame({
-        "chainage_m": chainage,
-        "noise1": rng.normal(size=n),
-        "noise2": rng.normal(size=n),
-    })
+    y = np.where(
+        chainage < 1000, "scc", "weld"
+    )  # perfectly predictable from chainage alone
+    X = pd.DataFrame(
+        {
+            "chainage_m": chainage,
+            "noise1": rng.normal(size=n),
+            "noise2": rng.normal(size=n),
+        }
+    )
     X_train, y_train = X.iloc[:150], y[:150]
     X_calib, y_calib = X.iloc[150:], y[150:]
 
     model = ClassifyModel(
-        feature_cols=["chainage_m", "noise1", "noise2"], classes=CLASSIFY_CLASSES,
-        seed=0, lgbm_cfg=_LGBM_CFG,
+        feature_cols=["chainage_m", "noise1", "noise2"],
+        classes=CLASSIFY_CLASSES,
+        seed=0,
+        lgbm_cfg=_LGBM_CFG,
     ).fit(X_train, y_train, X_calib, y_calib)
 
     importance = _lightgbm_shap_importance(model, X)
@@ -308,15 +340,20 @@ def test_shap_check_does_not_cry_wolf_when_the_denylisted_feature_is_pure_noise(
     n = 200
     a = rng.normal(size=n)
     y = np.where(a > 0, "scc", "weld")
-    X = pd.DataFrame({
-        "chainage_m": rng.uniform(0, 2000, size=n),  # present, but uninformative
-        "a": a,
-    })
+    X = pd.DataFrame(
+        {
+            "chainage_m": rng.uniform(0, 2000, size=n),  # present, but uninformative
+            "a": a,
+        }
+    )
     X_train, y_train = X.iloc[:150], y[:150]
     X_calib, y_calib = X.iloc[150:], y[150:]
 
     model = ClassifyModel(
-        feature_cols=["chainage_m", "a"], classes=CLASSIFY_CLASSES, seed=0, lgbm_cfg=_LGBM_CFG,
+        feature_cols=["chainage_m", "a"],
+        classes=CLASSIFY_CLASSES,
+        seed=0,
+        lgbm_cfg=_LGBM_CFG,
     ).fit(X_train, y_train, X_calib, y_calib)
 
     importance = _lightgbm_shap_importance(model, X)

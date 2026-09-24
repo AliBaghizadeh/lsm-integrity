@@ -40,7 +40,9 @@ class SurveyNotScorableError(Exception):
     """The survey is not registered, not accepted, or has no computed features."""
 
 
-def latest_pipeline_release(conn: sqlite3.Connection) -> tuple[str, str, str | None, str | None]:
+def latest_pipeline_release(
+    conn: sqlite3.Connection,
+) -> tuple[str, str, str | None, str | None]:
     """(pipeline_version, anomaly_model_version, severity_model_version,
     classify_model_version) for the most recent release.
 
@@ -54,7 +56,9 @@ def latest_pipeline_release(conn: sqlite3.Connection) -> tuple[str, str, str | N
         "FROM pipeline_release ORDER BY released_at DESC LIMIT 1"
     ).fetchone()
     if row is None:
-        raise NoReleasedPipelineError("no pipeline_release found -- run `lsm train` first")
+        raise NoReleasedPipelineError(
+            "no pipeline_release found -- run `lsm train` first"
+        )
     return row
 
 
@@ -73,7 +77,10 @@ def _write_geojson(path: str | Path, indications: pd.DataFrame) -> None:
         features.append(
             {
                 "type": "Feature",
-                "geometry": {"type": "Point", "coordinates": [float(row["lon"]), float(row["lat"])]},
+                "geometry": {
+                    "type": "Point",
+                    "coordinates": [float(row["lon"]), float(row["lat"])],
+                },
                 "properties": properties,
             }
         )
@@ -81,7 +88,9 @@ def _write_geojson(path: str | Path, indications: pd.DataFrame) -> None:
     path.write_text(json.dumps(geojson, default=str), encoding="utf-8")
 
 
-def predict_survey(conn: sqlite3.Connection, survey_id: str, cfg: Config) -> pd.DataFrame:
+def predict_survey(
+    conn: sqlite3.Connection, survey_id: str, cfg: Config
+) -> pd.DataFrame:
     """Score one survey against the latest released pipeline and persist its
     indications (+ severity, if a severity model has been released). Reuses
     the already-computed, already-(re)validated feature store rather than
@@ -90,20 +99,29 @@ def predict_survey(conn: sqlite3.Connection, survey_id: str, cfg: Config) -> pd.
     symmetry, not duplicated here).
     """
     row = conn.execute(
-        "SELECT line_id, run_id, source_uri, status FROM survey WHERE survey_id=?", (survey_id,)
+        "SELECT line_id, run_id, source_uri, status FROM survey WHERE survey_id=?",
+        (survey_id,),
     ).fetchone()
     if row is None:
-        raise SurveyNotScorableError(f"{survey_id} is not registered -- run `lsm ingest` first")
+        raise SurveyNotScorableError(
+            f"{survey_id} is not registered -- run `lsm ingest` first"
+        )
     line_id, run_id, source_uri, status = row
     if status != "accepted":
-        raise SurveyNotScorableError(f"{survey_id} has status={status!r}, cannot score it")
+        raise SurveyNotScorableError(
+            f"{survey_id} has status={status!r}, cannot score it"
+        )
 
     feat_path = (
-        feature_store_dir(cfg.env.storage.feature_dir, cfg.base.features.version, line_id, run_id)
+        feature_store_dir(
+            cfg.env.storage.feature_dir, cfg.base.features.version, line_id, run_id
+        )
         / "features.parquet"
     )
     if not feat_path.exists():
-        raise SurveyNotScorableError(f"no features at {feat_path} -- run `lsm features` first")
+        raise SurveyNotScorableError(
+            f"no features at {feat_path} -- run `lsm features` first"
+        )
     features = pd.read_parquet(feat_path)
 
     # lat/lon are restricted columns, excluded from the feature store -- joined
@@ -111,7 +129,9 @@ def predict_survey(conn: sqlite3.Connection, survey_id: str, cfg: Config) -> pd.
     raw = pd.read_parquet(source_uri, columns=["sample_idx", "lat", "lon"])
     df = features.merge(raw, on="sample_idx", how="left", validate="one_to_one")
 
-    pipeline_version, anomaly_version, severity_version, classify_version = latest_pipeline_release(conn)
+    pipeline_version, anomaly_version, severity_version, classify_version = (
+        latest_pipeline_release(conn)
+    )
     anomaly_bundle = load_bundle(
         Path(cfg.env.storage.model_dir) / anomaly_version / "bundle.joblib",
         expected_feature_version=cfg.base.features.version,
@@ -120,7 +140,11 @@ def predict_survey(conn: sqlite3.Connection, survey_id: str, cfg: Config) -> pd.
 
     df["_score"] = anomaly_bundle["model"].score(df)
     indications = cluster_indications(
-        df, "_score", anomaly_bundle["threshold"], survey_id=survey_id, pipeline_version=pipeline_version
+        df,
+        "_score",
+        anomaly_bundle["threshold"],
+        survey_id=survey_id,
+        pipeline_version=pipeline_version,
     )
 
     if severity_version is not None:
@@ -132,10 +156,15 @@ def predict_survey(conn: sqlite3.Connection, survey_id: str, cfg: Config) -> pd.
         # severity_model.feature_cols ends with "extent_m", which
         # attach_severity/attach_indication_features compute themselves --
         # strip it back off for the "which peak-row columns to join" argument.
-        base_feature_cols = [c for c in severity_bundle["feature_cols"] if c != "extent_m"]
+        base_feature_cols = [
+            c for c in severity_bundle["feature_cols"] if c != "extent_m"
+        ]
         sev_cfg = cfg.base.model.severity
         indications = attach_severity(
-            indications, df, severity_bundle["model"], base_feature_cols,
+            indications,
+            df,
+            severity_bundle["model"],
+            base_feature_cols,
             nominal_coverage=1.0 - sev_cfg["conformal_alpha"],
         )
 
@@ -146,10 +175,16 @@ def predict_survey(conn: sqlite3.Connection, survey_id: str, cfg: Config) -> pd.
             expected_schema_version=cfg.base.schema_version,
         )
         # Same "strip extent_m back off" reasoning as severity above.
-        classify_base_feature_cols = [c for c in classify_bundle["feature_cols"] if c != "extent_m"]
+        classify_base_feature_cols = [
+            c for c in classify_bundle["feature_cols"] if c != "extent_m"
+        ]
         indications = attach_classification(
-            indications, df, classify_bundle["model"], classify_bundle["defect_calibrator"],
-            classify_base_feature_cols, cfg.base.model.classify["consequence_proxy"],
+            indications,
+            df,
+            classify_bundle["model"],
+            classify_bundle["defect_calibrator"],
+            classify_base_feature_cols,
+            cfg.base.model.classify["consequence_proxy"],
         )
 
     write_indications(conn, indications)

@@ -152,7 +152,9 @@ def register_survey(df: pd.DataFrame, cfg: DataConfig) -> RegistrationResult:
     lon = df["lon"].to_numpy(dtype=float)
     b_mid = df["b_mid_nt"].to_numpy(dtype=float)
 
-    dr_chainage, gps_locked_fraction, max_gap_m = _dead_reckon_chainage(t_s, lat, lon, cfg)
+    dr_chainage, gps_locked_fraction, max_gap_m = _dead_reckon_chainage(
+        t_s, lat, lon, cfg
+    )
 
     detected_dr, ideal_dr, pitch_estimate, note = _detect_weld_comb(
         dr_chainage, b_mid, cfg.weld.pitch_m
@@ -194,7 +196,9 @@ def registration_error_m(chainage_m: np.ndarray, chainage_true_m: np.ndarray) ->
     the generator's own truth column (data-contract.md's truth tier, same
     status as `defect`/`interference`).
     """
-    err = np.abs(np.asarray(chainage_m, dtype=float) - np.asarray(chainage_true_m, dtype=float))
+    err = np.abs(
+        np.asarray(chainage_m, dtype=float) - np.asarray(chainage_true_m, dtype=float)
+    )
     return {
         "median_abs_error_m": float(np.median(err)),
         "p90_abs_error_m": float(np.percentile(err, 90)),
@@ -208,7 +212,9 @@ def registration_error_m(chainage_m: np.ndarray, chainage_true_m: np.ndarray) ->
 # ---------------------------------------------------------------------------
 
 
-def _project_gps_chainage(lat: np.ndarray, lon: np.ndarray, cfg: DataConfig) -> np.ndarray:
+def _project_gps_chainage(
+    lat: np.ndarray, lon: np.ndarray, cfg: DataConfig
+) -> np.ndarray:
     """Inverse of generate.py::_gps_track's north/east rotation: given a
     fixed survey origin/bearing (a property of how the line was surveyed,
     known to any real registration step -- not leaked truth), recover
@@ -261,10 +267,14 @@ def _dead_reckon_chainage(
     # genuine speed changes (OU correlation length 10 m, WalkConfig).
     if len(t_locked) > 1:
         dt_nominal = float(np.median(np.diff(t_s))) if n > 1 else 1.0
-        smooth_samples = max(1, round(_GPS_SMOOTH_M / max(cfg.walk.speed_m_per_s * dt_nominal, 1e-6)))
+        smooth_samples = max(
+            1, round(_GPS_SMOOTH_M / max(cfg.walk.speed_m_per_s * dt_nominal, 1e-6))
+        )
         if smooth_samples % 2 == 0:
             smooth_samples += 1
-        smooth_samples = min(smooth_samples, len(s_locked) if len(s_locked) % 2 else len(s_locked) - 1)
+        smooth_samples = min(
+            smooth_samples, len(s_locked) if len(s_locked) % 2 else len(s_locked) - 1
+        )
         smooth_samples = max(smooth_samples, 1)
         if smooth_samples > 1:
             s_locked = median_filter(s_locked, size=smooth_samples, mode="nearest")
@@ -306,7 +316,9 @@ def _dead_reckon_chainage(
     gap_runs = _false_run_lengths(locked)
     if gap_runs:
         max_gap_m = max(
-            float(chainage[j - 1] - chainage[i]) if i > 0 else float(chainage[j - 1] - chainage[0])
+            float(chainage[j - 1] - chainage[i])
+            if i > 0
+            else float(chainage[j - 1] - chainage[0])
             for i, j in gap_runs
         )
     else:
@@ -356,7 +368,12 @@ def _detect_weld_comb(
 
     grid = np.arange(dr_chainage[0], dr_chainage[-1], _GRID_DX_M)
     if len(grid) < 20:
-        return np.array([]), np.array([]), None, "too few resampled points for autocorrelation"
+        return (
+            np.array([]),
+            np.array([]),
+            None,
+            "too few resampled points for autocorrelation",
+        )
 
     b_grid = np.interp(grid, dr_chainage, b_mid_nt)
 
@@ -387,7 +404,12 @@ def _detect_weld_comb(
     hi = min(1.5 * pitch_prior_m, lags_m[-1])
     search = (lags_m >= lo) & (lags_m <= hi)
     if not search.any():
-        return np.array([]), np.array([]), None, "search range around the pitch prior is empty"
+        return (
+            np.array([]),
+            np.array([]),
+            None,
+            "search range around the pitch prior is empty",
+        )
 
     # Degenerate-signal guard: a genuinely flat/constant residual (e.g. a
     # window so wide relative to the grid that the median filter reproduces
@@ -413,11 +435,21 @@ def _detect_weld_comb(
     # above (is the surveyed span even long enough to contain one) rather
     # than by how prominent the autocorrelation peak looks.
     if peak_val <= 0:
-        return np.array([]), np.array([]), None, "no positive periodicity found in range"
+        return (
+            np.array([]),
+            np.array([]),
+            None,
+            "no positive periodicity found in range",
+        )
 
     n_periods = int(span // pitch_estimate)
     if n_periods < 2:
-        return np.array([]), np.array([]), pitch_estimate, "fewer than 2 periods fit in the survey"
+        return (
+            np.array([]),
+            np.array([]),
+            pitch_estimate,
+            "fewer than 2 periods fit in the survey",
+        )
 
     # Phase: matched filter for a periodic impulse comb at the recovered
     # pitch (spacing only, no amplitude/shape template -- welds have none).
@@ -458,7 +490,12 @@ def _detect_weld_comb(
         k_index_list.append(k)
 
     if len(detected_list) < 2:
-        return np.array([]), np.array([]), pitch_estimate, "fewer than 2 welds survived edge trimming"
+        return (
+            np.array([]),
+            np.array([]),
+            pitch_estimate,
+            "fewer than 2 welds survived edge trimming",
+        )
 
     # Refine pitch/phase by least-squares fitting detected position ~ index,
     # rather than trusting the coarse autocorrelation lag (quantised to
@@ -496,7 +533,9 @@ def _detect_weld_comb(
     return detected, ideal, float(refined_pitch), "ok"
 
 
-def _monotonic_warp(x_all: np.ndarray, knot_x: np.ndarray, knot_y: np.ndarray) -> np.ndarray:
+def _monotonic_warp(
+    x_all: np.ndarray, knot_x: np.ndarray, knot_y: np.ndarray
+) -> np.ndarray:
     """Piecewise-linear monotonic warp through (knot_x, knot_y), linearly
     EXTRAPOLATED (not flat-clamped) beyond the first/last knot using the
     nearest segment's own slope -- np.interp's default flat clamp would

@@ -8,14 +8,20 @@ TRIPLE = (0.7, 0.5, 0.9)
 
 BASE_RESULT = {
     "mad": {
-        "recall_at_budget": TRIPLE, "false_dig_rate": TRIPLE,
-        "interference_dig_fraction": TRIPLE, "localisation_error_m": TRIPLE,
-        "localisation_error_cm": (70.0, 50.0, 90.0), "pr_auc": 0.5,
+        "recall_at_budget": TRIPLE,
+        "false_dig_rate": TRIPLE,
+        "interference_dig_fraction": TRIPLE,
+        "localisation_error_m": TRIPLE,
+        "localisation_error_cm": (70.0, 50.0, 90.0),
+        "pr_auc": 0.5,
     },
     "isolation_forest": {
-        "recall_at_budget": TRIPLE, "false_dig_rate": TRIPLE,
-        "interference_dig_fraction": TRIPLE, "localisation_error_m": TRIPLE,
-        "localisation_error_cm": (70.0, 50.0, 90.0), "pr_auc": 0.5,
+        "recall_at_budget": TRIPLE,
+        "false_dig_rate": TRIPLE,
+        "interference_dig_fraction": TRIPLE,
+        "localisation_error_m": TRIPLE,
+        "localisation_error_cm": (70.0, 50.0, 90.0),
+        "pr_auc": 0.5,
     },
     "recall_gap_if_minus_mad": TRIPLE,
     "interference_gap_mad_minus_if": TRIPLE,
@@ -51,7 +57,11 @@ def test_write_model_card_without_severity(tmp_path):
 def test_write_model_card_with_severity(tmp_path):
     result = dict(BASE_RESULT)
     result["severity"] = {"coverage": TRIPLE, "mae": TRIPLE, "interval_width": TRIPLE}
-    result["severity_baseline"] = {"coverage": TRIPLE, "mae": TRIPLE, "interval_width": TRIPLE}
+    result["severity_baseline"] = {
+        "coverage": TRIPLE,
+        "mae": TRIPLE,
+        "interval_width": TRIPLE,
+    }
     result["severity_gate_passed"] = True
     result["n_severity_samples"] = 18
 
@@ -65,7 +75,10 @@ def test_write_model_card_with_severity(tmp_path):
 
 
 PER_CLASS_RECALL = {
-    "scc": (0.95, 0.90, 1.0), "weld": TRIPLE, "dent": TRIPLE, "corrosion": TRIPLE,
+    "scc": (0.95, 0.90, 1.0),
+    "weld": TRIPLE,
+    "dent": TRIPLE,
+    "corrosion": TRIPLE,
     "interference": TRIPLE,
 }
 
@@ -92,7 +105,13 @@ def test_write_model_card_with_classify(tmp_path):
     result["n_classify_samples"] = 24
 
     provenance = dict(PROVENANCE)
-    provenance["consequence_proxy"] = {"scc": 1.0, "corrosion": 0.6, "dent": 0.5, "weld": 0.4, "interference": 0.0}
+    provenance["consequence_proxy"] = {
+        "scc": 1.0,
+        "corrosion": 0.6,
+        "dent": 0.5,
+        "weld": 0.4,
+        "interference": 0.0,
+    }
 
     path = tmp_path / "model_card.md"
     write_model_card(path, provenance, result)
@@ -133,7 +152,9 @@ def test_write_model_card_with_classify_gate_failure_shows_leaked_features(tmp_p
     write_model_card(path, PROVENANCE, result)
 
     text = path.read_text(encoding="utf-8")
-    assert "recall gate (SCC recall >= 0.90 at the CI lower bound): DID NOT PASS" in text
+    assert (
+        "recall gate (SCC recall >= 0.90 at the CI lower bound): DID NOT PASS" in text
+    )
     assert "physics-consistency gate" in text and "DID NOT PASS" in text
     assert "leaked features: ['chainage_m']" in text
     assert "overall Stage 5 gate: DID NOT PASS" in text

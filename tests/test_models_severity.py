@@ -24,9 +24,13 @@ def test_conformal_margin_uses_the_finite_sample_corrected_level_not_naive_quant
     linear interpolation on 9 sorted points, sits at the 8th value, not the
     9th/max).
     """
-    scores = np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 100.0])  # sorted, max is an outlier
+    scores = np.array(
+        [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 100.0]
+    )  # sorted, max is an outlier
     margin = conformal_margin(scores, alpha=0.10)
-    assert margin == 100.0  # must be the max, not np.quantile's naive 0.9-quantile (~44.8)
+    assert (
+        margin == 100.0
+    )  # must be the max, not np.quantile's naive 0.9-quantile (~44.8)
     naive = np.quantile(scores, 0.9)
     assert margin > naive
 
@@ -82,8 +86,11 @@ def test_severity_model_interval_is_always_ordered():
     X_calib, y_calib = X.iloc[30:], y[30:]
 
     model = SeverityModel(
-        feature_cols=["amplitude"], quantiles=(0.05, 0.5, 0.95),
-        conformal_alpha=0.10, seed=0, lgbm_cfg=LGBM_CFG,
+        feature_cols=["amplitude"],
+        quantiles=(0.05, 0.5, 0.95),
+        conformal_alpha=0.10,
+        seed=0,
+        lgbm_cfg=LGBM_CFG,
     ).fit(X_train, y_train, X_calib, y_calib)
 
     med, lo, hi = model.predict(X)
@@ -97,8 +104,11 @@ def test_severity_model_tracks_the_correlated_feature():
     X_calib, y_calib = X.iloc[30:], y[30:]
 
     model = SeverityModel(
-        feature_cols=["amplitude"], quantiles=(0.05, 0.5, 0.95),
-        conformal_alpha=0.10, seed=0, lgbm_cfg=LGBM_CFG,
+        feature_cols=["amplitude"],
+        quantiles=(0.05, 0.5, 0.95),
+        conformal_alpha=0.10,
+        seed=0,
+        lgbm_cfg=LGBM_CFG,
     ).fit(X_train, y_train, X_calib, y_calib)
 
     med, _, _ = model.predict(X)
@@ -121,9 +131,14 @@ def test_severity_model_respects_configured_capacity():
     X_calib, y_calib = X.iloc[30:], y[30:]
 
     model = SeverityModel(
-        feature_cols=["amplitude"], quantiles=(0.05, 0.5, 0.95),
-        conformal_alpha=0.10, seed=0, lgbm_cfg=LGBM_CFG,
-        min_child_samples=5, n_estimators=77, num_leaves=15,
+        feature_cols=["amplitude"],
+        quantiles=(0.05, 0.5, 0.95),
+        conformal_alpha=0.10,
+        seed=0,
+        lgbm_cfg=LGBM_CFG,
+        min_child_samples=5,
+        n_estimators=77,
+        num_leaves=15,
     ).fit(X_train, y_train, X_calib, y_calib)
 
     for q in (0.05, 0.5, 0.95):
@@ -132,7 +147,9 @@ def test_severity_model_respects_configured_capacity():
         assert model.models[q].min_child_samples == 5
 
 
-def test_severity_model_drops_nan_calibration_rows_instead_of_poisoning_the_margin(capsys):
+def test_severity_model_drops_nan_calibration_rows_instead_of_poisoning_the_margin(
+    capsys,
+):
     """Real bug found via Stage 6 at scale (docs/stage6-scale-rehearsal.md):
     generate.py initialises severity_smys to NaN off-defect, and a detector's
     peak occasionally lands just outside a defect's label window while still
@@ -149,8 +166,11 @@ def test_severity_model_drops_nan_calibration_rows_instead_of_poisoning_the_marg
     y_calib[0] = np.nan
 
     model = SeverityModel(
-        feature_cols=["amplitude"], quantiles=(0.05, 0.5, 0.95),
-        conformal_alpha=0.10, seed=0, lgbm_cfg=LGBM_CFG,
+        feature_cols=["amplitude"],
+        quantiles=(0.05, 0.5, 0.95),
+        conformal_alpha=0.10,
+        seed=0,
+        lgbm_cfg=LGBM_CFG,
     ).fit(X_train, y_train, X_calib, y_calib)
 
     assert model.conformal_margin_ is not None
@@ -163,8 +183,11 @@ def test_severity_model_drops_nan_calibration_rows_instead_of_poisoning_the_marg
 
 def test_severity_model_predict_before_fit_raises():
     model = SeverityModel(
-        feature_cols=["amplitude"], quantiles=(0.05, 0.5, 0.95),
-        conformal_alpha=0.10, seed=0, lgbm_cfg=LGBM_CFG,
+        feature_cols=["amplitude"],
+        quantiles=(0.05, 0.5, 0.95),
+        conformal_alpha=0.10,
+        seed=0,
+        lgbm_cfg=LGBM_CFG,
     )
     with pytest.raises(RuntimeError):
         model.predict(pd.DataFrame({"amplitude": [1.0]}))
@@ -177,8 +200,11 @@ def test_severity_model_fills_nan_features():
     X_calib, y_calib = X.iloc[30:], y[30:]
 
     model = SeverityModel(
-        feature_cols=["amplitude"], quantiles=(0.05, 0.5, 0.95),
-        conformal_alpha=0.10, seed=0, lgbm_cfg=LGBM_CFG,
+        feature_cols=["amplitude"],
+        quantiles=(0.05, 0.5, 0.95),
+        conformal_alpha=0.10,
+        seed=0,
+        lgbm_cfg=LGBM_CFG,
     ).fit(X_train, y_train, X_calib, y_calib)
     med, lo, hi = model.predict(X)
     assert np.isfinite(med).all() and np.isfinite(lo).all() and np.isfinite(hi).all()

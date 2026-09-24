@@ -33,7 +33,11 @@ from lsm.evaluate import (
 
 REGISTRY = pd.DataFrame(
     {
-        "source_id": ["LINE000_defect_00", "LINE000_defect_01", "LINE000_interference_00"],
+        "source_id": [
+            "LINE000_defect_00",
+            "LINE000_defect_01",
+            "LINE000_interference_00",
+        ],
         "line_id": ["LINE000"] * 3,
         "kind": ["defect", "defect", "interference"],
         "defect_type": ["weld", "scc", "interference"],
@@ -171,7 +175,11 @@ def test_defect_hit_rates_with_multiple_lines_divides_by_the_defects_own_line_ru
         "LINE001_R0": match_dug_indications(_dug([]), line1_reg, tolerance_m=5.0),
         "LINE001_R1": match_dug_indications(_dug([]), line1_reg, tolerance_m=5.0),
     }
-    run_line_id = {"LINE000_R0": "LINE000", "LINE001_R0": "LINE001", "LINE001_R1": "LINE001"}
+    run_line_id = {
+        "LINE000_R0": "LINE000",
+        "LINE001_R0": "LINE001",
+        "LINE001_R1": "LINE001",
+    }
 
     rates = defect_hit_rates(matched_by_run, registry, run_line_id=run_line_id)
 
@@ -199,7 +207,9 @@ def test_paired_bootstrap_ci_is_tighter_than_two_separate_cis_when_correlated():
     a = np.clip(base + rng.normal(0, 0.02, size=30), 0, 1)
     b = np.clip(base - 0.15 + rng.normal(0, 0.02, size=30), 0, 1)
 
-    _, lo_paired, hi_paired = paired_bootstrap_ci(a, b, n_resamples=2000, level=0.95, seed=2)
+    _, lo_paired, hi_paired = paired_bootstrap_ci(
+        a, b, n_resamples=2000, level=0.95, seed=2
+    )
     _, lo_a, hi_a = bootstrap_ci(a, n_resamples=2000, level=0.95, seed=2)
     _, lo_b, hi_b = bootstrap_ci(b, n_resamples=2000, level=0.95, seed=3)
 
@@ -244,8 +254,14 @@ def test_per_group_severity_metrics_computes_coverage_mae_width_per_group():
     metrics = per_group_severity_metrics(df, "defect_id")
     assert len(metrics["coverage"]) == 2  # one entry per group (d0, d1)
     assert set(metrics["coverage"]) == {1.0, 0.0}
-    assert sorted(metrics["mae"]) == [2.5, 10.0]  # d0: (|50-50|+|55-50|)/2=2.5; d1: |20-30|=10
-    assert sorted(metrics["interval_width"]) == [5.0, 20.0]  # d0: hi-lo=20 both rows; d1: hi-lo=5
+    assert sorted(metrics["mae"]) == [
+        2.5,
+        10.0,
+    ]  # d0: (|50-50|+|55-50|)/2=2.5; d1: |20-30|=10
+    assert sorted(metrics["interval_width"]) == [
+        5.0,
+        20.0,
+    ]  # d0: hi-lo=20 both rows; d1: hi-lo=5
 
 
 # ---------------------------------------------------------------------------
@@ -263,7 +279,9 @@ def test_per_class_recall_units_one_entry_per_group_correct_class_only():
             "pred_class": ["scc", "weld", "weld", "interference"],
         }
     )
-    recall = per_class_recall_units(df, "source_id", "true_class", "pred_class", CLASSES)
+    recall = per_class_recall_units(
+        df, "source_id", "true_class", "pred_class", CLASSES
+    )
     assert recall["scc"] == [0.5]  # d0: 1 of 2 rows correctly predicted scc
     assert recall["weld"] == [1.0]  # d1: fully correct
     assert recall["interference"] == [1.0]  # i0: fully correct
@@ -285,8 +303,12 @@ def test_interference_precision_units_only_counts_predicted_interference():
 
 
 def test_interference_precision_units_empty_when_nothing_predicted_interference():
-    df = pd.DataFrame({"source_id": ["a"], "true_class": ["scc"], "pred_class": ["scc"]})
-    assert interference_precision_units(df, "source_id", "true_class", "pred_class") == []
+    df = pd.DataFrame(
+        {"source_id": ["a"], "true_class": ["scc"], "pred_class": ["scc"]}
+    )
+    assert (
+        interference_precision_units(df, "source_id", "true_class", "pred_class") == []
+    )
 
 
 def test_multiclass_brier_score_zero_for_a_perfect_calibrated_prediction():
@@ -303,7 +325,13 @@ def test_multiclass_brier_score_positive_for_a_wrong_confident_prediction():
 def test_brier_by_group_one_entry_per_group():
     proba = pd.DataFrame({c: [1.0 if c == "scc" else 0.0] for c in CLASSES})
     proba = pd.concat([proba, proba], ignore_index=True)
-    df = pd.concat([proba, pd.DataFrame({"source_id": ["d0", "d1"], "true_class": ["scc", "weld"]})], axis=1)
+    df = pd.concat(
+        [
+            proba,
+            pd.DataFrame({"source_id": ["d0", "d1"], "true_class": ["scc", "weld"]}),
+        ],
+        axis=1,
+    )
     units = brier_by_group(df, "source_id", "true_class", CLASSES, CLASSES)
     assert len(units) == 2
     assert min(units) == pytest.approx(0.0)  # d0: correct
@@ -327,7 +355,9 @@ def test_reliability_curve_collapses_on_a_single_unique_confidence():
 
 def test_shap_denylist_check_passes_when_no_denylisted_feature_in_top_k():
     importance = pd.Series({"r_mag_nt": 5.0, "w25m_kurt": 3.0, "chainage_m": 0.01})
-    result = shap_denylist_check(importance, denylist=["chainage_m", "sample_idx"], top_k=2)
+    result = shap_denylist_check(
+        importance, denylist=["chainage_m", "sample_idx"], top_k=2
+    )
     assert result["passed"] is True
     assert result["leaked_denylist_features"] == []
     assert result["top_features"] == ["r_mag_nt", "w25m_kurt"]
@@ -335,7 +365,9 @@ def test_shap_denylist_check_passes_when_no_denylisted_feature_in_top_k():
 
 def test_shap_denylist_check_fails_when_a_denylisted_feature_ranks_in_top_k():
     importance = pd.Series({"chainage_m": 10.0, "r_mag_nt": 5.0, "w25m_kurt": 1.0})
-    result = shap_denylist_check(importance, denylist=["chainage_m", "sample_idx"], top_k=2)
+    result = shap_denylist_check(
+        importance, denylist=["chainage_m", "sample_idx"], top_k=2
+    )
     assert result["passed"] is False
     assert result["leaked_denylist_features"] == ["chainage_m"]
 
@@ -385,34 +417,65 @@ def test_ks_drift_on_empty_input_is_nan():
 def test_feature_drift_report_flags_a_shifted_feature():
     rng = np.random.default_rng(0)
     ref_sample = rng.normal(0, 1, 2000)
-    reference = {"a": {"bin_edges": np.quantile(ref_sample, np.linspace(0, 1, 11)).tolist(), "sample": ref_sample.tolist()}}
+    reference = {
+        "a": {
+            "bin_edges": np.quantile(ref_sample, np.linspace(0, 1, 11)).tolist(),
+            "sample": ref_sample.tolist(),
+        }
+    }
     current = pd.DataFrame({"a": rng.normal(5, 1, 200)})
-    report = feature_drift_report(reference, current, ["a"], psi_warn=0.2, psi_block=0.3)
+    report = feature_drift_report(
+        reference, current, ["a"], psi_warn=0.2, psi_block=0.3
+    )
     assert report.iloc[0]["status"] == "block"
 
 
 def test_feature_drift_report_skips_a_feature_missing_from_the_reference():
-    report = feature_drift_report({}, pd.DataFrame({"a": [1.0, 2.0]}), ["a"], psi_warn=0.2, psi_block=0.3)
+    report = feature_drift_report(
+        {}, pd.DataFrame({"a": [1.0, 2.0]}), ["a"], psi_warn=0.2, psi_block=0.3
+    )
     assert len(report) == 0
 
 
 def test_prediction_drift_report_flags_an_indications_per_km_spike():
     rng = np.random.default_rng(0)
-    reference = {"indications_per_km": 5.0, "p_defect_cal_sample": rng.uniform(0, 1, 1000).tolist()}
-    report = prediction_drift_report(reference, rng.uniform(0, 1, 100), current_indications_per_km=20.0, ratio_warn=3.0)
+    reference = {
+        "indications_per_km": 5.0,
+        "p_defect_cal_sample": rng.uniform(0, 1, 1000).tolist(),
+    }
+    report = prediction_drift_report(
+        reference,
+        rng.uniform(0, 1, 100),
+        current_indications_per_km=20.0,
+        ratio_warn=3.0,
+    )
     assert report["flagged"] is True
     assert report["indications_per_km_ratio"] == pytest.approx(4.0)
 
 
 def test_prediction_drift_report_does_not_flag_a_normal_rate():
     rng = np.random.default_rng(0)
-    reference = {"indications_per_km": 5.0, "p_defect_cal_sample": rng.uniform(0, 1, 1000).tolist()}
-    report = prediction_drift_report(reference, rng.uniform(0, 1, 100), current_indications_per_km=5.5, ratio_warn=3.0)
+    reference = {
+        "indications_per_km": 5.0,
+        "p_defect_cal_sample": rng.uniform(0, 1, 1000).tolist(),
+    }
+    report = prediction_drift_report(
+        reference,
+        rng.uniform(0, 1, 100),
+        current_indications_per_km=5.5,
+        ratio_warn=3.0,
+    )
     assert report["flagged"] is False
 
 
 def test_background_regime_shift_flags_an_outlier_axis():
-    history = pd.DataFrame({"bx_nt": [1.0, 2.0, 1.5], "by_nt": [0.0, 0.0, 0.0], "bz_nt": [10.0, 11.0, 10.5]})
+    history = pd.DataFrame(
+        {
+            "bx_nt": [1.0, 2.0, 1.5],
+            "by_nt": [0.0, 0.0, 0.0],
+            "bz_nt": [10.0, 11.0, 10.5],
+        }
+    )
     current = pd.Series({"bx_nt": 100.0, "by_nt": 0.0, "bz_nt": 10.5})
     result = background_regime_shift(current, history, z_threshold=3.0)
     assert result["n_bad"] == 1
@@ -424,7 +487,13 @@ def test_background_regime_shift_matches_check_background_regime():
     call this function -- the still-passing tests/test_validate.py proves
     the extraction is behavior-preserving; this pins the same math directly.
     """
-    history = pd.DataFrame({"bx_nt": [19000.0, 19005.0], "by_nt": [1000.0, 1002.0], "bz_nt": [45000.0, 45010.0]})
+    history = pd.DataFrame(
+        {
+            "bx_nt": [19000.0, 19005.0],
+            "by_nt": [1000.0, 1002.0],
+            "bz_nt": [45000.0, 45010.0],
+        }
+    )
     current = pd.Series({"bx_nt": 19002.0, "by_nt": 1001.0, "bz_nt": 45005.0})
     result = background_regime_shift(current, history, z_threshold=3.0)
     assert result["n_bad"] == 0

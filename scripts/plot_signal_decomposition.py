@@ -58,7 +58,9 @@ DEFECT_STAGE_COLOR = "#dc5028"
 FULL_STAGE_COLOR = "#1a2733"
 
 
-def _field_sum(obs: np.ndarray, sources: list[tuple[np.ndarray, np.ndarray]], n: int) -> np.ndarray:
+def _field_sum(
+    obs: np.ndarray, sources: list[tuple[np.ndarray, np.ndarray]], n: int
+) -> np.ndarray:
     total = np.zeros((n, 3))
     for src, moment in sources:
         total += dipole_field(obs, src, moment)
@@ -79,18 +81,22 @@ def build(cfg, seed: int) -> dict:
     base = np.array(data_cfg.background_nT, dtype=float)
     b0hat = unit(base)
     if data_cfg.observatory_background.enabled:
-        background_variation = _load_observatory_background(data_cfg.observatory_background, s_true)
+        background_variation = _load_observatory_background(
+            data_cfg.observatory_background, s_true
+        )
     else:
         drift = np.linspace(0, 1, n)[:, None] * rng.normal(0, 40, 3)
-        wave = (
-            np.sin(2 * np.pi * s_true / data_cfg.length_m * rng.uniform(1, 3))[:, None]
-            * rng.normal(0, 25, 3)
-        )
+        wave = np.sin(2 * np.pi * s_true / data_cfg.length_m * rng.uniform(1, 3))[
+            :, None
+        ] * rng.normal(0, 25, 3)
         background_variation = drift + wave
     B_bg = base + background_variation
 
     weld_sources = [
-        (np.array([w["chainage_m"], 0.0, -data_cfg.depth_m]), unit(w["orientation"]) * w["severity"])
+        (
+            np.array([w["chainage_m"], 0.0, -data_cfg.depth_m]),
+            unit(w["orientation"]) * w["severity"],
+        )
         for w in welds
     ]
     interference_sources, defect_sources = [], []
@@ -100,11 +106,15 @@ def build(cfg, seed: int) -> dict:
         if f["is_defect"] and data_cfg.stress_polarity == "positive":
             # Same canonicalisation _make_run_scalar applies: orient so the
             # anomaly enhances B_hat0's projection, not a physics difference.
-            probe_b = dipole_field(np.array([[f["chainage_m"], f["y_off_m"], 0.0]]), src, m_dir)[0]
+            probe_b = dipole_field(
+                np.array([[f["chainage_m"], f["y_off_m"], 0.0]]), src, m_dir
+            )[0]
             if np.dot(probe_b, b0hat) < 0:
                 m_dir = -m_dir
         moment = m_dir * f["severity"]
-        (defect_sources if f["is_defect"] else interference_sources).append((src, moment))
+        (defect_sources if f["is_defect"] else interference_sources).append(
+            (src, moment)
+        )
 
     B_background = B_bg.copy()
     # Full cumulative build (for the raw-signal/residual panels) ...
@@ -146,7 +156,9 @@ def build(cfg, seed: int) -> dict:
     }
 
 
-def _mask_windows(s_true: np.ndarray, centers: list[float], half_width: float) -> np.ndarray:
+def _mask_windows(
+    s_true: np.ndarray, centers: list[float], half_width: float
+) -> np.ndarray:
     if not centers:
         return np.zeros_like(s_true, dtype=bool)
     dist = np.abs(s_true[:, None] - np.array(centers)[None, :])
@@ -157,7 +169,9 @@ def plot(result: dict, zoom: tuple[float, float], save: Path | None) -> None:
     s = result["s_true"]
     data_cfg = result["data_cfg"]
     defect_chainages = [f["chainage_m"] for f in result["features"] if f["is_defect"]]
-    interference_chainages = [f["chainage_m"] for f in result["features"] if not f["is_defect"]]
+    interference_chainages = [
+        f["chainage_m"] for f in result["features"] if not f["is_defect"]
+    ]
     weld_chainages = [w["chainage_m"] for w in result["welds"]]
 
     fig = plt.figure(figsize=(13, 20), constrained_layout=True)
@@ -169,8 +183,10 @@ def plot(result: dict, zoom: tuple[float, float], save: Path | None) -> None:
     # the finding is WHICH sources are/aren't visible, not that none are.
     ax = fig.add_subplot(gs[0])
     ax.plot(s, result["b_mid_noisy"], color=FULL_STAGE_COLOR, lw=0.6)
-    ax.set_title("1. Raw signal (b_mid) -- background dominates; the sharp spikes poking through "
-                 "are girth welds (up to 20x a defect's moment), not defects or interference")
+    ax.set_title(
+        "1. Raw signal (b_mid) -- background dominates; the sharp spikes poking through "
+        "are girth welds (up to 20x a defect's moment), not defects or interference"
+    )
     ax.set_ylabel("field (nT)")
 
     # 2. Each source ISOLATED against background alone (NOT cumulative), small
@@ -186,7 +202,11 @@ def plot(result: dict, zoom: tuple[float, float], save: Path | None) -> None:
     stage_specs = [
         ("background\nonly", result["mag_background"], BG_COLOR),
         ("welds\nonly", result["mag_welds_only"], WELD_STAGE_COLOR),
-        ("interference\nonly", result["mag_interference_only"], INTERFERENCE_STAGE_COLOR),
+        (
+            "interference\nonly",
+            result["mag_interference_only"],
+            INTERFERENCE_STAGE_COLOR,
+        ),
         ("defects\nonly", result["mag_defects_only"], DEFECT_STAGE_COLOR),
     ]
     med_bg = np.median(result["mag_background"])
@@ -200,9 +220,11 @@ def plot(result: dict, zoom: tuple[float, float], save: Path | None) -> None:
         ax.set_ylim(*ylim)
         ax.set_ylabel(label, fontsize=8, rotation=0, ha="right", va="center")
         if i == 0:
-            ax.set_title(f"2. Each source ISOLATED against background alone (not cumulative -- "
-                         f"welds are far more NUMEROUS per km, not indistinguishable from the "
-                         f"others), zoomed to {zoom[0]:.0f}-{zoom[1]:.0f} m, same y-scale throughout")
+            ax.set_title(
+                f"2. Each source ISOLATED against background alone (not cumulative -- "
+                f"welds are far more NUMEROUS per km, not indistinguishable from the "
+                f"others), zoomed to {zoom[0]:.0f}-{zoom[1]:.0f} m, same y-scale throughout"
+            )
         if i < len(stage_specs) - 1:
             ax.set_xticklabels([])
 
@@ -216,7 +238,9 @@ def plot(result: dict, zoom: tuple[float, float], save: Path | None) -> None:
         ax.axvline(c, color=INTERFERENCE_COLOR, ls="--", lw=1.0, alpha=0.8)
     for c in defect_chainages:
         ax.axvline(c, color=DEFECT_COLOR, ls="--", lw=1.0, alpha=0.8)
-    ax.set_title("3. After background removal (2-stage detrend) -- welds, interference, defects all visible")
+    ax.set_title(
+        "3. After background removal (2-stage detrend) -- welds, interference, defects all visible"
+    )
     ax.set_ylabel("residual (nT)")
 
     # 4. Same residual, zoomed -- now weld markers earn their place back.
@@ -229,29 +253,39 @@ def plot(result: dict, zoom: tuple[float, float], save: Path | None) -> None:
     for c in defect_chainages:
         ax.axvline(c, color=DEFECT_COLOR, ls="--", lw=1.2, alpha=0.85)
     ax.set_xlim(*zoom)
-    ax.set_title("4. Same residual, zoomed -- individual bump SHAPES (width) are the discriminator")
+    ax.set_title(
+        "4. Same residual, zoomed -- individual bump SHAPES (width) are the discriminator"
+    )
     ax.set_ylabel("residual (nT)")
 
     # 5. Final isolated defect signal -- weld/interference windows masked out.
     ax = fig.add_subplot(gs[7])
     half_width = data_cfg.label_window_scale * data_cfg.depth_m
-    mask = _mask_windows(s, weld_chainages, half_width) | _mask_windows(s, interference_chainages, half_width)
+    mask = _mask_windows(s, weld_chainages, half_width) | _mask_windows(
+        s, interference_chainages, half_width
+    )
     isolated = np.where(mask, np.nan, result["r_mid"])
     ax.plot(s, isolated, color=DEFECT_COLOR, lw=0.7)
     for c in defect_chainages:
         ax.axvline(c, color=DEFECT_COLOR, ls="--", lw=1.0, alpha=0.8)
-    ax.set_title("5. Final isolated signal -- weld + interference windows masked out, defects remain")
+    ax.set_title(
+        "5. Final isolated signal -- weld + interference windows masked out, defects remain"
+    )
     ax.set_ylabel("residual (nT)")
     ax.set_xlabel("chainage (m)")
 
     from matplotlib.lines import Line2D
+
     legend_handles = [
         Line2D([0], [0], color=DEFECT_COLOR, ls="--", label="true defect"),
         Line2D([0], [0], color=INTERFERENCE_COLOR, ls="--", label="true interference"),
         Line2D([0], [0], color=WELD_COLOR, ls=":", label="girth weld"),
     ]
     fig.legend(handles=legend_handles, loc="outside lower center", ncol=3, fontsize=9)
-    fig.suptitle("From raw field to isolated defect signal -- one synthetic survey (LINE000)", fontsize=13)
+    fig.suptitle(
+        "From raw field to isolated defect signal -- one synthetic survey (LINE000)",
+        fontsize=13,
+    )
 
     if save:
         save.parent.mkdir(parents=True, exist_ok=True)
@@ -273,7 +307,9 @@ def plot_components_separately(result: dict, save: Path | None) -> None:
     med_bg = np.median(result["mag_background"])
     mag_bg = result["mag_background"]
     defect_chainages = [f["chainage_m"] for f in result["features"] if f["is_defect"]]
-    interference_chainages = [f["chainage_m"] for f in result["features"] if not f["is_defect"]]
+    interference_chainages = [
+        f["chainage_m"] for f in result["features"] if not f["is_defect"]
+    ]
     weld_chainages = [w["chainage_m"] for w in result["welds"]]
 
     # Each "X only" trace is |B_background + field_X| (build()'s own
@@ -288,23 +324,48 @@ def plot_components_separately(result: dict, save: Path | None) -> None:
     # the background panel itself should ever show that wave.
     panels = [
         ("Background only", result["mag_background"], BG_COLOR, [], med_bg),
-        ("Girth welds (joints) only -- periodic, ~12.2 m pitch", result["mag_welds_only"], WELD_STAGE_COLOR, weld_chainages, mag_bg),
-        ("Interference only -- off-pipe objects, 4 on this line", result["mag_interference_only"], INTERFERENCE_STAGE_COLOR, interference_chainages, mag_bg),
-        ("Defects only -- 12 on this line, type-specific severity", result["mag_defects_only"], DEFECT_STAGE_COLOR, defect_chainages, mag_bg),
+        (
+            "Girth welds (joints) only -- periodic, ~12.2 m pitch",
+            result["mag_welds_only"],
+            WELD_STAGE_COLOR,
+            weld_chainages,
+            mag_bg,
+        ),
+        (
+            "Interference only -- off-pipe objects, 4 on this line",
+            result["mag_interference_only"],
+            INTERFERENCE_STAGE_COLOR,
+            interference_chainages,
+            mag_bg,
+        ),
+        (
+            "Defects only -- 12 on this line, type-specific severity",
+            result["mag_defects_only"],
+            DEFECT_STAGE_COLOR,
+            defect_chainages,
+            mag_bg,
+        ),
     ]
 
-    fig, axes = plt.subplots(4, 1, figsize=(13, 14), sharex=True, constrained_layout=True)
+    fig, axes = plt.subplots(
+        4, 1, figsize=(13, 14), sharex=True, constrained_layout=True
+    )
     for ax, (title, vals, color, markers, baseline) in zip(axes, panels):
         dev = vals - baseline
         ax.plot(s, dev, color=color, lw=0.7)
         for c in markers:
             ax.axvline(c, color=color, ls="--", lw=0.8, alpha=0.4)
         peak = float(np.abs(dev).max())
-        ax.set_title(f"{title}  (peak |deviation| = {peak:.1f} nT)", fontsize=10, loc="left")
+        ax.set_title(
+            f"{title}  (peak |deviation| = {peak:.1f} nT)", fontsize=10, loc="left"
+        )
         ax.set_ylabel("deviation (nT)")
         ax.axhline(0, color="black", lw=0.4, alpha=0.3)
     axes[-1].set_xlabel("chainage (m)")
-    fig.suptitle("Each physical source, isolated against background, own y-scale per panel", fontsize=13)
+    fig.suptitle(
+        "Each physical source, isolated against background, own y-scale per panel",
+        fontsize=13,
+    )
 
     if save:
         save.parent.mkdir(parents=True, exist_ok=True)
@@ -316,12 +377,25 @@ def plot_components_separately(result: dict, save: Path | None) -> None:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--save", type=Path, default=Path("docs/img/signal_decomposition.png"))
-    ap.add_argument("--zoom", type=float, nargs=2, default=(0.0, 300.0), metavar=("START_M", "END_M"))
+    ap.add_argument(
+        "--save", type=Path, default=Path("docs/img/signal_decomposition.png")
+    )
+    ap.add_argument(
+        "--zoom",
+        type=float,
+        nargs=2,
+        default=(0.0, 300.0),
+        metavar=("START_M", "END_M"),
+    )
     ap.add_argument("--seed", type=int, default=None, help="default: config's own seed")
-    ap.add_argument("--components", action="store_true",
-                     help="also render the per-component, own-y-scale, full-line figure")
-    ap.add_argument("--components-save", type=Path, default=Path("docs/img/signal_components.png"))
+    ap.add_argument(
+        "--components",
+        action="store_true",
+        help="also render the per-component, own-y-scale, full-line figure",
+    )
+    ap.add_argument(
+        "--components-save", type=Path, default=Path("docs/img/signal_components.png")
+    )
     args = ap.parse_args()
 
     cfg = load_config("dev")
