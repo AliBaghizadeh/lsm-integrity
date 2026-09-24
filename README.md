@@ -14,30 +14,33 @@ proprietary, so every dataset, model, and reported number here runs on a physics
 **synthetic** generator instead — including results that don't clear their own gate, since
 nothing in this project is cherry-picked.
 
-**Rig-v2 (2026-08-06):** the generator, registration, and feature layers were rebuilt around
-a more realistic instrument model — a rod carrying three **scalar** total-field heads (never
-x/y/z), carried by a human walker with GPS dropout, not the single 3-axis vector head on a
-fixed grid this project originally assumed. Every existing gate was re-measured honestly
-against the rebuilt corpus, and a new 6-arm **ablation ladder**
-(`scripts/ablation_ladder.py`) answers a real instrumentation question — "improve the
-software, or upgrade the hardware?" The honest answer: one software step (a first-difference
-across heads) gives a real, statistically significant recall gain, but a genuine hardware
-upgrade to full vector output still buys roughly seven times more than the entire software
-gain combined.
+The project was rebuilt around a rod carrying three **scalar** total-field heads, a human walker
+with irregular speed, and GPS dropout. The pipeline now compares a robust MAD threshold with an
+IsolationForest detector, estimates severity with LightGBM quantile regression plus split conformal
+intervals, classifies indication types with calibrated LightGBM multiclass models, and estimates growth with
+a partially pooled log-linear model. Training and evaluation use grouped splits by physical line
+and block, indication-level metrics, and bootstrap confidence intervals. A candidate is promoted
+only when its configured gate clears at the confidence-interval lower bound; a good point estimate
+alone is not enough. The six-arm ablation ladder (`scripts/ablation_ladder.py`) separates software
+from sensing information: the first difference across heads gives a small but statistically
+detectable recall gain of **+0.056 [0.014, 0.111]**, while later scalar-rig additions do not show
+reliable recall gains in the current study. A simulated three-axis reference reaches **0.611
+recall** at the same follow-up budget, compared with **0.208** for the best scalar arm. That is a
+hardware-reference comparison, not a claim about field performance.
 
-**The clean-room experiment (2026-08-10):** the detection model's failure had been established as
-*information*-limited rather than data-limited — it survives 6× more data, three grouping schemes,
-and both the unsupervised and supervised paradigms. `scripts/cleanroom_experiment.py` asks which
-information is missing, by generating a counterfactual corpus: an isolated test spool with defects
-and nothing else — no external interference, no girth welds, chainage from a tape measure. There,
-the same detector beats its baseline by **+0.199 recall [0.139, 0.255]**, the first time in this
-project it beats that baseline at all, and localises **10.8× better** (812 cm → 75 cm). So the
-confounders, not the scalar rig's sensing physics, are what break detection. The second half of the
-experiment is the one that matters for deciding anything, though: a model *trained* on that clean
-corpus and evaluated on realistic data is **worse** than one trained on realistic data, and cannot
-recognise interference at all, having never seen it. Controlled acquisition is a diagnostic
-instrument here, not a training corpus — a distinction the flattering half of the experiment would
-have hidden.
+That result led to a controlled counterfactual experiment. The detection gate requires IsolationForest
+to beat the MAD baseline by at least **0.15 recall**, with the confidence-interval lower bound
+above that threshold. On the realistic synthetic corpus, the current recall gap is **0.000
+[-0.050, 0.061]**, so the gate does not pass. The experiment then removes
+external interference and girth welds and supplies accurate chainage while keeping the detector
+and sensing physics unchanged. In that counterfactual setting, the same detector reaches a gap of
+**+0.199 [0.139, 0.255]** and localisation improves from **812 cm to 75 cm**; even this lower
+bound remains just below the production gate, so the result is diagnostic rather than a promotion.
+The transfer test is equally important: a model trained only on clean data performs worse on
+realistic data and cannot recognise interference it has never seen. The conclusion is that the
+failure is information-limited by confounders, not fixed simply by adding more rows or changing the
+model. Controlled acquisition is useful for diagnosis, but it is not a valid replacement training
+corpus.
 
 ![Project components: pipeline stages, infrastructure, and consumers](img/project-components.png)
 *Pipeline stages, infrastructure, and consumers.*
@@ -84,7 +87,7 @@ have hidden.
 ├── config/                  base.yaml (hashed into config_sha256) + dev.yaml/prod.yaml (not hashed)
 ├── serving/                 baked demo artifact: model bundles + 4 demo scenarios + manifest
 ├── scripts/                 EDA, plotting, the scale rehearsal, the Stage D ablation ladder,
-│                            the clean-room counterfactual experiment, baking the demo artifact
+│                            the controlled counterfactual experiment, baking the demo artifact
 ├── tests/                   312 tests
 └── .github/workflows/       ci.yml (lint+type+test, every push) / train.yml (the real promotion gate)
 ```
