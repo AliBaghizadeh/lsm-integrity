@@ -14,9 +14,9 @@ jobs:
   lint-and-test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: pip
@@ -39,7 +39,7 @@ jobs:
         # visible in the log.
         run: python -m pip_audit || true
 
-      - name: "pytest (311 tests: unit, leakage, determinism, bundle round-trip, golden regression)"
+      - name: "pytest (unit, leakage, determinism, bundle round-trip, golden regression)"
         run: pytest -q
 
       - name: CLI smoke run (generate -> ingest -> features, real base.yaml)

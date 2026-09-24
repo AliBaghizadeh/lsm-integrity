@@ -17,8 +17,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
 
 from plot_signal_decomposition import build
+
 from lsm.config import load_config
-from lsm.features import detrend_axis
 
 OUT = PROJECT_ROOT / "docs" / "img"
 INK = "#17212b"
