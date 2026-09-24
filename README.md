@@ -14,6 +14,9 @@ proprietary, so every dataset, model, and reported number here runs on a physics
 **synthetic** generator instead — including results that don't clear their own gate, since
 nothing in this project is cherry-picked.
 
+For the longer technical narrative behind the modelling choices and evaluation results, see the
+[Medium article](https://medium.com/@alibagizade/when-more-data-wasnt-the-answer-a-simulation-study-of-magnetic-pipeline-inspection-46287632c970).
+
 The project was rebuilt around a rod carrying three **scalar** total-field heads, a human walker
 with irregular speed, and GPS dropout. The pipeline now compares a robust MAD threshold with an
 IsolationForest detector, estimates severity with LightGBM quantile regression plus split conformal
